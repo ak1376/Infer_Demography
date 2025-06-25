@@ -1,0 +1,12 @@
+{
+    "genome_length": 1e6,
+    "mutation_rate": 1.5e-08,
+    "recombination_rate": 1.5e-08,
+    "demographic_model": "split_migration",
+    "num_samples": {
+        "N1": 10,
+        "N2": 10
+    }, 
+    "seed": 42
+    
+}
