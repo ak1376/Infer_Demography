@@ -6,6 +6,7 @@
     "num_samples": {
         "N0": 10
     }, 
-    "seed": 42
-    
+    "seed": 42, 
+    "num_optimizations": 4, 
+    "top_k": 3    
 }

@@ -25,6 +25,12 @@ def main(experiment_config, sampled_params):
     - sampled_params: Dictionary of demographic model parameters.
     """
 
+    # Create the data and inferences directories if they don't exist
+    Path("./data").mkdir(parents=True, exist_ok=True)
+    Path("./inferences/moments").mkdir(parents=True, exist_ok=True)
+    Path("./inferences/dadi").mkdir(parents=True, exist_ok=True)
+
+
     # Save the sampled parameters for reference
     with open("./data/drosophila_three_epoch_sampled_params.pkl", "wb") as f:
         pickle.dump(sampled_params, f)
@@ -69,35 +75,31 @@ def main(experiment_config, sampled_params):
     
     start = moments.Misc.perturb_params(start, fold=0.1)
 
-    # Fit the model to the SFS using moments
-    fit = fit_model(SFS, start=start, g = g, experiment_config = experiment_config)
+    # names in the exact order the optimisation routines output them
+    param_names = [
+        "N0",
+        "AFR",
+        "EUR_bottleneck",
+        "EUR_recover",
+        "T_AFR_expansion",
+        "T_AFR_EUR_split",
+        "T_EUR_expansion",
+    ]
 
+    # run the optimisations exactly as you already do
+    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
     dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
-    
-    opt_params_moments = {
-        "NANC": fit[0],
-        "AFR_recover": fit[1],
-        "EUR_bottleneck": fit[2],
-        "EUR_recover": fit[3],
-        "T_AFR_expansion": fit[4],
-        "T_AFR_EUR_split": fit[5],
-        "T_EUR_expansion": fit[6]
-    }
+
+    # convert each array → dict
+    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
+    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
 
     with open("./inferences/moments/drosophila_three_epoch_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_moments, f)
+        pickle.dump(fit, f)
 
-    opt_params_dadi = {
-        "NANC": dadi_fit[0],
-        "AFR_recover": dadi_fit[1],
-        "EUR_bottleneck": dadi_fit[2],
-        "EUR_recover": dadi_fit[3],
-        "T_AFR_expansion": dadi_fit[4],
-        "T_AFR_EUR_split": dadi_fit[5],
-        "T_EUR_expansion": dadi_fit[6]
-    }
+    # Save the best fit parameters for dadi inference
     with open("./inferences/dadi/drosophila_three_epoch_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_dadi, f)
+        pickle.dump(dadi_fit, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run drosophila three epoch model simulation and generate SFS")

@@ -58,27 +58,26 @@ def main(experiment_config, sampled_params):
     fit = fit_model(SFS, start=start, g = g, experiment_config = experiment_config)
 
     dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
-    
-    opt_params_moments = {
-        "N0": fit[0],
-        "N1": fit[1],
-        "N2": fit[2],
-        "m": fit[3],
-        "t_split": fit[4]
-    }
 
-    with open("./inferences/moments/split_isolation_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_moments, f)
+    param_names = ["N0", "N1", "N2", "m", "t_split"]
 
-    opt_params_dadi = {
-        "N0": dadi_fit[0],
-        "N1": dadi_fit[1],
-        "N2": dadi_fit[2],
-        "m": dadi_fit[3],
-        "t_split": dadi_fit[4]
-    }
-    with open("./inferences/dadi/split_isolation_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_dadi, f)
+    # run the optimisations exactly as you already do
+    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
+    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
+
+    # convert each array → dict
+    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
+    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
+
+    moments_file_name = f"./inferences/moments/{experiment_config['demographic_model']}_fit_params.pkl"
+    dadi_file_name = f"./inferences/dadi/{experiment_config['demographic_model']}_fit_params.pkl"
+
+    with open(moments_file_name, "wb") as f:
+        pickle.dump(fit, f)
+
+    # Save the best fit parameters for dadi inference
+    with open(dadi_file_name, "wb") as f:
+        pickle.dump(dadi_fit, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run split isolation model simulation and generate SFS")

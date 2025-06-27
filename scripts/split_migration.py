@@ -54,33 +54,24 @@ def main(experiment_config, sampled_params):
     
     start = moments.Misc.perturb_params(start, fold=0.1)
 
-    # Fit the model to the SFS using moments
-    fit = fit_model(SFS, start=start, g = g, experiment_config = experiment_config)
+    param_names = [
+        "N0", "N1", "N2", "m12", "m21", "t_split"
+    ]
 
+    # run the optimisations exactly as you already do
+    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
     dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
-    
-    opt_params_moments = {
-        "N0": fit[0],
-        "N1": fit[1],
-        "N2": fit[2],
-        "m12": fit[3],
-        "m21": fit[4],
-        "t_split": fit[5]
-    }
 
-    with open("./inferences/moments/split_migration_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_moments, f)
+    # convert each array → dict
+    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
+    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
 
-    opt_params_dadi = {
-        "N0": dadi_fit[0],
-        "N1": dadi_fit[1],
-        "N2": dadi_fit[2],
-        "m12": dadi_fit[3],
-        "m21": dadi_fit[4],
-        "t_split": dadi_fit[5]
-    }
-    with open("./inferences/dadi/split_migration_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_dadi, f)
+    with open(f"./inferences/moments/{experiment_config['demographic_model']}_fit_params.pkl", "wb") as f:
+        pickle.dump(fit, f)
+
+    # Save the best fit parameters for dadi inference
+    with open(f"./inferences/dadi/{experiment_config['demographic_model']}_fit_params.pkl", "wb") as f:
+        pickle.dump(dadi_fit, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run split migration model simulation and generate SFS")

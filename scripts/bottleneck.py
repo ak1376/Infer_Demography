@@ -54,31 +54,27 @@ def main(experiment_config, sampled_params):
     
     start = moments.Misc.perturb_params(start, fold=0.1)
 
-    # Fit the model to the SFS using moments
-    fit = fit_model(SFS, start=start, g = g, experiment_config = experiment_config)
-
-    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
+    param_names = [
+        "N0", "N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end"
+    ]
     
-    opt_params_moments = {
-        "N0": fit[0],
-        "N_bottleneck": fit[1],
-        "N_recover": fit[2],
-        "t_bottleneck_start": fit[3],
-        "t_bottleneck_end": fit[4]
-    }
+    # run the optimisations exactly as you already do
+    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config, sampled_params=sampled_params)
+    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config, sampled_params=sampled_params)
 
-    with open("./inferences/moments/bottleneck_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_moments, f)
+    # convert each array → dict
+    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
+    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
 
-    opt_params_dadi = {
-        "N0": dadi_fit[0],
-        "N_bottleneck": dadi_fit[1],
-        "N_recover": dadi_fit[2],
-        "t_bottleneck_start": dadi_fit[3],  
-        "t_bottleneck_end": dadi_fit[4]
-    }
-    with open("./inferences/dadi/bottleneck_fit_params.pkl", "wb") as f:
-        pickle.dump(opt_params_dadi, f)
+    moments_file_name = f"./inferences/moments/{experiment_config['demographic_model']}_fit_params.pkl"
+    dadi_file_name = f"./inferences/dadi/{experiment_config['demographic_model']}_fit_params.pkl"
+
+    with open(moments_file_name, "wb") as f:
+        pickle.dump(fit, f)
+
+    # Save the best fit parameters for dadi inference
+    with open(dadi_file_name, "wb") as f:
+        pickle.dump(dadi_fit, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run split isolation model simulation and generate SFS")
