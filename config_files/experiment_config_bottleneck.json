@@ -1,0 +1,11 @@
+{
+    "genome_length": 1e6,
+    "mutation_rate": 1.5e-08,
+    "recombination_rate": 1.5e-08,
+    "demographic_model": "bottleneck",
+    "num_samples": {
+        "N0": 10
+    }, 
+    "seed": 42
+    
+}

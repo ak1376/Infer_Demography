@@ -1,0 +1,12 @@
+{
+    "genome_length": 1e6,
+    "mutation_rate": 1.45e-09,
+    "recombination_rate": 1.45e-09,
+    "demographic_model": "drosophila_three_epoch",
+    "num_samples": {
+        "AFR": 20,
+        "EUR": 20
+    }, 
+    "seed": 42
+    
+}
