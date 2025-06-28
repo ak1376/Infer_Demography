@@ -1,110 +1,203 @@
 #!/usr/bin/env python3
+"""
+Fully revised split_isolation.py
+--------------------------------
+* Draws any number of parameter sets from uniform priors that live in the
+  experiment_config JSON (under the key ``priors``).
+* CLI flags let you **pin** any individual parameter, overriding the prior.
+* Each replicate's outputs are written under ``runs/run_XXXX`` so files don't
+  collide.
+* Keeps your original simulation + inference pipeline intact.
+"""
+
 import argparse
 import json
 import pickle
-import matplotlib.pyplot as plt
-import demesdraw
 import sys
 from pathlib import Path
-# Add src directory to Python path
+from typing import Dict, List, Any
+
+import numpy as np
+import matplotlib.pyplot as plt
+import demesdraw
+import moments
+from tqdm import tqdm
+
+# -----------------------------------------------------------------------------
+# local imports (project src directory)
+# -----------------------------------------------------------------------------
+
 src_path = Path(__file__).resolve().parents[1] / "src"
 sys.path.append(str(src_path))
 
 from simulation import split_isolation_model, simulation, create_SFS
-from moments_inference import fit_model
+from moments_inference import fit_model as moments_fit_model
 from dadi_inference import fit_model as dadi_fit_model
-import moments
+
+# -----------------------------------------------------------------------------
+# helpers
+# -----------------------------------------------------------------------------
+
+PARAM_NAMES = ["N0", "N1", "N2", "m", "t_split"]
 
 
-def main(experiment_config, sampled_params):
+def sample_from_priors(priors: Dict[str, List[float]], rng: np.random.Generator) -> Dict[str, float]:
+    """Sample one parameter set from uniform [low, high] bounds.
+
+    Int‑like bounds (both endpoints are ints) return an int.
     """
-    Run the split migration model simulation and save visual + data outputs.
-
-    Parameters:
-    - experiment_config: Dictionary of experiment settings.
-    - sampled_params: Dictionary of demographic model parameters.
-    """
-
-    # Save the sampled parameters for reference
-    with open("./data/split_isolation_sampled_params.pkl", "wb") as f:
-        pickle.dump(sampled_params, f)
+    draw: Dict[str, float] = {}
+    for name, (low, high) in priors.items():
+        val = rng.uniform(low, high)
+        if isinstance(low, int) and isinstance(high, int):
+            val = int(round(val))
+        draw[name] = val
+    return draw
 
 
-    # Run the split migration model simulation
-    g = split_isolation_model(sampled_params)
+# -----------------------------------------------------------------------------
+# core pipeline (mostly your original code, just parameterised on output dir)
+# -----------------------------------------------------------------------------
 
-    # Draw and save the demography graph
+
+def run_one(experiment_config: Dict[str, Any], params: Dict[str, float], out_dir: Path) -> None:
+    """Simulate + infer for one parameter set and write results inside *out_dir*."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = out_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+    inf_dir_mom = out_dir / "inferences" / "moments"
+    inf_dir_dadi = out_dir / "inferences" / "dadi"
+    inf_dir_mom.mkdir(parents=True, exist_ok=True)
+    inf_dir_dadi.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # 1. demography + figure
+    # ------------------------------------------------------------------
+    g = split_isolation_model(params)
     ax = demesdraw.tubes(g)
     ax.set_title("Split Isolation Model")
     ax.set_xlabel("Time (generations)")
     ax.set_ylabel("Population Size")
-    plt.savefig("./data/demes_split_isolation_model.png", dpi=300, bbox_inches='tight')
+    plt.savefig(data_dir / "demes_split_isolation_model.png", dpi=300, bbox_inches="tight")
+    plt.close(ax.figure)
 
-    # Simulate and generate the tree sequence and SFS
-    ts, g = simulation(sampled_params, model_type="split_isolation", experiment_config=experiment_config)
+    # ------------------------------------------------------------------
+    # 2. simulation + SFS
+    # ------------------------------------------------------------------
+    ts, g = simulation(params, model_type="split_isolation", experiment_config=experiment_config)
     SFS = create_SFS(ts)
 
-    # Save outputs
-    with open("./data/split_isolation_SFS.pkl", "wb") as f:
+    # persist raw outputs
+    with open(data_dir / "split_isolation_sampled_params.pkl", "wb") as f:
+        pickle.dump(params, f)
+    with open(data_dir / "split_isolation_SFS.pkl", "wb") as f:
         pickle.dump(SFS, f)
-    ts.dump("./data/split_isolation_tree_sequence.trees")
+    ts.dump(data_dir / "split_isolation_tree_sequence.trees")
 
-    start = [sampled_params["N0"], sampled_params["N1"], sampled_params["N2"],
-             sampled_params["m"], sampled_params["t_split"]]
-    
-    start = moments.Misc.perturb_params(start, fold=0.1)
+    # ------------------------------------------------------------------
+    # 3. optimisation start point + perturbation
+    # ------------------------------------------------------------------
+    # start = [params[n] for n in PARAM_NAMES]
+    # start = moments.Misc.perturb_params(start, fold=0.1)
 
-    # Fit the model to the SFS using moments
-    fit = fit_model(SFS, start=start, g = g, experiment_config = experiment_config)
+    # start: List[float] = []
+    # for p in PARAM_NAMES:
+    #     low, high = experiment_config["priors"][p]
+    #     mid: float | int = (low + high) / 2.0
+    #     if isinstance(low, int) and isinstance(high, int):
+    #         mid = int(mid)
+    #     start.append(mid)
 
-    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
+    start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], fold=0.1)
 
-    param_names = ["N0", "N1", "N2", "m", "t_split"]
+    # start = moments.Misc.perturb_params(start, fold=0.1)
 
-    # run the optimisations exactly as you already do
-    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
-    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
+    # ------------------------------------------------------------------
+    # 4. inference (moments + dadi)
+    # ------------------------------------------------------------------
+    fit_moments = moments_fit_model(SFS, start=None, g=g, experiment_config=experiment_config)
+    fit_dadi    = dadi_fit_model(SFS, start=None, g=g, experiment_config=experiment_config)
 
-    # convert each array → dict
-    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
-    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
+    # list[dict] representation
+    fit_moments = [dict(zip(PARAM_NAMES, arr.tolist())) for arr in fit_moments]
+    fit_dadi    = [dict(zip(PARAM_NAMES, arr.tolist())) for arr in fit_dadi]
 
-    moments_file_name = f"./inferences/moments/{experiment_config['demographic_model']}_fit_params.pkl"
-    dadi_file_name = f"./inferences/dadi/{experiment_config['demographic_model']}_fit_params.pkl"
+    with open(inf_dir_mom / "fit_params.pkl", "wb") as f:
+        pickle.dump(fit_moments, f)
+    with open(inf_dir_dadi / "fit_params.pkl", "wb") as f:
+        pickle.dump(fit_dadi, f)
 
-    with open(moments_file_name, "wb") as f:
-        pickle.dump(fit, f)
+    # Use the *first* entry as "best" for scatter summary
+    return params, fit_moments[0], fit_dadi[0]
 
-    # Save the best fit parameters for dadi inference
-    with open(dadi_file_name, "wb") as f:
-        pickle.dump(dadi_fit, f)
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run split isolation model simulation and generate SFS")
+# -----------------------------------------------------------------------------
+# main driver
+# -----------------------------------------------------------------------------
 
-    parser.add_argument("--experiment_config", type=str, required=True,
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run split‑isolation simulations from priors and summarise fits.")
+
+    parser.add_argument("--experiment_config", required=True, type=Path,
                         help="Path to experiment config JSON file")
+    parser.add_argument("--num_draws", type=int, default=None,
+                        help="Override number of parameter sets to draw")
 
-    # Optional CLI override for each parameter
-    parser.add_argument("--N0", type=int, default=10000, help="Ancestral population size")
-    parser.add_argument("--N1", type=int, default=5000, help="Size of population 1 after split")
-    parser.add_argument("--N2", type=int, default=5000, help="Size of population 2 after split")
-    parser.add_argument("--m", type=float, default=1e-6, help="Migration rate ")
-    parser.add_argument("--t_split", type=float, default=10000, help="Time of split (generations)")
+    for p in PARAM_NAMES:
+        parser.add_argument(f"--{p}", type=float, default=None, help=f"Fix {p} to this value")
 
     args = parser.parse_args()
 
-    # Load experiment config
-    with open(args.experiment_config, "r") as f:
-        experiment_config = json.load(f)
+    # Load config ------------------------------------------------------
+    with args.experiment_config.open() as f:
+        cfg = json.load(f)
 
-    # Build sampled parameter dictionary
-    sampled_params = {
-        "N0": args.N0,
-        "N1": args.N1,
-        "N2": args.N2,
-        "m": args.m,
-        "t_split": args.t_split
-    }
+    priors = cfg["priors"]
+    num_draws = args.num_draws or cfg.get("num_draws", 1)
+    rng = np.random.default_rng(cfg.get("seed"))
 
-    main(experiment_config, sampled_params)
+    # Build draw list --------------------------------------------------
+    draws = []
+    for _ in range(num_draws):
+        d = sample_from_priors(priors, rng)
+        for n in PARAM_NAMES:
+            override = getattr(args, n)
+            if override is not None:
+                d[n] = int(override) if isinstance(priors[n][0], int) else float(override)
+        draws.append(d)
+
+    # Run replicates ---------------------------------------------------
+    runs_root = Path(f"{cfg['demographic_model']}/runs"); runs_root.mkdir(parents=True, exist_ok=True)
+
+    true_all, mom_all, dadi_all = [], [], []
+
+    for idx, pset in enumerate(tqdm(draws, total=num_draws, desc="replicates"), 1):
+        run_dir = runs_root / f"run_{idx:04d}"
+        print(f"▶ replicate {idx}/{num_draws} → {run_dir}")
+        true_p, mom_p, dadi_p = run_one(cfg, pset, run_dir)
+        true_all.append(true_p); mom_all.append(mom_p); dadi_all.append(dadi_p)
+
+    # ------------------------------------------------------------------
+    # Scatterplot summary (true vs estimated) --------------------------
+    # ------------------------------------------------------------------
+    def scatter_summary(estimates: List[Dict[str, float]], label: str, colour: str, outfile: Path):
+        fig, axes = plt.subplots(1, len(PARAM_NAMES), figsize=(3 * len(PARAM_NAMES), 3), squeeze=False)
+        for i, param in enumerate(PARAM_NAMES):
+            ax = axes[0, i]
+            x = [d[param] for d in true_all]
+            y = [d[param] for d in estimates]
+            ax.scatter(x, y, marker="o")
+            ax.plot(ax.get_xlim(), ax.get_xlim(), ls="--", lw=0.8, color="grey")
+            ax.set_xlabel(f"true {param}")
+            ax.set_ylabel(f"{label} {param}")
+        fig.tight_layout()
+        fig.savefig(outfile, dpi=300)
+        plt.close(fig)
+
+    scatter_summary(mom_all, "moments", "C0", runs_root / "scatter_moments_vs_true.png")
+    scatter_summary(dadi_all, "dadi",    "C1", runs_root / "scatter_dadi_vs_true.png")
+
+
+
+if __name__ == "__main__":
+    main()

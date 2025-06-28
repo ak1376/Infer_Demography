@@ -1,107 +1,214 @@
 #!/usr/bin/env python3
+"""
+Revised **bottleneck.py** (uniform‑prior driver)
+------------------------------------------------
+* Uniform prior sampling driven by the JSON `priors` block.
+* Optional CLI pins for any parameter.
+* Any number of replicates (`num_draws`) – each saved in
+  `bottleneck/runs/run_XXXX`.
+* Runs **moments** and **dadi** optimisation, stores fits, and produces
+  scatter plots (true vs estimated) for quick QC.
+* tqdm progress bar with `tqdm.write` for clean interleaved logging.
+"""
+
+from __future__ import annotations
+
 import argparse
 import json
 import pickle
-import matplotlib.pyplot as plt
-import demesdraw
 import sys
 from pathlib import Path
-# Add src directory to Python path
+from typing import Any, Dict, List, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import demesdraw
+import moments
+from tqdm import tqdm
+
+# ---------------------------------------------------------------------------
+# local project imports
+# ---------------------------------------------------------------------------
+
 src_path = Path(__file__).resolve().parents[1] / "src"
 sys.path.append(str(src_path))
 
 from simulation import bottleneck_model, simulation, create_SFS
-from moments_inference import fit_model
-from dadi_inference import fit_model as dadi_fit_model
-import moments
+from moments_inference import fit_model as moments_fit_model
+from dadi_inference   import fit_model as dadi_fit_model
 
+# ---------------------------------------------------------------------------
+# constants – keep parameter order consistent everywhere
+# ---------------------------------------------------------------------------
 
-def main(experiment_config, sampled_params):
-    """
-    Run the split migration model simulation and save visual + data outputs.
+PARAM_NAMES: List[str] = [
+    "N0",
+    "N_bottleneck",
+    "N_recover",
+    "t_bottleneck_start",
+    "t_bottleneck_end",
+]
 
-    Parameters:
-    - experiment_config: Dictionary of experiment settings.
-    - sampled_params: Dictionary of demographic model parameters.
-    """
+# ---------------------------------------------------------------------------
+# helper : draw one parameter set from uniform priors
+# ---------------------------------------------------------------------------
 
-    # Save the sampled parameters for reference
-    with open("./data/bottleneck_sampled_params.pkl", "wb") as f:
-        pickle.dump(sampled_params, f)
+def sample_from_priors(priors: Dict[str, List[float]], rng: np.random.Generator) -> Dict[str, float]:
+    draw: Dict[str, float] = {}
+    for name, (low, high) in priors.items():
+        val: float | int = rng.uniform(low, high)
+        if isinstance(low, int) and isinstance(high, int):
+            val = int(round(val))
+        draw[name] = val
+    return draw
 
+# ---------------------------------------------------------------------------
+# pipeline for **one** replicate – returns (true, moments_best, dadi_best)
+# ---------------------------------------------------------------------------
 
-    # Run the split migration model simulation
-    g = bottleneck_model(sampled_params)
+def run_one(cfg: Dict[str, Any], params: Dict[str, float], out_dir: Path) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = out_dir / "data";   data_dir.mkdir(exist_ok=True)
+    mom_dir  = out_dir / "inferences" / "moments"; mom_dir.mkdir(parents=True, exist_ok=True)
+    dadi_dir = out_dir / "inferences" / "dadi";    dadi_dir.mkdir(parents=True, exist_ok=True)
 
-    # Draw and save the demography graph
+    # ------------------------------------------------------------------
+    # 1. demography -> figure
+    # ------------------------------------------------------------------
+    g = bottleneck_model(params)
+    if hasattr(g, "sort_events"):
+        g.sort_events()                 # ensure chronological order
+
     ax = demesdraw.tubes(g)
-    ax.set_title("Bottleneck Model")
     ax.set_xlabel("Time (generations)")
-    ax.set_ylabel("Population Size")
-    plt.savefig("./data/demes_bottleneck_model.png", dpi=300, bbox_inches='tight')
+    ax.set_ylabel("Population size")
+    plt.savefig(data_dir / "demes_bottleneck_model.png", dpi=300, bbox_inches="tight")
+    plt.close(ax.figure)
 
-    # Simulate and generate the tree sequence and SFS
-    ts, g = simulation(sampled_params, model_type="bottleneck", experiment_config=experiment_config)
-    SFS = create_SFS(ts)
+    # ------------------------------------------------------------------
+    # 2. coalescent simulation -> SFS
+    # ------------------------------------------------------------------
+    ts, g = simulation(params, model_type="bottleneck", experiment_config=cfg)
+    SFS   = create_SFS(ts)
 
-    # Save outputs
-    with open("./data/bottleneck_SFS.pkl", "wb") as f:
+    with open(data_dir / "sampled_params.pkl", "wb") as f:
+        pickle.dump(params, f)
+    with open(data_dir / "SFS.pkl", "wb") as f:
         pickle.dump(SFS, f)
-    ts.dump("./data/bottleneck_tree_sequence.trees")
+    ts.dump(data_dir / "tree_sequence.trees")
 
-    start = [sampled_params['N0'], sampled_params['N_bottleneck'], sampled_params["N_recover"],
-             sampled_params["t_bottleneck_start"], sampled_params["t_bottleneck_end"]]
-    
+    # ------------------------------------------------------------------
+    # 3. optimisation start point (perturbed true values)
+    # ------------------------------------------------------------------
+
+    start: List[float] = []
+    for p in PARAM_NAMES:
+        low, high = cfg["priors"][p]
+        mid: float | int = (low + high) / 2.0
+        if isinstance(low, int) and isinstance(high, int):
+            mid = int(mid)
+        start.append(mid)
+
+    # start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], fold=0.1)
+
     start = moments.Misc.perturb_params(start, fold=0.1)
 
-    param_names = [
-        "N0", "N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end"
-    ]
-    
-    # run the optimisations exactly as you already do
-    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config, sampled_params=sampled_params)
-    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config, sampled_params=sampled_params)
+    # ------------------------------------------------------------------
+    # 4. inference
+    # ------------------------------------------------------------------
+    fit_mom  = moments_fit_model(SFS, start=start, g=g, experiment_config=cfg, sampled_params=params)
+    fit_dadi = dadi_fit_model(   SFS, start=start, g=g, experiment_config=cfg, sampled_params=params)
 
-    # convert each array → dict
-    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
-    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
+    fit_mom  = [dict(zip(PARAM_NAMES, arr.tolist())) for arr in fit_mom]
+    fit_dadi = [dict(zip(PARAM_NAMES, arr.tolist())) for arr in fit_dadi]
 
-    moments_file_name = f"./inferences/moments/{experiment_config['demographic_model']}_fit_params.pkl"
-    dadi_file_name = f"./inferences/dadi/{experiment_config['demographic_model']}_fit_params.pkl"
+    with open(mom_dir / "fit_params.pkl", "wb") as f:
+        pickle.dump(fit_mom, f)
+    with open(dadi_dir / "fit_params.pkl", "wb") as f:
+        pickle.dump(fit_dadi, f)
 
-    with open(moments_file_name, "wb") as f:
-        pickle.dump(fit, f)
+    # use the *first* entry as the best fit for summary plots
+    return params, fit_mom[0], fit_dadi[0]
 
-    # Save the best fit parameters for dadi inference
-    with open(dadi_file_name, "wb") as f:
-        pickle.dump(dadi_fit, f)
+# ---------------------------------------------------------------------------
+# main driver – draws, replicates, summary plots
+# ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run split isolation model simulation and generate SFS")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run bottleneck simulations from priors and summarise fits")
 
-    parser.add_argument("--experiment_config", type=str, required=True,
+    parser.add_argument("--experiment_config", required=True, type=Path,
                         help="Path to experiment config JSON file")
+    parser.add_argument("--num_draws", type=int, default=None,
+                        help="Override number of parameter draws (default: config value)")
 
-    # Optional CLI override for each parameter
-    parser.add_argument("--N0", type=int, default=10000, help="Effective population size of the ancestral population")
-    parser.add_argument("--N_bottleneck", type=int, default=2000, help="Size of population after bottleneck")
-    parser.add_argument("--N_recover", type=int, default=5000, help="Size of population 2 after split")
-    parser.add_argument("--t_bottleneck_start", type=float, default=300, help="Migration rate ")
-    parser.add_argument("--t_bottleneck_end", type=float, default=100, help="Time of split (generations)")
+    # per‑parameter pins (CLI overrides)
+    for p in PARAM_NAMES:
+        parser.add_argument(f"--{p}", type=float, default=None, help=f"Pin {p} to this value")
 
     args = parser.parse_args()
 
-    # Load experiment config
-    with open(args.experiment_config, "r") as f:
-        experiment_config = json.load(f)
+    # ------------------------------------------------------------------
+    # config + RNG ------------------------------------------------------
+    # ------------------------------------------------------------------
+    with args.experiment_config.open() as f:
+        cfg = json.load(f)
 
-    # Build sampled parameter dictionary
-    sampled_params = {
-        "N0": args.N0,
-        "N_bottleneck": args.N_bottleneck,
-        "N_recover": args.N_recover,
-        "t_bottleneck_start": args.t_bottleneck_start,
-        "t_bottleneck_end": args.t_bottleneck_end
-    }
+    priors   = cfg["priors"]
+    n_draw   = args.num_draws or cfg.get("num_draws", 1)
+    rng      = np.random.default_rng(cfg.get("seed"))
 
-    main(experiment_config, sampled_params)
+    # ------------------------------------------------------------------
+    # draw parameter sets ----------------------------------------------
+    # ------------------------------------------------------------------
+    draws: List[Dict[str, float]] = []
+    while len(draws) < n_draw:
+        d = sample_from_priors(priors, rng)
+        # ensure start > end for bottleneck timing
+        if d["t_bottleneck_start"] <= d["t_bottleneck_end"]:
+            d["t_bottleneck_start"], d["t_bottleneck_end"] = (
+                d["t_bottleneck_end"], d["t_bottleneck_start"],
+            )
+        # apply CLI overrides
+        for k in PARAM_NAMES:
+            override = getattr(args, k)
+            if override is not None:
+                d[k] = int(override) if isinstance(priors[k][0], int) else float(override)
+        draws.append(d)
+
+    # ------------------------------------------------------------------
+    # run replicates ----------------------------------------------------
+    # ------------------------------------------------------------------
+    runs_root = Path("bottleneck/runs"); runs_root.mkdir(parents=True, exist_ok=True)
+
+    all_true, all_mom, all_dadi = [], [], []
+
+    for idx, pset in enumerate(tqdm(draws, total=n_draw, desc="replicates"), 1):
+        run_dir = runs_root / f"run_{idx:04d}"
+        tqdm.write(f"▶ replicate {idx}/{n_draw} → {run_dir}")
+        t, m, d = run_one(cfg, pset, run_dir)
+        all_true.append(t); all_mom.append(m); all_dadi.append(d)
+
+    # ------------------------------------------------------------------
+    # scatter‑plot helper
+    # ------------------------------------------------------------------
+    def scatter(est: List[Dict[str, float]], label: str, outfile: Path) -> None:
+        fig, axes = plt.subplots(1, len(PARAM_NAMES), figsize=(3 * len(PARAM_NAMES), 3))
+        if len(PARAM_NAMES) == 1:
+            axes = [axes]
+        for i, p in enumerate(PARAM_NAMES):
+            ax = axes[i]
+            x = [d[p] for d in all_true]
+            y = [d[p] for d in est]
+            ax.scatter(x, y, s=15)
+            ax.plot(ax.get_xlim(), ax.get_xlim(), ls="--", lw=0.8, color="grey")
+            ax.set_xlabel(f"true {p}")
+            ax.set_ylabel(f"{label} {p}")
+        fig.tight_layout(); fig.savefig(outfile, dpi=300); plt.close(fig)
+
+    scatter(all_mom,  "moments", runs_root / "scatter_moments_vs_true.png")
+    scatter(all_dadi, "dadi",    runs_root / "scatter_dadi_vs_true.png")
+
+
+if __name__ == "__main__":
+    main()

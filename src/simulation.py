@@ -198,9 +198,6 @@ def create_SFS(ts):
     if len(pop_names) > 1 and pop_names[0] == "N0":
         pop_names = pop_names[1:]  # Remove the ancestral population name
 
-    print(pop_names)
-    print(sfs.shape)
-
     # if ts.num_populations == 1:
     #     pop_names = [ts.populations(0).metadata.get("name", "N0")]
     # else:

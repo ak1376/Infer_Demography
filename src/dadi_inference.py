@@ -1,8 +1,6 @@
 import dadi
-import tskit 
 from collections import OrderedDict
-import numpy as np 
-from tqdm import tqdm
+import numpy as np
 
 def diffusion_sfs(g, parameters, sample_sizes, experiment_config):
     """
@@ -20,52 +18,76 @@ def diffusion_sfs(g, parameters, sample_sizes, experiment_config):
         pts=pts_l
     )
 
-def fit_model(sfs, start, g, experiment_config, sampled_params = None) -> list[float]:
+# ------ helper ---------------------------------------------------------------
+def _random_start(priors: dict[str, list[float]],
+                  rng:    np.random.Generator) -> list[float]:
+    """Uniformly draw one parameter vector from the prior box."""
+    vec = []
+    for low, high in priors.values():
+        v = rng.uniform(low, high)
+        if isinstance(low, int) and isinstance(high, int):
+            v = int(round(v))
+        vec.append(v)
+    return vec
+
+
+# ------ main -----------------------------------------------------------------
+def fit_model(
+    sfs,
+    start,                       # ← **may be None**
+    g,
+    experiment_config,
+    sampled_params=None,
+):
     """
-    Fit demographic model to provided SFS
+    Fit a dadi demographic model.
+
+    * If *start* is **None**, a fresh random initial vector is drawn from
+      the priors **for every optimisation replicate**.
+    * Otherwise the supplied *start* is perturbed by 10 %.
+
+    Returns *top_k* best parameter vectors sorted by log-likelihood.
     """
-    pts_l = [20,30,40]
-    sample_sizes = OrderedDict((p, (n - 1) // 2) for p, n in zip(sfs.pop_ids, sfs.shape))
+    # bookkeeping ------------------------------------------------------
+    pts_l              = [20, 30, 40]                  # projection grid
+    priors             = experiment_config["priors"]
+    num_opt            = experiment_config["num_optimizations"]
+    top_k              = experiment_config["top_k"]
+    rng                = np.random.default_rng(experiment_config.get("seed"))
 
-    # Do num_optimizations optimizations and return the top k results (based on the log-likelihood) in a pickle file
-    num_optimizations = experiment_config['num_optimizations']
-    top_k = experiment_config['top_k']
+    sample_sizes = OrderedDict(
+        (p, (n - 1) // 2) for p, n in zip(sfs.pop_ids, sfs.shape)
+    )
 
-    if num_optimizations > 1:
-        fits = []
-        for _ in tqdm(range(num_optimizations)):
-            perturbed_start = dadi.Misc.perturb_params(start, fold=0.1)
-            fit = dadi.Inference.optimize_log_powell(
-                perturbed_start,
-                sfs,
-                lambda p, n, pts=None: diffusion_sfs(g, p, sample_sizes, experiment_config),
-                pts=pts_l,
-                multinom=False,
-                verbose=0,
-                flush_delay=0.0,
-                maxiter=1000,
-                full_output=True,  # Get full output including log-likelihood, 
-                fixed_params=[sampled_params['N0'], sampled_params['N_bottleneck'], None, None, None] if sampled_params else None
-            )
-            fit = fit[0]
-            ll = fit[1]  # Log-likelihood is the second element in the tuple
-            fits.append((fit, ll))
-
-        # Sort by log-likelihood and return the top k fits
-        fits.sort(key=lambda x: x[1], reverse=True)
-        top_fits = [fit for fit, _ in fits[:top_k]]
-        return top_fits
-    
-    else:
-        fit = dadi.Inference.optimize_log_powell(
-            start,
+    # one optimisation run --------------------------------------------
+    def _optimise(init_vec: list[float]):
+        result = dadi.Inference.optimize_log_powell(
+            init_vec,
             sfs,
             lambda p, n, pts=None: diffusion_sfs(g, p, sample_sizes, experiment_config),
             pts=pts_l,
             multinom=False,
             verbose=0,
             flush_delay=0.0,
-            maxiter=1000, 
-            fixed_params=[sampled_params['N0'], sampled_params['N_bottleneck'], None, None, None] if sampled_params else None
+            maxiter=1000,
+            full_output=True,
+            fixed_params=[sampled_params.get("N0"), sampled_params.get("N_bottleneck"),
+                          None, None, None] if sampled_params else None,
+            lower_bound=[0] * len(init_vec),  # enforce non-negativity
+
         )
-        return fit
+        params, loglik = result[0], result[1]
+        return params, loglik
+
+    # run replicates ---------------------------------------------------
+    fits = []
+    for _ in range(num_opt):
+        if start is None:
+            init = _random_start(priors, rng)
+        else:
+            init = dadi.Misc.perturb_params(start, fold=0.1)
+        fits.append(_optimise(init))
+
+    # pick top-k -------------------------------------------------------
+    fits.sort(key=lambda t: t[1], reverse=True)          # best first
+    return [params for params, _ in fits[:top_k]]

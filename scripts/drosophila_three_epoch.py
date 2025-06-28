@@ -1,136 +1,181 @@
 #!/usr/bin/env python3
+"""
+Revised **drosophila_three_epoch.py**
+------------------------------------
+* Uniform‑prior sampling (see config key ``priors``) with optional CLI pins.
+* Runs any number of replicates (``num_draws``) and saves each in
+  ``drosophila_three_epoch/runs/run_XXXX``.
+* Performs moments **and** dadi inference; stores fits and draws scatter
+  summaries of estimated vs true parameters.
+* Shows a tqdm progress bar.
+"""
+
+from __future__ import annotations
+
 import argparse
 import json
 import pickle
-import matplotlib.pyplot as plt
-import demesdraw
 import sys
 from pathlib import Path
-# Add src directory to Python path
+from typing import Dict, List, Any, Tuple
+
+import numpy as np
+import matplotlib.pyplot as plt
+import demesdraw
+import moments
+from tqdm import tqdm
+
+# ---------------------------------------------------------------------------
+# project imports (add ../src to path)
+# ---------------------------------------------------------------------------
+
 src_path = Path(__file__).resolve().parents[1] / "src"
 sys.path.append(str(src_path))
 
 from simulation import drosophila_three_epoch, simulation, create_SFS
-from moments_inference import fit_model
+from moments_inference import fit_model as moments_fit_model
 from dadi_inference import fit_model as dadi_fit_model
-import moments
+
+# ---------------------------------------------------------------------------
+# constants
+# ---------------------------------------------------------------------------
+
+PARAM_NAMES: List[str] = [
+    "N0",
+    "AFR",
+    "EUR_bottleneck",
+    "EUR_recover",
+    "T_AFR_expansion",
+    "T_AFR_EUR_split",
+    "T_EUR_expansion",
+]
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def sample_from_priors(priors: Dict[str, List[float]], rng: np.random.Generator) -> Dict[str, float]:
+    """Sample one parameter set uniformly from [low, high] for each key."""
+    res: Dict[str, float] = {}
+    for k, (low, high) in priors.items():
+        v: float | int = rng.uniform(low, high)
+        if isinstance(low, int) and isinstance(high, int):
+            v = int(round(v))
+        res[k] = v
+    return res
 
 
-def main(experiment_config, sampled_params):
-    """
-    Run the split migration model simulation and save visual + data outputs.
+# ---------------------------------------------------------------------------
+# per‑replicate pipeline
+# ---------------------------------------------------------------------------
 
-    Parameters:
-    - experiment_config: Dictionary of experiment settings.
-    - sampled_params: Dictionary of demographic model parameters.
-    """
+def run_one(cfg: Dict[str, Any], params: Dict[str, float], out_dir: Path) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = out_dir / "data"; data_dir.mkdir(exist_ok=True)
+    mom_dir  = out_dir / "inferences" / "moments"; mom_dir.mkdir(parents=True, exist_ok=True)
+    dadi_dir = out_dir / "inferences" / "dadi";    dadi_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create the data and inferences directories if they don't exist
-    Path("./data").mkdir(parents=True, exist_ok=True)
-    Path("./inferences/moments").mkdir(parents=True, exist_ok=True)
-    Path("./inferences/dadi").mkdir(parents=True, exist_ok=True)
-
-
-    # Save the sampled parameters for reference
-    with open("./data/drosophila_three_epoch_sampled_params.pkl", "wb") as f:
-        pickle.dump(sampled_params, f)
-
-
-    # Run the split migration model simulation
-    g = drosophila_three_epoch(sampled_params)
-
-    # Draw and save the demography graph
+    # Demography figure ------------------------------------------------
+    g = drosophila_three_epoch(params)
     ax = demesdraw.tubes(g)
-    ax.set_title("Drosophila Three Epoch Model")
     ax.set_xlabel("Time (generations)")
     ax.set_ylabel("Population Size")
-    plt.savefig("./data/demes_drosophila_three_epoch.png", dpi=300, bbox_inches='tight')
+    plt.savefig(data_dir / "demes_drosophila_three_epoch.png", dpi=300, bbox_inches="tight")
+    plt.close(ax.figure)
 
-    # Simulate and generate the tree sequence and SFS
-    ts, g = simulation(sampled_params, model_type="drosophila_three_epoch", experiment_config=experiment_config)
+    # Simulate ---------------------------------------------------------
+    ts, g = simulation(params, model_type="drosophila_three_epoch", experiment_config=cfg)
     SFS = create_SFS(ts)
 
-    # Save outputs
-    with open("./data/drosophila_three_epoch_SFS.pkl", "wb") as f:
+    with open(data_dir / "sampled_params.pkl", "wb") as f:
+        pickle.dump(params, f)
+    with open(data_dir / "SFS.pkl", "wb") as f:
         pickle.dump(SFS, f)
-    ts.dump("./data/drosophila_three_epoch_tree_sequence.trees")
+    ts.dump(data_dir / "tree_sequence.trees")
 
-    N0 = sampled_params["N0"]  # Ancestral population size
-    AFR_recover = sampled_params["AFR"]  # Post expansion African population size
-    EUR_bottleneck = sampled_params["EUR_bottleneck"]  # European bottleneck pop size
-    EUR_recover = sampled_params["EUR_recover"]  # Modern European population size after recovery
-    T_AFR_expansion = sampled_params["T_AFR_expansion"]  # Expansion of population in Africa
-    T_AFR_EUR_split = sampled_params["T_AFR_EUR_split"]  # African-European Divergence
-    T_EUR_expansion = sampled_params["T_EUR_expansion"]  # European
-
-    start = [
-        N0,          
-        AFR_recover, 
-        EUR_bottleneck,
-        EUR_recover,
-        T_AFR_expansion, 
-        T_AFR_EUR_split,
-        T_EUR_expansion
-    ]
-    
+    # Start guess ------------------------------------------------------
+    start = [params[p] for p in PARAM_NAMES]
     start = moments.Misc.perturb_params(start, fold=0.1)
 
-    # names in the exact order the optimisation routines output them
-    param_names = [
-        "N0",
-        "AFR",
-        "EUR_bottleneck",
-        "EUR_recover",
-        "T_AFR_expansion",
-        "T_AFR_EUR_split",
-        "T_EUR_expansion",
-    ]
+    # Inference --------------------------------------------------------
+    fit_mom = moments_fit_model(SFS, start=start, g=g, experiment_config=cfg)
+    fit_dadi = dadi_fit_model(   SFS, start=start, g=g, experiment_config=cfg)
 
-    # run the optimisations exactly as you already do
-    fit      = fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
-    dadi_fit = dadi_fit_model(SFS, start=start, g=g, experiment_config=experiment_config)
+    fit_mom = [dict(zip(PARAM_NAMES, arr.tolist())) for arr in fit_mom]
+    fit_dadi = [dict(zip(PARAM_NAMES, arr.tolist())) for arr in fit_dadi]
 
-    # convert each array → dict
-    fit      = [dict(zip(param_names, p.tolist())) for p in fit]
-    dadi_fit = [dict(zip(param_names, p.tolist())) for p in dadi_fit]
+    with open(mom_dir / "fit_params.pkl", "wb") as f:
+        pickle.dump(fit_mom, f)
+    with open(dadi_dir / "fit_params.pkl", "wb") as f:
+        pickle.dump(fit_dadi, f)
 
-    with open("./inferences/moments/drosophila_three_epoch_fit_params.pkl", "wb") as f:
-        pickle.dump(fit, f)
+    return params, fit_mom[0], fit_dadi[0]
 
-    # Save the best fit parameters for dadi inference
-    with open("./inferences/dadi/drosophila_three_epoch_fit_params.pkl", "wb") as f:
-        pickle.dump(dadi_fit, f)
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run drosophila three epoch model simulation and generate SFS")
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
 
-    parser.add_argument("--experiment_config", type=str, required=True,
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run Drosophila three‑epoch simulations from priors")
+
+    parser.add_argument("--experiment_config", required=True, type=Path,
                         help="Path to experiment config JSON file")
+    parser.add_argument("--num_draws", type=int, default=None,
+                        help="Override number of parameter draws")
 
-    # Optional CLI override for each parameter
-    parser.add_argument("--N0", type=int, default=10000, help="Ancestral population size")
-    parser.add_argument("--AFR", type=int, default=10000, help="Post expansion African population size")
-    parser.add_argument("--EUR_bottleneck", type=int, default=5000, help="European bottleneck population size")
-    parser.add_argument("--EUR_recover", type=int, default=5000, help="Modern European population size after recovery")
-    parser.add_argument("--T_AFR_expansion", type=float, default=10000, help="Time of expansion of population in Africa (generations)")
-    parser.add_argument("--T_AFR_EUR_split", type=float, default=5000, help="Time of African-European divergence (generations)")
-    parser.add_argument("--T_EUR_expansion", type=float, default=2000, help="Time of European population expansion (generations)")
+    for p in PARAM_NAMES:
+        parser.add_argument(f"--{p}", type=float, default=None, help=f"Fix {p} to this value")
 
     args = parser.parse_args()
 
-    # Load experiment config
-    with open(args.experiment_config, "r") as f:
-        experiment_config = json.load(f)
+    # Load + RNG -------------------------------------------------------
+    with args.experiment_config.open() as f:
+        cfg = json.load(f)
 
-    # Build sampled parameter dictionary
-    sampled_params = {
-        "N0": args.N0,
-        "AFR": args.AFR,
-        "EUR_bottleneck": args.EUR_bottleneck,
-        "EUR_recover": args.EUR_recover,
-        "T_AFR_expansion": args.T_AFR_expansion,
-        "T_AFR_EUR_split": args.T_AFR_EUR_split,
-        "T_EUR_expansion": args.T_EUR_expansion
-    }
+    priors = cfg["priors"]
+    n_draw = args.num_draws or cfg.get("num_draws", 1)
+    rng = np.random.default_rng(cfg.get("seed"))
 
-    main(experiment_config, sampled_params)
+    draws: List[Dict[str, float]] = []
+    for _ in range(n_draw):
+        d = sample_from_priors(priors, rng)
+        for k in PARAM_NAMES:
+            ov = getattr(args, k)
+            if ov is not None:
+                d[k] = int(ov) if isinstance(priors[k][0], int) else float(ov)
+        draws.append(d)
+
+    runs_root = Path("drosophila_three_epoch/runs"); runs_root.mkdir(parents=True, exist_ok=True)
+
+    true_all: List[Dict[str, float]] = []
+    mom_all:  List[Dict[str, float]] = []
+    dadi_all: List[Dict[str, float]] = []
+
+    for idx, ps in enumerate(tqdm(draws, total=n_draw, desc="replicates"), 1):
+        run_dir = runs_root / f"run_{idx:04d}"
+        tqdm.write(f"▶ replicate {idx}/{n_draw} → {run_dir}")
+        t, m, d = run_one(cfg, ps, run_dir)
+        true_all.append(t); mom_all.append(m); dadi_all.append(d)
+
+    # summary plots ----------------------------------------------------
+    def scatter(est: List[Dict[str, float]], label: str, out: Path):
+        fig, axs = plt.subplots(1, len(PARAM_NAMES), figsize=(3 * len(PARAM_NAMES), 3))
+        if len(PARAM_NAMES) == 1:
+            axs = [axs]
+        for i, p in enumerate(PARAM_NAMES):
+            ax = axs[i]
+            x = [d[p] for d in true_all]
+            y = [d[p] for d in est]
+            ax.scatter(x, y, s=15)
+            ax.plot(ax.get_xlim(), ax.get_xlim(), ls="--", lw=0.8, color="grey")
+            ax.set_xlabel(f"true {p}")
+            ax.set_ylabel(f"{label} {p}")
+        fig.tight_layout(); fig.savefig(out, dpi=300); plt.close(fig)
+
+    scatter(mom_all, "moments", runs_root / "scatter_moments_vs_true.png")
+    scatter(dadi_all, "dadi",    runs_root / "scatter_dadi_vs_true.png")
+
+
+if __name__ == "__main__":
+    main()
