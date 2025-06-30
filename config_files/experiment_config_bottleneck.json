@@ -8,5 +8,12 @@
     }, 
     "seed": 42, 
     "num_optimizations": 20, 
-    "top_k": 10    
+    "top_k": 10, 
+    "priors": {
+        "N0"                : [5000, 20000],
+        "N_bottleneck"      : [  200,  5000],
+        "N_recover"         : [1000, 20000],
+        "t_bottleneck_start": [  500,  5000],
+        "t_bottleneck_end"  : [   10,   499]
+      }    
 }

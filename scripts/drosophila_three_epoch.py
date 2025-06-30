@@ -1,42 +1,38 @@
 #!/usr/bin/env python3
 """
-drosophila_three_epoch.py  – directory-aware version
-----------------------------------------------------
-Outputs:
+drosophila_three_epoch.py – multi-replicate, directory-aware
+============================================================
+For every replicate:
 
-    drosophila_three_epoch/
-        ├─ data/
-        │   ├─ demes_drosophila_three_epoch.png
-        │   ├─ sampled_params.pkl
-        │   ├─ drosophila_three_epoch_SFS.pkl
-        │   └─ drosophila_three_epoch_tree_sequence.trees
-        └─ inferences/
-            ├─ moments/drosophila_three_epoch_fit_params.pkl
-            └─ dadi/drosophila_three_epoch_fit_params.pkl
+  1. Draw a parameter set from the uniform ``priors`` in the JSON,
+     honouring any CLI pins;
+  2. Simulate, run moments & dadi inference, store fits (+ log-lik);
+  3. Write outputs under  drosophila_three_epoch/runs/run_XXXX/
+
+Afterwards two global scatter-plots are saved (one for moments, one for
+dadi) coloured by log-likelihood.
 """
-
 from __future__ import annotations
 import argparse, json, pickle, sys
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 import matplotlib.pyplot as plt
-import demesdraw, moments
-from tqdm import tqdm  # handy if you batch calls later
+import demesdraw, moments, numpy as np
+from tqdm import tqdm
 
-# ----------------------------------------------------------------------
-#  local imports
-# ----------------------------------------------------------------------
-SRC_PATH = Path(__file__).resolve().parents[1] / "src"
-sys.path.append(str(SRC_PATH))
+# ───────────────────────────── local imports ──────────────────────────────
+SRC = Path(__file__).resolve().parents[1] / "src"
+sys.path.append(str(SRC))
 
 from simulation        import drosophila_three_epoch, simulation, create_SFS
-from moments_inference import fit_model as moments_fit_model, save_scatterplots
+from moments_inference import (
+    fit_model as moments_fit_model,
+    save_scatterplots,
+)
 from dadi_inference    import fit_model as dadi_fit_model
 
-# ----------------------------------------------------------------------
-#  constants
-# ----------------------------------------------------------------------
+# ───────────────────────────── constants ──────────────────────────────────
 PARAM_NAMES: List[str] = [
     "N0",
     "AFR",
@@ -47,109 +43,123 @@ PARAM_NAMES: List[str] = [
     "T_EUR_expansion",
 ]
 
-# ----------------------------------------------------------------------
-#  single-run pipeline
-# ----------------------------------------------------------------------
-def run_pipeline(cfg: Dict[str, Any], params: Dict[str, float]) -> None:
-    mdl_name = cfg["demographic_model"]                       # "drosophila_three_epoch"
+# ───────────────────────────── helpers ────────────────────────────────────
+def _sample_one(priors: Dict[str, list[float]],
+                rng:    np.random.Generator) -> Dict[str, float]:
+    """Draw one parameter vector from uniform priors."""
+    d: Dict[str, float] = {}
+    for k, (lo, hi) in priors.items():
+        v = rng.uniform(lo, hi)
+        if isinstance(lo, int) and isinstance(hi, int):
+            v = int(round(v))
+        d[k] = v
+    return d
 
-    # ── directory scaffold ────────────────────────────────────────────
-    base     = Path(mdl_name)
-    data_dir = base / "data"
-    mom_dir  = base / "inferences" / "moments"
-    dadi_dir = base / "inferences" / "dadi"
-    for d in (data_dir, mom_dir, dadi_dir):
-        d.mkdir(parents=True, exist_ok=True)
 
-    # ── demography + figure ───────────────────────────────────────────
+def _attach_ll(vecs: List[np.ndarray], lls: List[float]) -> List[dict]:
+    """Add 'loglik' to each parameter dictionary."""
+    return [
+        {**dict(zip(PARAM_NAMES, v.tolist())), "loglik": ll}
+        for v, ll in zip(vecs, lls)
+    ]
+
+
+# ───────────────────────────── one replicate ──────────────────────────────
+def run_one(cfg: Dict[str, Any],
+            params: Dict[str, float],
+            out:    Path) -> Tuple[List[dict], List[dict]]:
+    """Simulate + infer for one parameter set; return (moments, dadi) dicts."""
+    data_dir = out / "data";                 data_dir.mkdir(parents=True)
+    mom_dir  = out / "inferences" / "moments"
+    dadi_dir = out / "inferences" / "dadi"
+    mom_dir.mkdir(parents=True)
+    dadi_dir.mkdir(parents=True)
+
+    # 1. demography figure ------------------------------------------------
     g = drosophila_three_epoch(params)
-    ax = demesdraw.tubes(g)
-    ax.set_xlabel("Time (generations)")
-    ax.set_ylabel("Population size")
+    ax = demesdraw.tubes(g); ax.set_xlabel("Time"); ax.set_ylabel("N")
     plt.savefig(data_dir / "demes_drosophila_three_epoch.png",
                 dpi=300, bbox_inches="tight")
     plt.close(ax.figure)
 
-    # ── simulate + SFS ────────────────────────────────────────────────
-    ts, g_sim = simulation(params,
-                           model_type="drosophila_three_epoch",
-                           experiment_config=cfg)
+    # 2. simulation -------------------------------------------------------
+    ts, g_sim = simulation(params, "drosophila_three_epoch", cfg)
     sfs = create_SFS(ts)
 
-    # raw artefacts
-    (data_dir / "sampled_params.pkl").write_bytes(pickle.dumps(params))
-    (data_dir / "drosophila_three_epoch_SFS.pkl").write_bytes(pickle.dumps(sfs))
+    pickle.dump(params, (data_dir / "sampled_params.pkl").open("wb"))
+    pickle.dump(sfs,    (data_dir / "drosophila_three_epoch_SFS.pkl").open("wb"))
     ts.dump(data_dir / "drosophila_three_epoch_tree_sequence.trees")
 
-    # ── optimiser starting point (perturbed truth) ───────────────────
-    start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], fold=0.1)
-
-    # ........ inference ...............................................
-    fits_mom,  lls_mom  = moments_fit_model(
-        sfs, start=start, g=g_sim, experiment_config=cfg
-    )
-    fits_dadi, lls_dadi = dadi_fit_model(
-        sfs, start=start, g=g_sim, experiment_config=cfg
-    )
-
-    # —— bundle each fit with its log-likelihood ————————————————
-    def _attach_ll(vecs, lls):
-        return [
-            {**dict(zip(PARAM_NAMES, v.tolist())), "loglik": ll}
-            for v, ll in zip(vecs, lls)
-        ]
+    # 3. inference --------------------------------------------------------
+    start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], 0.1)
+    fits_mom,  lls_mom  = moments_fit_model(sfs, start, g_sim, cfg)
+    fits_dadi, lls_dadi = dadi_fit_model(   sfs, start, g_sim, cfg)
 
     mom_dicts  = _attach_ll(fits_mom,  lls_mom)
     dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
 
-    pickle.dump(mom_dicts,  open(mom_dir  / f"{mdl_name}_fit_params.pkl", "wb"))
-    pickle.dump(dadi_dicts, open(dadi_dir / f"{mdl_name}_fit_params.pkl", "wb"))
+    pickle.dump(mom_dicts,  (mom_dir  / "fit_params.pkl").open("wb"))
+    pickle.dump(dadi_dicts, (dadi_dir / "fit_params.pkl").open("wb"))
+    return mom_dicts, dadi_dicts
 
-    # —— coloured scatter-plots ————————————————————————————————
-    true_vecs = [params] * len(mom_dicts)   # one GT copy per replicate
 
-    save_scatterplots(
-        true_vecs=true_vecs,
-        est_vecs=mom_dicts,
-        ll_vec=lls_mom,
-        param_names=PARAM_NAMES,
-        outfile=base / "inferences" / "scatter_moments_vs_true.png",
-        label="moments",
-    )
-
-    save_scatterplots(
-        true_vecs=true_vecs,
-        est_vecs=dadi_dicts,
-        ll_vec=lls_dadi,
-        param_names=PARAM_NAMES,
-        outfile=base / "inferences" / "scatter_dadi_vs_true.png",
-        label="dadi",
-    )
-
-# ----------------------------------------------------------------------
-#  CLI entry-point
-# ----------------------------------------------------------------------
+# ───────────────────────────── main driver ────────────────────────────────
 def main() -> None:
-    p = argparse.ArgumentParser(description="Drosophila three-epoch simulation & inference")
-    p.add_argument("--experiment_config", required=True, type=Path,
-                   help="Path to JSON experiment-config file")
+    p = argparse.ArgumentParser("Drosophila three-epoch multi-replicate runner")
+    p.add_argument("--experiment_config", required=True, type=Path)
+    p.add_argument("--num_draws", type=int, default=None,
+                   help="Replicates to run (default from JSON)")
 
-    # optional CLI overrides
-    p.add_argument("--N0",              type=int,   default=10_000)
-    p.add_argument("--AFR",             type=int,   default=10_000)
-    p.add_argument("--EUR_bottleneck",  type=int,   default=5_000)
-    p.add_argument("--EUR_recover",     type=int,   default=5_000)
-    p.add_argument("--T_AFR_expansion", type=float, default=10_000)
-    p.add_argument("--T_AFR_EUR_split", type=float, default=5_000)
-    p.add_argument("--T_EUR_expansion", type=float, default=2_000)
+    # CLI “pins” – override any prior draw
+    for n in PARAM_NAMES:
+        p.add_argument(f"--{n}", type=float, default=None)
 
     args = p.parse_args()
 
-    cfg = json.loads(args.experiment_config.read_text())
+    cfg     = json.loads(args.experiment_config.read_text())
+    priors  = cfg["priors"]
+    rng     = np.random.default_rng(cfg.get("seed"))
+    n_draw  = args.num_draws or cfg.get("num_draws", 1)
 
-    params = {name: getattr(args, name) for name in PARAM_NAMES}
+    base      = Path(cfg["demographic_model"]); base.mkdir(exist_ok=True)
+    runs_root = base / "runs";                  runs_root.mkdir(exist_ok=True)
 
-    run_pipeline(cfg, params)
+    all_true, all_mom, all_dadi = [], [], []
+
+    for idx in tqdm(range(1, n_draw + 1), desc="replicates"):
+        params = _sample_one(priors, rng)
+        # apply CLI overrides
+        for k in PARAM_NAMES:
+            ov = getattr(args, k)
+            if ov is not None:
+                params[k] = ov
+
+        run_dir = runs_root / f"run_{idx:04d}"
+        mom_dicts, dadi_dicts = run_one(cfg, params, run_dir)
+
+        all_true.extend([params] * len(mom_dicts))
+        all_mom.extend(mom_dicts)
+        all_dadi.extend(dadi_dicts)
+
+    # ─── global scatter-plots ──────────────────────────────────────────
+    inf_dir = base / "inferences"; inf_dir.mkdir(exist_ok=True)
+
+    save_scatterplots(
+        true_vecs   = all_true,
+        est_vecs    = all_mom,
+        ll_vec      = [d["loglik"] for d in all_mom],
+        param_names = PARAM_NAMES,
+        outfile     = inf_dir / "scatter_moments_vs_true.png",
+        label       = "moments",
+    )
+    save_scatterplots(
+        true_vecs   = all_true,
+        est_vecs    = all_dadi,
+        ll_vec      = [d["loglik"] for d in all_dadi],
+        param_names = PARAM_NAMES,
+        outfile     = inf_dir / "scatter_dadi_vs_true.png",
+        label       = "dadi",
+    )
 
 
 if __name__ == "__main__":

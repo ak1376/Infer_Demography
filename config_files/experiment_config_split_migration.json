@@ -2,13 +2,26 @@
     "genome_length": 1e6,
     "mutation_rate": 1.5e-08,
     "recombination_rate": 1.5e-08,
+  
     "demographic_model": "split_migration",
+  
     "num_samples": {
-        "N1": 10,
-        "N2": 10
-    }, 
-    "seed": 42, 
-    "num_optimizations": 4, 
-    "top_k": 3
-    
-}
+      "N1": 10,
+      "N2": 10
+    },
+  
+    "seed": 42,
+    "num_optimizations": 4,
+    "top_k": 3,
+    "num_draws": 10,
+  
+    "priors": {
+      "N0"     : [5000, 20000],
+      "N1"     : [1000, 10000],
+      "N2"     : [1000, 10000],
+      "m12"    : [1e-8 , 1e-3 ],   
+      "m21"    : [1e-8 , 1e-3 ], 
+      "t_split": [1000, 40000]
+    }
+  }
+  
