@@ -1,0 +1,3 @@
+# ignore Python byte-code & build cruft
+__pycache__/
+*.py[cod]
