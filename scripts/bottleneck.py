@@ -20,19 +20,24 @@ The script keeps your original simulation + inference logic; only the file
 layout is changed.  There is **no** prior sampling — you run a single
 replicate per invocation and can override any parameter with CLI flags.
 """
-
 from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+SRC_PATH = Path(__file__).resolve().parents[1] / "src"
+sys.path.append(str(SRC_PATH))          # ①  put src/ on PYTHONPATH *first*
+
 
 import argparse
 import json
 import pickle
-import sys
-from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import demesdraw
 import moments
+from moments_inference import save_scatterplots, moments_fit_model   # new helper
 
 # ────────────────────────────────────────────────────────────────────────────
 # local project imports
@@ -98,14 +103,65 @@ def run_pipeline(cfg: Dict[str, Any], params: Dict[str, float]) -> None:
     start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], fold=0.1)
 
     # 5. inference ────────────────────────────────────────────────────────
-    fit_mom = moments_fit_model(sfs, start=start, g=g_sim, experiment_config=cfg, sampled_params=params)
-    fit_dadi = dadi_fit_model(sfs, start=start, g=g_sim, experiment_config=cfg, sampled_params=params)
+    fits_mom, lls_mom = moments_fit_model(
+        sfs,
+        start=start,
+        g=g_sim,
+        experiment_config=cfg,
+        sampled_params=params,
+    )
+    fits_dadi, lls_dadi = dadi_fit_model(
+        sfs,
+        start=start,
+        g=g_sim,
+        experiment_config=cfg,
+        sampled_params=params,
+    )
 
-    # store fits as list[dict] for consistency with the rest of the repo
-    pickle.dump([dict(zip(PARAM_NAMES, v.tolist())) for v in fit_mom],
-                open(mom_dir / f"{mdl_name}_fit_params.pkl", "wb"))
-    pickle.dump([dict(zip(PARAM_NAMES, v.tolist())) for v in fit_dadi],
-                open(dadi_dir / f"{mdl_name}_fit_params.pkl", "wb"))
+    # 6. serialise fits  (include log-likelihood!)  --------------------
+    def _attach_ll(fits, lls):
+        """
+        Turn (params-vectors, ll-values) into a list of dicts each containing
+        all parameters **plus** a “loglik” field.
+        """
+        return [
+            {**dict(zip(PARAM_NAMES, vec.tolist())), "loglik": ll}
+            for vec, ll in zip(fits, lls)
+        ]
+
+    mom_dicts  = _attach_ll(fits_mom,  lls_mom)
+    dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
+
+    # save
+    pickle.dump(mom_dicts,  open(mom_dir  / f"{mdl_name}_fit_params.pkl", "wb"))
+    pickle.dump(dadi_dicts, open(dadi_dir / f"{mdl_name}_fit_params.pkl", "wb"))    
+
+    # --------------------------------------------------------------------
+    # 7. coloured scatter-plots  -----------------------------------------
+    # --------------------------------------------------------------------
+    from moments_inference import save_scatterplots           # already added earlier
+
+    true_vecs = [params] * len(mom_dicts)   # one ground-truth copy per fit
+
+    # moments plot
+    save_scatterplots(
+        true_vecs=true_vecs,
+        est_vecs=mom_dicts,
+        ll_vec=lls_mom,
+        param_names=PARAM_NAMES,
+        outfile=base / "inferences" / "scatter_moments_vs_true.png",
+        label="moments",
+    )
+
+    # dadi plot  (optional - delete if you don’t care)
+    save_scatterplots(
+        true_vecs=true_vecs,
+        est_vecs=dadi_dicts,
+        ll_vec=lls_dadi,
+        param_names=PARAM_NAMES,
+        outfile=base / "inferences" / "scatter_dadi_vs_true.png",
+        label="dadi",
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────

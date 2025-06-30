@@ -31,7 +31,7 @@ SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 sys.path.append(str(SRC_PATH))
 
 from simulation import split_migration_model, simulation, create_SFS
-from moments_inference import fit_model as moments_fit_model
+from moments_inference import fit_model as moments_fit_model, save_scatterplots
 from dadi_inference    import fit_model as dadi_fit_model
 
 # ----------------------------------------------------------------------
@@ -78,15 +78,46 @@ def run_pipeline(cfg: Dict[str, Any], params: Dict[str, float]) -> None:
                                         fold=0.1)
 
     # ........ inference ...............................................
-    fit_mom  = moments_fit_model(sfs, start=start, g=g_sim,
-                                 experiment_config=cfg)
-    fit_dadi = dadi_fit_model(   sfs, start=start, g=g_sim,
-                                 experiment_config=cfg)
+    fits_mom,  lls_mom  = moments_fit_model(
+        sfs, start=start, g=g_sim, experiment_config=cfg
+    )
+    fits_dadi, lls_dadi = dadi_fit_model(
+        sfs, start=start, g=g_sim, experiment_config=cfg
+    )
 
-    pickle.dump([dict(zip(PARAM_NAMES, v.tolist())) for v in fit_mom],
-                open(mom_dir / f"{mdl_name}_fit_params.pkl", "wb"))
-    pickle.dump([dict(zip(PARAM_NAMES, v.tolist())) for v in fit_dadi],
-                open(dadi_dir / f"{mdl_name}_fit_params.pkl", "wb"))
+    # —— bundle each fit with its log-likelihood ————————————————
+    def _attach_ll(vecs, lls):
+        return [
+            {**dict(zip(PARAM_NAMES, v.tolist())), "loglik": ll}
+            for v, ll in zip(vecs, lls)
+        ]
+
+    mom_dicts  = _attach_ll(fits_mom,  lls_mom)
+    dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
+
+    pickle.dump(mom_dicts,  open(mom_dir  / f"{mdl_name}_fit_params.pkl", "wb"))
+    pickle.dump(dadi_dicts, open(dadi_dir / f"{mdl_name}_fit_params.pkl", "wb"))
+
+    # —— coloured scatter-plots ————————————————————————————————
+    true_vecs = [params] * len(mom_dicts)   # one GT copy per replicate
+
+    save_scatterplots(
+        true_vecs=true_vecs,
+        est_vecs=mom_dicts,
+        ll_vec=lls_mom,
+        param_names=PARAM_NAMES,
+        outfile=base / "inferences" / "scatter_moments_vs_true.png",
+        label="moments",
+    )
+
+    save_scatterplots(
+        true_vecs=true_vecs,
+        est_vecs=dadi_dicts,
+        ll_vec=lls_dadi,
+        param_names=PARAM_NAMES,
+        outfile=base / "inferences" / "scatter_dadi_vs_true.png",
+        label="dadi",
+    )
 
 # ----------------------------------------------------------------------
 # CLI entry-point

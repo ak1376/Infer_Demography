@@ -80,7 +80,8 @@ def fit_model(
     # run replicates – always perturb the supplied `start`
     # ------------------------------------------------------------
     fits = []
-    for _ in tqdm(range(num_opt), desc="dadi optimisations"):
+    for i in tqdm(range(num_opt), desc="dadi optimisations"):
+        # init = dadi.Misc.perturb_params(start, fold=i*0.1)
         init = dadi.Misc.perturb_params(start, fold=0.1)
         fits.append(_optimise(init))
 
@@ -88,4 +89,6 @@ def fit_model(
     # return the top-k
     # ------------------------------------------------------------
     fits.sort(key=lambda t: t[1], reverse=True)
-    return [params for params, _ in fits[:top_k]]
+    best_params = [p  for p, ll in fits[:top_k]]
+    best_lls    = [ll for p, ll in fits[:top_k]]
+    return best_params, best_lls

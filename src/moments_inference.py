@@ -1,6 +1,11 @@
+# moments_inference.py  – now with scatter-plot utility
+import matplotlib.pyplot as plt
 import moments
+import numpy as np
 from collections import OrderedDict
+from pathlib import Path
 from tqdm import tqdm
+from matplotlib import cm, colors
 
 
 # ---------------------------------------------------------------------
@@ -21,26 +26,75 @@ def diffusion_sfs(g, parameters, sample_sizes, experiment_config):
 
 
 # ---------------------------------------------------------------------
-# main fitting routine
+# ❶ scatter-plot helper  ------------------------------------------------
+# ---------------------------------------------------------------------
+def save_scatterplots(
+    true_vecs:   list[dict[str, float]],
+    est_vecs:    list[dict[str, float]],
+    ll_vec:      list[float],               # ← NEW!  one log-lik value per replicate
+    param_names: list[str],
+    outfile:     Path,
+    label: str = "moments",
+) -> None:
+    """
+    Draw true vs estimated panels, colouring each point by its log-likelihood
+    (better fits = darker colours).
+
+    Parameters
+    ----------
+    true_vecs   : list of dicts – ground-truth parameters (len = #replicates)
+    est_vecs    : list of dicts – inferred params   (same length/order)
+    ll_vec      : list of float – log-likelihood for *each* replicate
+    param_names : ordered list of parameter names to show
+    outfile     : where to save the .png
+    label       : y-axis label prefix (default “moments”)
+    """
+    # colour map -------------------------------------------------------
+    norm = colors.Normalize(vmin=min(ll_vec), vmax=max(ll_vec))
+    cmap = cm.get_cmap("viridis")
+    colour = cmap(norm(ll_vec))
+
+    # one panel per parameter -----------------------------------------
+    n = len(param_names)
+    fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
+    for i, p in enumerate(param_names):
+        ax = axes[0, i]
+        x = [d[p] for d in true_vecs]
+        y = [d[p] for d in est_vecs]
+        ax.scatter(x, y, s=20, c=colour)
+        ax.plot(ax.get_xlim(), ax.get_xlim(), ls="--", lw=0.8, color="grey")
+        ax.set_xlabel(f"true {p}")
+        ax.set_ylabel(f"{label} {p}")
+
+    # shared colourbar -------------------------------------------------
+    cbar = fig.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap),
+                        ax=axes.ravel().tolist(), shrink=0.8,
+                        label="log-likelihood")
+    fig.tight_layout()
+    fig.savefig(outfile, dpi=300)
+    plt.close(fig)
+
+# ---------------------------------------------------------------------
+# ❷ fitting routine  ---------------------------------------------------
 # ---------------------------------------------------------------------
 def fit_model(
     sfs,
-    start,                       # <-- REQUIRED; no random priors
+    start,                       # REQUIRED
     g,
     experiment_config,
     sampled_params=None,
-):
+) -> tuple[list[list[float]], float]:
     """
     Fit a *moments* demographic model.
 
-    * `start` is mandatory.  Every replicate perturbs that same vector
-      via `moments.Misc.perturb_params(start, fold=0.1)`.
-    * Returns the `top_k` parameter vectors with best log-likelihood.
+    • `start` **must** be supplied; each replicate perturbs that same vector.
+    • Returns:
+          best_params   – the `top_k` best parameter vectors
+          best_ll       – the log-likelihood of the very best fit
     """
     if start is None:
         raise ValueError("`start` may not be None – supply an initial vector.")
 
-    # book-keeping -----------------------------------------------------
     num_opt = experiment_config["num_optimizations"]
     top_k   = experiment_config["top_k"]
 
@@ -48,9 +102,6 @@ def fit_model(
         (p, (n - 1) // 2) for p, n in zip(sfs.pop_ids, sfs.shape)
     )
 
-    # ------------------------------------------------------------
-    # single optimisation helper
-    # ------------------------------------------------------------
     def _optimise(init_vec):
         result = moments.Inference.optimize_powell(
             init_vec,
@@ -61,26 +112,23 @@ def fit_model(
             flush_delay=0.0,
             maxiter=1000,
             full_output=True,
-            lower_bound=[1e-6] * len(init_vec),      # keep parameters ≥ 0
+            lower_bound=[1e-6] * len(init_vec),
             fixed_params=[
                 sampled_params.get("N0"),
                 sampled_params.get("N_bottleneck"),
                 None, None, None,
             ] if sampled_params else None,
         )
-        params, loglik = result[0], result[1]
-        return params, loglik
+        return result[0], result[1]          # params, log-likelihood
 
-    # ------------------------------------------------------------
-    # run replicates
-    # ------------------------------------------------------------
     fits = []
-    for _ in tqdm(range(num_opt), desc="moments optimisations"):
+    for i in tqdm(range(num_opt), desc="moments optimisations"):
+        # init = moments.Misc.perturb_params(start, fold=i * 0.1)
         init = moments.Misc.perturb_params(start, fold=0.1)
         fits.append(_optimise(init))
 
-    # ------------------------------------------------------------
-    # pick top-k
-    # ------------------------------------------------------------
-    fits.sort(key=lambda t: t[1], reverse=True)
-    return [params for params, _ in fits[:top_k]]
+    fits.sort(key=lambda t: t[1], reverse=True)          # best first
+    best_params = [p  for p, ll in fits[:top_k]]
+    best_lls    = [ll for p, ll in fits[:top_k]]
+    return best_params, best_lls
+
