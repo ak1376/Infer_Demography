@@ -3,12 +3,13 @@
     "mutation_rate": 1.5e-08,
     "recombination_rate": 1.5e-08,
     "demographic_model": "bottleneck",
+    "log_dir": "bottleneck/inferences/moments/logs",
     "num_samples": {
         "N0": 10
     }, 
     "seed": 42, 
-    "num_optimizations": 20, 
-    "top_k": 10, 
+    "num_optimizations": 3, 
+    "top_k": 1, 
     "priors": {
         "N0"                : [5000, 20000],
         "N_bottleneck"      : [  200,  5000],

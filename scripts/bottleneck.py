@@ -64,21 +64,27 @@ def _attach_ll(vecs: list[np.ndarray], lls: list[float]) -> list[dict]:
 # ───────────────────────────── one replicate ──────────────────────────────
 def run_one(cfg: Dict[str, Any],
             params: Dict[str, float],
-            out:    Path) -> Tuple[List[dict], List[dict]]:
-    """Simulate, infer, save artefacts; return (mom_dicts, dadi_dicts)."""
-    data_dir = out / "data";                 data_dir.mkdir(parents=True)
-    mom_dir  = out / "inferences" / "moments"
-    dadi_dir = out / "inferences" / "dadi"
-    mom_dir.mkdir(parents=True)
-    dadi_dir.mkdir(parents=True)
+            out:    Path,
+            rng:    np.random.Generator) -> Tuple[List[dict], List[dict]]:
 
-    # --- demography figure ------------------------------------------------
+    data_dir      = out / "data";                 data_dir.mkdir(parents=True)
+    mom_dir       = out / "inferences" / "moments"
+    dadi_dir      = out / "inferences" / "dadi"
+    mom_log_dir   = out / "inferences" / "logs" / "moments"
+    dadi_log_dir  = out / "inferences" / "logs" / "dadi"
+
+    for d in (mom_dir, dadi_dir, mom_log_dir, dadi_log_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+    # 1. demography figure -------------------------------------------------
     g = bottleneck_model(params)
     ax = demesdraw.tubes(g); ax.set_xlabel("Time"); ax.set_ylabel("N")
-    plt.savefig(data_dir / "demes_bottleneck_model.png", dpi=300,
-                bbox_inches="tight"); plt.close(ax.figure)
+    plt.savefig(data_dir / "demes_bottleneck_model.png",
+                dpi=300, bbox_inches="tight")
+    plt.close(ax.figure)
 
-    # --- simulation -------------------------------------------------------
+    # 2. simulation --------------------------------------------------------
     ts, g_sim = simulation(params, "bottleneck", cfg)
     sfs = create_SFS(ts)
 
@@ -86,13 +92,28 @@ def run_one(cfg: Dict[str, Any],
     pickle.dump(sfs,    (data_dir / "bottleneck_SFS.pkl").open("wb"))
     ts.dump(data_dir / "bottleneck_tree_sequence.trees")
 
-    # --- inference --------------------------------------------------------
-    start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], .1)
-    fits_mom,  lls_mom  = moments_fit_model(sfs, start, g_sim, cfg,
-                                            sampled_params=params)
-    fits_dadi, lls_dadi = dadi_fit_model(   sfs, start, g_sim, cfg,
-                                            sampled_params=params)
+    # 3. random start vector from priors ───────────────────────────────
+    priors     = cfg["priors"]
+    start_dict = _sample_one(priors, rng)
+    start      = [start_dict[p] for p in PARAM_NAMES]
 
+    # 4. moments optimisation ……………………………………………………………………
+    fits_mom, lls_mom = moments_fit_model(
+        sfs,
+        start=start,
+        g=g_sim,
+        experiment_config={**cfg, "log_dir": str(mom_log_dir)},  # ← here
+        sampled_params=params,
+    )
+
+    # 5. dadi optimisation ………………………………………………………………………………
+    fits_dadi, lls_dadi = dadi_fit_model(
+        sfs,
+        start=start,
+        g=g_sim,
+        experiment_config={**cfg, "log_dir": str(dadi_log_dir)},  # ← and here
+        sampled_params=params,
+    )
     mom_dicts  = _attach_ll(fits_mom,  lls_mom)
     dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
 
@@ -100,37 +121,36 @@ def run_one(cfg: Dict[str, Any],
     pickle.dump(dadi_dicts, (dadi_dir / "fit_params.pkl").open("wb"))
     return mom_dicts, dadi_dicts
 
+
 # ───────────────────────────── main driver ────────────────────────────────
 def main() -> None:
     p = argparse.ArgumentParser("Bottleneck multi-replicate runner")
     p.add_argument("--experiment_config", required=True, type=Path)
     p.add_argument("--num_draws", type=int, default=None,
                    help="How many replicates (default from JSON)")
-    # CLI pins
-    for name in PARAM_NAMES:
+    for name in PARAM_NAMES:                        # CLI pins
         p.add_argument(f"--{name}", type=float, default=None)
     args = p.parse_args()
 
-    cfg   = json.loads(args.experiment_config.read_text())
-    rng   = np.random.default_rng(cfg.get("seed"))
-    n_draw = args.num_draws or cfg.get("num_draws", 1)
-    priors = cfg["priors"]
+    cfg     = json.loads(args.experiment_config.read_text())
+    priors  = cfg["priors"]
+    rng     = np.random.default_rng(cfg.get("seed"))
+    n_draw  = args.num_draws or cfg.get("num_draws", 1)
 
-    base = Path(cfg["demographic_model"]); base.mkdir(exist_ok=True)
+    base      = Path(cfg["demographic_model"]); base.mkdir(exist_ok=True)
     runs_root = base / "runs"; runs_root.mkdir(exist_ok=True)
 
-    all_mom, all_dadi, all_true = [], [], []
+    all_true, all_mom, all_dadi = [], [], []
 
     for idx in tqdm(range(1, n_draw + 1), desc="replicates"):
-        params = _sample_one(priors, rng)
-        # apply CLI overrides
-        for k in PARAM_NAMES:
-            ov = getattr(args, k);   # None or user value
-            if ov is not None:
-                params[k] = ov
+        params = _sample_one(priors, rng)           # draw ground truth
+        for k in PARAM_NAMES:                       # CLI overrides
+            v = getattr(args, k)
+            if v is not None:
+                params[k] = v
         run_dir = runs_root / f"run_{idx:04d}"
-        mom, dadi = run_one(cfg, params, run_dir)
-        all_true.extend([params] * len(mom))   # one truth per fit
+        mom, dadi = run_one(cfg, params, run_dir, rng)
+        all_true.extend([params] * len(mom))
         all_mom.extend(mom)
         all_dadi.extend(dadi)
 
