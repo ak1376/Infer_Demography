@@ -111,24 +111,24 @@ def run_one(cfg: Dict[str, Any],
     print(f'Moments optimized parameters: {fits_mom}')  # debug output
     print(f'Moments log-likelihoods: {lls_mom}')        # debug output
 
-    fits_dadi, lls_dadi = dadi_fit_model(
-        sfs,
-        start_dict=start_dict,                 # dict you already built
-        demo_model=split_isolation_model,      # the *function*, not g_sim
-        experiment_config={**cfg, "log_dir": str(dadi_log_dir)}
-    )
+    # fits_dadi, lls_dadi = dadi_fit_model(
+    #     sfs,
+    #     start_dict=start_dict,                 # dict you already built
+    #     demo_model=split_isolation_model,      # the *function*, not g_sim
+    #     experiment_config={**cfg, "log_dir": str(dadi_log_dir)}
+    # )
 
-    print(f'Dadi optimized parameters: {fits_dadi}')  # debug output
-    print(f'Dadi log-likelihoods: {lls_dadi}')        # debug
+    # print(f'Dadi optimized parameters: {fits_dadi}')  # debug output
+    # print(f'Dadi log-likelihoods: {lls_dadi}')        # debug
 
-    # mom_dicts = {}
-    # dadi_dicts = {}
+    mom_dicts = {}
+    dadi_dicts = {}
 
     mom_dicts  = _attach_ll(fits_mom,  lls_mom)
-    dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
+    # dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
 
     pickle.dump(mom_dicts,  (mom_dir  / "fit_params.pkl").open("wb"))
-    pickle.dump(dadi_dicts, (dadi_dir / "fit_params.pkl").open("wb"))
+    # pickle.dump(dadi_dicts, (dadi_dir / "fit_params.pkl").open("wb"))
     return mom_dicts, dadi_dicts
 
 # ───────────────────────────── main driver ───────────────────────────────
@@ -162,7 +162,7 @@ def main() -> None:
                 params[k] = manual
         run_dir = runs_root / f"run_{idx:04d}"
         mom, dadi = run_one(cfg, params, run_dir, rng)   # ← pass rng
-        all_true.extend([params] * len(dadi))
+        all_true.extend([params] * len(mom)) #TODO: Change this 
         all_mom.extend(mom)
         all_dadi.extend(dadi)
 
@@ -176,14 +176,14 @@ def main() -> None:
         outfile=inf_dir / "scatter_moments_vs_true.png",
         label="moments",
     )
-    save_scatterplots(
-        true_vecs=all_true,
-        est_vecs=all_dadi,
-        ll_vec=[d["loglik"] for d in all_dadi],
-        param_names=PARAM_NAMES,
-        outfile=inf_dir / "scatter_dadi_vs_true.png",
-        label="dadi",
-    )
+    # save_scatterplots(
+    #     true_vecs=all_true,
+    #     est_vecs=all_dadi,
+    #     ll_vec=[d["loglik"] for d in all_dadi],
+    #     param_names=PARAM_NAMES,
+    #     outfile=inf_dir / "scatter_dadi_vs_true.png",
+    #     label="dadi",
+    # )
 
 if __name__ == "__main__":
     main()

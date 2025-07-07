@@ -73,15 +73,25 @@ def run_one(cfg: Dict[str, Any],
     ts.dump(data_dir / "split_migration_tree_sequence.trees")
 
     # 3. inference
-    start = moments.Misc.perturb_params([params[p] for p in PARAM_NAMES], 0.1)
-    fits_mom,  lls_mom  = moments_fit_model(sfs, start, g_sim, cfg)
-    fits_dadi, lls_dadi = dadi_fit_model(   sfs, start, g_sim, cfg)
+    mean = [(a + b) / 2 for a, b in cfg['priors'].values()]
+    # Convert to a dict
+    start_dict = {k: v for k, v in zip(PARAM_NAMES, mean)}
+    # Add some jitter
+    print(f'Starting parameters: {start_dict}')  # debug output
+
+    demo_model = split_migration_model
+
+    fits_mom,  lls_mom  = moments_fit_model(sfs, start_dict, demo_model, cfg)
+    # fits_dadi, lls_dadi = dadi_fit_model(   sfs, start_dict, demo_model, cfg)
+
+    mom_dicts = {}
+    dadi_dicts = {}
 
     mom_dicts  = _attach_ll(fits_mom,  lls_mom)
-    dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
+    # dadi_dicts = _attach_ll(fits_dadi, lls_dadi)
 
     pickle.dump(mom_dicts,  (mom_dir  / "fit_params.pkl").open("wb"))
-    pickle.dump(dadi_dicts, (dadi_dir / "fit_params.pkl").open("wb"))
+    # pickle.dump(dadi_dicts, (dadi_dir / "fit_params.pkl").open("wb"))
     return mom_dicts, dadi_dicts
 
 # ── main driver ─────────────────────────────────────────────────────────
@@ -126,14 +136,14 @@ def main() -> None:
         outfile=inf_dir / "scatter_moments_vs_true.png",
         label="moments",
     )
-    save_scatterplots(
-        true_vecs=all_true,
-        est_vecs=all_dadi,
-        ll_vec=[d["loglik"] for d in all_dadi],
-        param_names=PARAM_NAMES,
-        outfile=inf_dir / "scatter_dadi_vs_true.png",
-        label="dadi",
-    )
+    # save_scatterplots(
+    #     true_vecs=all_true,
+    #     est_vecs=all_dadi,
+    #     ll_vec=[d["loglik"] for d in all_dadi],
+    #     param_names=PARAM_NAMES,
+    #     outfile=inf_dir / "scatter_dadi_vs_true.png",
+    #     label="dadi",
+    # )
 
 if __name__ == "__main__":
     main()

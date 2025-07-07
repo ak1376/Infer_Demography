@@ -11,8 +11,9 @@
     },
   
     "seed": 42,
-    "num_optimizations": 3,
-    "top_k": 3,
+    "num_optimizations": 1,
+    "top_k": 1,
+    "num_draws": 10,
   
     "priors": {
       "N0"            :  [5000,  20000],    
