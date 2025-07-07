@@ -111,13 +111,13 @@ def run_one(
     ts.dump(data_dir / "bottleneck_tree_sequence.trees")
 
     # ----- 3. optimisation starts --------------------------------------
-    start_dict = {k: v for k, v in zip(PARAM_NAMES, params.values())}
-    # means      = [(lo + hi) / 2 for lo, hi in cfg["priors"].values()]
-    # start_dict = {k: v for k, v in zip(PARAM_NAMES, means)}
-    # start_dict = {
-    #     k: v * np.random.uniform(0.9, 1.1)          # ±10 % jitter
-    #     for k, v in start_dict.items()
-    # }
+    # start_dict = {k: v for k, v in zip(PARAM_NAMES, params.values())}
+    means      = [(lo + hi) / 2 for lo, hi in cfg["priors"].values()]
+    start_dict = {k: v for k, v in zip(PARAM_NAMES, means)}
+    start_dict = {
+        k: v * np.random.uniform(0.9, 1.1)          # ±10 % jitter
+        for k, v in start_dict.items()
+    }
 
     # ----- 4. moments inference ----------------------------------------
     fits_mom, lls_mom = moments_fit_model(

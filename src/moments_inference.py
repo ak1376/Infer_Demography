@@ -33,6 +33,7 @@ def _diffusion_sfs(
     No `pts` argument is supplied – moments picks a sensible grid itself.
     """
     p_dict = dict(zip(param_names, init_vec))
+    # print(f"Fitting parameters: {p_dict}")
 
     graph = demo_model(p_dict)
 
@@ -126,23 +127,23 @@ def fit_model(
 
     # ---- single optimisation replicate --------------------------------
     def _optimise(seed_vec: np.ndarray, tag: str):
-        xopt = moments.Inference.optimize_powell(
+        xopt = moments.Inference.optimize_log_lbfgsb(
             seed_vec,
             sfs,
             lambda p, n: _diffusion_sfs(
                 p, demo_model, param_names, sample_sizes, experiment_config
             ),
             multinom     = False,
-            verbose      = 0,
+            verbose      = 1,
             flush_delay  = 0.0,
-            maxiter      = 5_000,
+            maxiter      = 10_000,
             full_output  = True,
             lower_bound  = lower_bounds,
             upper_bound  = upper_bounds,
             fixed_params = [
                 sampled_params.get("N0"),
                 sampled_params.get("N_bottleneck"),
-                sampled_params.get("N_recover"), sampled_params.get("t_bottleneck_start"), None,
+                None, None, None,
             ] if sampled_params else None,
         )
 
@@ -154,7 +155,8 @@ def fit_model(
     # ---- replicate loop ------------------------------------------------
     fits: List[Tuple[np.ndarray, float]] = []
     for i in range(num_opt):
-        seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
+        seed_vec = np.copy(start_vec)
+        # seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
         fits.append(_optimise(seed_vec, tag=f"optim_{i:04d}"))
 
     # ---- top-k ---------------------------------------------------------

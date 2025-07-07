@@ -1,5 +1,5 @@
 {
-    "genome_length": 1e7,
+    "genome_length": 1e8,
     "mutation_rate": 1.5e-08,
     "recombination_rate": 1.5e-08,
     "demographic_model": "bottleneck",
@@ -12,10 +12,10 @@
     "top_k": 1, 
     "num_draws": 10,
     "priors": {
-    "N0"                : [8000, 10000],
-    "N_bottleneck"      : [4000, 5000],
-    "N_recover"         : [6000, 7000],
-    "t_bottleneck_start": [1500, 2000],
-    "t_bottleneck_end"  : [ 800,  1000]
+    "N0"                : [2000, 20000],
+    "N_bottleneck"      : [100, 1999],
+    "N_recover"         : [2000, 20000],
+    "t_bottleneck_start": [1701, 3000],
+    "t_bottleneck_end"  : [ 100,  1700]
     }
 }

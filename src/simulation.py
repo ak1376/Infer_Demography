@@ -6,8 +6,8 @@ import stdpopsim
 def bottleneck_model(sampled_params):
 
     N0, N_bottleneck, N_recover, t_bottleneck_start, t_bottleneck_end = (
-        10_000,
-        2_000,
+        sampled_params["N0"],  # Effective population size of the ancestral population
+        sampled_params["N_bottleneck"],
         sampled_params["N_recover"],
         sampled_params["t_bottleneck_start"],
         sampled_params["t_bottleneck_end"],
