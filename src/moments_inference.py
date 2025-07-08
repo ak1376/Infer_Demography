@@ -65,11 +65,29 @@ def save_scatterplots(
     *,
     label: str = "moments",
 ) -> None:
-    """Draw one panel per parameter, coloured by log-likelihood."""
+    """
+    Draw one scatter panel per parameter, coloured by log-likelihood, and
+    place a single colour-bar outside the grid.
+
+    Parameters
+    ----------
+    true_vecs, est_vecs : list[dict]
+        Matching dictionaries of “true” and estimated parameter values.
+    ll_vec : list[float]
+        Log-likelihoods (one per point) – used only for colour scale.
+    param_names : list[str]
+        Order of parameters to plot.
+    outfile : pathlib.Path
+        PNG file to write.
+    label : str, default "moments"
+        Text prefix on the y–axis (“moments N0”, …).
+    """
+    # ── colour mapping ────────────────────────────────────────────────
     norm   = colors.Normalize(vmin=min(ll_vec), vmax=max(ll_vec))
     cmap   = cm.get_cmap("viridis")
     colour = cmap(norm(ll_vec))
 
+    # ── scatter panels ────────────────────────────────────────────────
     n = len(param_names)
     fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
 
@@ -77,18 +95,24 @@ def save_scatterplots(
         ax = axes[0, i]
         x  = [d[p] for d in true_vecs]
         y  = [d[p] for d in est_vecs]
+
         ax.scatter(x, y, s=20, c=colour)
-        ax.plot(ax.get_xlim(), ax.get_xlim(), ls="--", lw=0.7, color="grey")
+        ax.plot(ax.get_xlim(), ax.get_xlim(),
+                ls="--", lw=0.7, color="grey")
+
         ax.set_xlabel(f"true {p}")
         ax.set_ylabel(f"{label} {p}")
 
-    fig.colorbar(
-        cm.ScalarMappable(norm=norm, cmap=cmap),
-        ax=axes.ravel().tolist(),
-        shrink=0.8,
-        label="log-likelihood",
-    )
-    fig.tight_layout()
+    # ── reserve space & add colour-bar axis ───────────────────────────
+    fig.subplots_adjust(right=0.88)       # grid occupies left 88 %
+    cax = fig.add_axes([0.90, 0.15, 0.02, 0.7])  # [l, b, w, h] in figure coords
+
+    fig.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap),
+                 cax=cax,
+                 label="log-likelihood")
+
+    # ── final tweaks & save ───────────────────────────────────────────
+    fig.tight_layout(rect=[0, 0, 0.88, 1])  # keep panels inside the grid box
     fig.savefig(outfile, dpi=300)
     plt.close(fig)
 
