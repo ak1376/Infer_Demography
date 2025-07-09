@@ -1,208 +1,203 @@
+"""Batch moments‑LD workflow for multiple bottleneck runs
+-----------------------------------------------------------------
+For **every** directory matching
+    experiments/bottleneck/runs/run_XXXX/
+this script will
+1. read the sampled parameters and experiment config
+2. simulate 100 replicates, parse LD statistics in parallel with Ray, and fit
+   a one‑population three‑epoch model (bottleneck → recovery).
+3. save all run‑specific outputs under
+       experiments/bottleneck/runs/run_XXXX/inferences/momentsld/
+   ├─ means.varcovs.bottleneck.N_reps.bp
+   ├─ bootstrap_sets.bottleneck.N_reps.bp
+   ├─ bottleneck_comparison.pdf (LD curves)
+   └─ best_fit.json
+4. After processing every run, combine results and draw a scatterplot
+   (true vs inferred parameters, coloured by log‑likelihood).
+
+Requirements
+------------
+conda install -c conda-forge "msprime>=1" moments demes pandas bottleneck ray matplotlib demesdraw
+"""
 from __future__ import annotations
+
+import json
 import os
-import time
-import gzip
-import numpy as np
 import pickle
-import msprime
-import moments
-import demes
-import argparse, json, pickle, sys, os
+import sys
+import time
 from pathlib import Path
-from typing  import Dict, Any, Tuple, List
+from typing import Dict, Any, List
 
-import numpy as np
 import matplotlib.pyplot as plt
-import demesdraw
-import ray
+import matplotlib.cm as cm
+import matplotlib.colors as colors
 import moments
+import msprime
+import numpy as np
+import ray
 
-# ── local & project paths ────────────────────────────────────────────
-# Treat the folder *containing* this script as the project root
-PROJECT_ROOT = Path(__file__).resolve().parent       # /sietch_colab/akapoor/Infer_Demography
-SRC          = PROJECT_ROOT / "src"                  # /sietch_colab/akapoor/Infer_Demography/src
+# ───────────────────────── Project paths ──────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_DIR = PROJECT_ROOT / "src"
+RUNS_ROOT = PROJECT_ROOT / "experiments/bottleneck/runs"
 
-sys.path.insert(0, str(SRC))  # use insert(0, …) so it wins over site-packages
+sys.path.insert(0, str(SRC_DIR))
+from simulation import bottleneck_model  # noqa: E402
 
-from simulation import bottleneck_model
+# ───────────────────────── Ray init (1 CPU per task) ──────────────
+ray.init(num_cpus=32, ignore_reinit_error=True, log_to_driver=False,
+         runtime_env={"env_vars": {"OMP_NUM_THREADS": "1"}})
 
+# ───────────────────────── Helper functions ───────────────────────
 
-assert msprime.__version__ >= "1"
-
-if not os.path.isdir("./data/"):
-    os.makedirs("./data/")
-os.system("rm ./data/*.vcf.gz")
-os.system("rm ./data/*.h5")
-
-# Simulate replicates of tree sequences
-
-def run_msprime_replicates(g, L, u, r, n, num_reps=100):
-    demog = msprime.Demography.from_demes(g)
-    tree_sequences = msprime.sim_ancestry(
-        {"N0": n},
-        demography=demog,
-        sequence_length=L,
-        recombination_rate=r,
-        num_replicates=num_reps,
-        random_seed=42,
-    )
-    for ii, ts in enumerate(tree_sequences):
-        ts = msprime.sim_mutations(ts, rate=u, random_seed=ii + 1)
-        vcf_name = "./data/bottleneck.{0}.vcf".format(ii)
-        with open(vcf_name, "w+") as fout:
-            ts.write_vcf(fout, allow_position_zero=True)
-        os.system(f"gzip {vcf_name}")
-
-def write_samples_and_rec_map(L, r, n):
-    DATA = Path("./data")
-    DATA.mkdir(exist_ok=True)
-
-    # ----- samples.txt -----
-    with open(DATA / "samples.txt", "w") as f:
-        f.write("sample\tpop\n")
-        for i in range(n):
-            f.write(f"tsk_{i}\tN0\n")      # ← pop name matches pops=["N0"]
-
-    # ----- flat_map.txt -----
-    with open(DATA / "flat_map.txt", "w") as f:
-        f.write("pos\tMap(cM)\n0\t0\n")
-        f.write(f"{L}\t{r * L * 100}\n")
+def run_msprime_reps(graph: moments.DemesGraph, *, L: int, u: float, r: float,
+                     n: int, num_reps: int, out_dir: Path, seed: int = 42):
+    """Simulate *num_reps* replicates and write gz‑VCFs to *out_dir*."""
+    demog = msprime.Demography.from_demes(graph)
+    reps = msprime.sim_ancestry({"N0": n}, demography=demog,
+                                sequence_length=L, recombination_rate=r,
+                                num_replicates=num_reps, random_seed=seed)
+    for i, ts in enumerate(reps):
+        ts = msprime.sim_mutations(ts, rate=u, random_seed=i + 1)
+        vcf = out_dir / f"bottleneck.{i}.vcf"
+        with vcf.open("w") as fh:
+            ts.write_vcf(fh, allow_position_zero=True)
+        os.system(f"gzip -f {vcf}")
 
 
+def write_samples_and_map(*, L: int, r: float, n: int, out_dir: Path):
+    (out_dir / "samples.txt").write_text(
+        "sample\tpop\n" + "\n".join(f"tsk_{i}\tN0" for i in range(n)) + "\n")
+    (out_dir / "flat_map.txt").write_text(
+        f"pos\tMap(cM)\n0\t0\n{L}\t{r * L * 100}\n")
 
-def get_LD_stats(rep_ii, r_bins):
-    vcf_file = f"./data/bottleneck.{ii}.vcf.gz"
-    time1 = time.time()
-    ld_stats = moments.LD.Parsing.compute_ld_statistics(
-        vcf_file,
-        rec_map_file="./data/flat_map.txt",
-        pop_file="./data/samples.txt",
+
+@ray.remote
+def parse_ld_remote(rep_i: int, r_bins: np.ndarray, work_dir: str):
+    """Ray worker: compute LD stats for replicate *rep_i* inside *work_dir*."""
+    work = Path(work_dir)
+    stats = moments.LD.Parsing.compute_ld_statistics(
+        str(work / f"bottleneck.{rep_i}.vcf.gz"),
+        rec_map_file=str(work / "flat_map.txt"),
+        pop_file=str(work / "samples.txt"),
         pops=["N0"],
         r_bins=r_bins,
         report=False,
     )
-    time2 = time.time()
-    print("  finished rep", ii, "in", int(time2 - time1), "seconds")
-    return ld_stats
+    return rep_i, stats
 
-if __name__ == "__main__":
-    num_reps = 100
 
-    with open('/sietch_colab/akapoor/Infer_Demography/experiments/bottleneck/runs/run_0001/data/sampled_params.pkl', 'rb') as f:
-        sampled_params = pickle.load(f)
+# ───────────────────────── scatter‑plot helper ────────────────────
 
-    with open('/sietch_colab/akapoor/Infer_Demography/config_files/experiment_config_bottleneck.json', 'r') as f:
-        experiment_config = json.load(f)
+def save_scatterplots(true_vecs: List[Dict[str, float]],
+                      est_vecs: List[Dict[str, float]],
+                      ll_vec: List[float],
+                      param_names: List[str],
+                      outfile: Path,
+                      *, label: str = "moments") -> None:
+    norm   = colors.Normalize(vmin=min(ll_vec), vmax=max(ll_vec))
+    cmap   = cm.get_cmap("viridis")
+    colour = cmap(norm(ll_vec))
 
-    # Create the demography model
+    n = len(param_names)
+    fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
+    for i, p in enumerate(param_names):
+        ax = axes[0, i]
+        ax.scatter([d[p] for d in true_vecs], [d[p] for d in est_vecs],
+                   s=20, c=colour)
+        ax.plot(ax.get_xlim(), ax.get_xlim(), ls="--", lw=0.7, color="grey")
+        ax.set_xlabel(f"true {p}")
+        ax.set_ylabel(f"{label} {p}")
+
+    fig.subplots_adjust(right=0.88)
+    cax = fig.add_axes([0.90, 0.15, 0.02, 0.7])
+    fig.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax,
+                 label="log‑likelihood")
+    fig.tight_layout(rect=[0, 0, 0.88, 1])
+    fig.savefig(outfile, dpi=300)
+    plt.close(fig)
+
+
+# ───────────────────────── Batch processing ───────────────────────
+PARAM_NAMES = ["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end"]
+NUM_REPS = 100
+r_bins = np.concatenate(([0], np.logspace(-6, -3, 16)))
+
+all_true: List[Dict[str, float]] = []
+all_est : List[Dict[str, float]] = []
+all_ll  : List[float]            = []
+
+for run_dir in sorted(RUNS_ROOT.glob("run_*")):
+    print(f"\n=== Processing {run_dir.name} ===")
+    data_dir = run_dir / "data"
+    with (data_dir / "sampled_params.pkl").open("rb") as f:
+        sampled_params: Dict[str, Any] = pickle.load(f)
+    with (PROJECT_ROOT / "config_files/experiment_config_bottleneck.json").open() as f:
+        cfg = json.load(f)
+
     g = bottleneck_model(sampled_params)
 
-    # demog = msprime.Demography.from_demes(g)
+    # output dir for this run
+    inf_dir = run_dir / "inferences/momentsld"
+    inf_dir.mkdir(parents=True, exist_ok=True)
 
-    # define the bin edges
-    r_bins = np.concatenate(([0], np.logspace(-6, -3, 16)))
+    mean_file = inf_dir / f"means.varcovs.bottleneck.{NUM_REPS}_reps.bp"
+    boot_file = inf_dir / f"bootstrap_sets.bottleneck.{NUM_REPS}_reps.bp"
 
-    try:
-        print("loading data if pre-computed")
-        with open(f"./data/means.varcovs.bottleneck.{num_reps}_reps.bp", "rb") as fin:
-            mv = pickle.load(fin)
-        with open(f"./data/bootstrap_sets.bottleneck.{num_reps}_reps.bp", "rb") as fin:
-            all_boot = pickle.load(fin)
-    except IOError:
-        print("running msprime and writing vcfs")
-        run_msprime_replicates(g=g, num_reps=num_reps, L=experiment_config['genome_length'], u=experiment_config['mutation_rate'], r=experiment_config['recombination_rate'], n=experiment_config['num_samples']['N0'])
+    if mean_file.exists() and boot_file.exists():
+        mv = pickle.load(mean_file.open("rb"))
+    else:
+        run_msprime_reps(g, L=cfg["genome_length"], u=cfg["mutation_rate"],
+                         r=cfg["recombination_rate"], n=cfg["num_samples"]["N0"],
+                         num_reps=NUM_REPS, out_dir=inf_dir)
+        write_samples_and_map(L=cfg["genome_length"], r=cfg["recombination_rate"],
+                              n=cfg["num_samples"]["N0"], out_dir=inf_dir)
 
-        print("writing samples and recombination map")
-        write_samples_and_rec_map(L=experiment_config['genome_length'], r=experiment_config['recombination_rate'], n=experiment_config['num_samples']['N0'])
-
-        print("parsing LD statistics")
-        # Note: I usually would do this in parallel on cluster - is the slowest step
-        ld_stats = {}
-        for ii in range(num_reps):
-            ld_stats[ii] = get_LD_stats(ii, r_bins)
-
-        print("computing mean and varcov matrix from LD statistics sums")
+        futures = [parse_ld_remote.remote(i, r_bins, str(inf_dir)) for i in range(NUM_REPS)]
+        ld_stats = {rep: stats for rep, stats in ray.get(futures)}
         mv = moments.LD.Parsing.bootstrap_data(ld_stats)
-        with open(f"./data/means.varcovs.bottleneck.{num_reps}_reps.bp", "wb+") as fout:
-            pickle.dump(mv, fout)
-        print(
-            "computing bootstrap replicates of mean statistics (for confidence intervals"
-        )
-        all_boot = moments.LD.Parsing.get_bootstrap_sets(ld_stats)
-        with open(f"./data/bootstrap_sets.bottleneck.{num_reps}_reps.bp", "wb+") as fout:
-            pickle.dump(all_boot, fout)
-        os.system("rm ./data/*.vcf.gz")
-        os.system("rm ./data/*.h5")
+        pickle.dump(mv, mean_file.open("wb"))
+        pickle.dump(moments.LD.Parsing.get_bootstrap_sets(ld_stats), boot_file.open("wb"))
+        for f in inf_dir.glob("bottleneck.*.vcf.gz"):
+            f.unlink(missing_ok=True)
 
-    print("computing expectations under the model")
-    y = moments.Demes.LD(g, sampled_demes=["N0"], rho=4 * sampled_params['N0'] * r_bins)
+    # analytic expectations
+    y = moments.Demes.LD(g, sampled_demes=["N0"], rho=4 * sampled_params["N0"] * r_bins)
     y = moments.LD.LDstats(
-        [(y_l + y_r) / 2 for y_l, y_r in zip(y[:-2], y[1:-1])] + [y[-1]],
-        num_pops=y.num_pops,
-        pop_ids=y.pop_ids,
-    )
+        [(yl + yr) / 2 for yl, yr in zip(y[:-2], y[1:-1])] + [y[-1]],
+        num_pops=y.num_pops, pop_ids=y.pop_ids)
     y = moments.LD.Inference.sigmaD2(y)
+    moments.LD.Plotting.plot_ld_curves_comp(
+        y, mv["means"][:-1], mv["varcovs"][:-1], rs=r_bins,
+        stats_to_plot=[["DD_0_0"], ["Dz_0_0_0"], ["pi2_0_0_0_0"]],
+        labels=[[r"$D_0^2$"], [r"$Dz_{0,0,0}$"], [r"$\pi_{2;0,0,0,0}$"]],
+        rows=3, plot_vcs=True, show=False, fig_size=(6, 4),
+        output=str(inf_dir / "bottleneck_comparison.pdf"))
 
-    # plot simulated data vs expectations under the model
-    fig = moments.LD.Plotting.plot_ld_curves_comp(
-        y,
-        mv["means"][:-1],
-        mv["varcovs"][:-1],
-        rs=r_bins,
-        stats_to_plot = [
-            ["DD_0_0"],
-            ["Dz_0_0_0"],
-            ["pi2_0_0_0_0"],
-        ],
-        labels = [
-            [r"$D_0^2$"],
-            [r"$Dz_{0,0,0}$"],
-            [r"$\pi_{2;0,0,0,0}$"],
-        ],
-        #statistics=stats,
-        rows=3,
-        plot_vcs=True,
-        show=False,
-        fig_size=(6, 4),
-        output="bottleneck_comparison.pdf",
-    )
-
-    print("running inference")
-    # Run inference using the parsed data
-    demo_func = moments.LD.Demographics1D.three_epoch
-    # Set up the initial guess
-    # :param params: The relative sizes and integration times of recent epochs,
-    #     in genetic units: (nu1, nu2, T1, T2).
-    
+    # inference
     p_guess = [
-        sampled_params["N_bottleneck"] / sampled_params["N0"],                 # nu1  (size during the bottleneck)
-        sampled_params["N_recover"]    / sampled_params["N0"],                 # nu2  (current size after recovery)
-        (sampled_params["t_bottleneck_start"]                                  # T1   (length of the bottleneck)
-        - sampled_params["t_bottleneck_end"]) / (2 * sampled_params["N0"]),
-        sampled_params["t_bottleneck_end"] / (2 * sampled_params["N0"]),       # T2   (time since recovery began)
-        sampled_params['N0']
+        sampled_params["N_bottleneck"] / sampled_params["N0"],
+        sampled_params["N_recover"] / sampled_params["N0"],
+        (sampled_params["t_bottleneck_start"] - sampled_params["t_bottleneck_end"]) / (2 * sampled_params["N0"]),
+        sampled_params["t_bottleneck_end"] / (2 * sampled_params["N0"]),
+        sampled_params["N0"],
     ]
-
-    # p_guess = moments.LD.Util.perturb_params(p_guess, fold=0.1)
-
+    demo_func = moments.LD.Demographics1D.three_epoch
     opt_params, LL = moments.LD.Inference.optimize_log_fmin(
-        p_guess, [mv["means"], mv["varcovs"]], [demo_func], fixed_params=[p_guess[0], p_guess[1], None, None, None], rs=r_bins, verbose=1
-    )
+        p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
+        fixed_params=[p_guess[0], p_guess[1], None, None, None], verbose=0)
 
-    physical_units = moments.LD.Util.rescale_params(
-        opt_params, ["nu", "nu", "T", "T", "Ne"]
-    )
+    physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
+    best_fit = dict(zip(["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"], physical))
+    pickle.dump({"opt_params": best_fit, "loglik": LL}, (inf_dir / "best_fit.pkl").open("wb"))
 
-    best_fit = {
-        "N0": physical_units[4],
-        "N_bottleneck": physical_units[0], 
-        "N_recover": physical_units[1],
-        "t_bottleneck_start": physical_units[2],
-        "t_bottleneck_end": physical_units[3],
-    }
+    # collect for scatterplot
+    all_true.append({k: sampled_params[k] for k in PARAM_NAMES})
+    all_est.append({k: best_fit[k] for k in PARAM_NAMES})
+    all_ll.append(LL)
 
-    print(f'Optimal Parameters: {best_fit}')
-    print(f'Ground Truth parameters: {sampled_params}')
-
-
-
+# ───────────────────────── final scatterplot ──────────────────────
+SCATTER_OUT = PROJECT_ROOT / "scatter_moments_vs_true.png"
+save_scatterplots(all_true, all_est, all_ll, PARAM_NAMES, SCATTER_OUT, label="moments")
+print(f"\nScatterplot written to {SCATTER_OUT}")
