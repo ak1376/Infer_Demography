@@ -199,5 +199,5 @@ for run_dir in sorted(RUNS_ROOT.glob("run_*")):
 
 # ───────────────────────── final scatterplot ──────────────────────
 SCATTER_OUT = PROJECT_ROOT / "scatter_moments_vs_true.png"
-save_scatterplots(all_true, all_est, all_ll, PARAM_NAMES, SCATTER_OUT, label="moments")
+save_scatterplots(all_true, all_est, all_ll, PARAM_NAMES, SCATTER_OUT, label="momentsld")
 print(f"\nScatterplot written to {SCATTER_OUT}")
