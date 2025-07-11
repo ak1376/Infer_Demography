@@ -1,6 +1,12 @@
 ##############################################################################
 # CONFIG – adjust paths & constants once
 ##############################################################################
+
+import sys
+# strip accidental shadowing of the Bottleneck package
+if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
+    del sys.modules["bottleneck"]
+
 SIM_SCRIPT  = "snakemake_scripts/simulation.py"          # base simulator
 WIN_SCRIPT  = "snakemake_scripts/simulate_window.py"     # 1 window ➜ VCF
 LD_SCRIPT   = "snakemake_scripts/compute_ld_window.py"   # 1 window ➜ LD.pkl
@@ -21,9 +27,13 @@ from pathlib import Path
 with open(EXP_CFG) as f:
     cfg = json.load(f)
 
-n_draws = cfg["num_draws"]                   # how many simulations to create
-pad     = int(math.log10(n_draws - 1)) + 1   # zero-padding width
+n_draws = cfg["num_draws"]
+pad     = int(math.log10(n_draws - 1)) + 1
 SIM_IDS = [f"{i:0{pad}d}" for i in range(n_draws)]
+
+# NEW – names used later in expand()
+SIMS     = SIM_IDS                 # just an alias
+WINDOWS  = range(NUM_WINDOWS)      # 0 … 99
 
 ##############################################################################
 # RULE 0 – “all”: every artefact we need (sim -> VCFs -> LD pickles)
@@ -38,11 +48,15 @@ rule all:
 
         # every VCF window
         expand(f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win}}.vcf.gz",
-               sid=SIM_IDS, win=range(NUM_WINDOWS)),
+            sid=SIM_IDS, win=WINDOWS),
 
-        # # every LD-stats pickle
-        # expand(f"{LD_ROOT}/sim_{{sid}}/LD_stats/LD_stats_window_{{win:04d}}.pkl",
-        #        sid=SIM_IDS, win=range(NUM_WINDOWS))
+        # every LD-statistics pickle
+        expand(f"{LD_ROOT}/sim_{{sid}}/LD_stats/LD_stats_window_{{win}}.pkl",
+            sid=SIM_IDS, win=WINDOWS),
+
+        # final LD statistics artefacts
+        expand(f"{LD_ROOT}/sim_{{sid}}/best_fit.pkl", sid=SIM_IDS)
+
 
 ##############################################################################
 # RULE 1 – simulate one full data set (tree sequence + SFS)
@@ -57,8 +71,8 @@ rule simulate:
         sim_dir = SIM_BASEDIR,
         cfg     = EXP_CFG,
         model   = cfg["demographic_model"],
-    log:
-        f"{SIM_BASEDIR}/{{sid}}/simulate.log"
+    # log:
+    #     f"{SIM_BASEDIR}/{{sid}}/simulate.log"
     threads: 1
     shell:
         """
@@ -67,11 +81,10 @@ rule simulate:
             --experiment-config   {params.cfg} \
             --model-type          {params.model} \
             --simulation-number   {wildcards.sid} \
-        > {log} 2>&1
         """
 
 ##############################################################################
-# RULE 2 – simulate one replicate  (writes bottleneck.<idx>.vcf.gz)
+# RULE 2 – simulate one replicate (window_{win:04d}.vcf.gz)
 ##############################################################################
 rule simulate_window:
     input:
@@ -83,8 +96,7 @@ rule simulate_window:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         out_winDir = lambda w: f"{LD_ROOT}/sim_{w.sid}/windows",
         rep_idx    = lambda w: int(w.win)
-    log:
-        f"{LD_ROOT}/sim_{{sid}}/windows/replicate_{{win}}.log"
+
     threads: 1
     shell:
         """
@@ -93,32 +105,56 @@ rule simulate_window:
             --rep-index    {params.rep_idx} \
             --config-file  {input.cfg} \
             --out-dir      {params.out_winDir} \
-        > {log} 2>&1
         """
 
+# #############################################################################
+# RULE 3 – compute LD statistics for one window
+# #############################################################################
+rule ld_window:
+    input:
+        vcf_gz = f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win}}.vcf.gz",
+        cfg    = EXP_CFG
+    output:
+        pkl    = f"{LD_ROOT}/sim_{{sid}}/LD_stats/LD_stats_window_{{win}}.pkl"
+    params:
+        sim_dir = lambda w: f"{LD_ROOT}/sim_{w.sid}",
+        bins    = R_BINS_STR
+    threads: 1
+    shell:
+        """
+        python "{LD_SCRIPT}" \
+            --sim-dir      {params.sim_dir} \
+            --window-index {wildcards.win} \
+            --config-file  {input.cfg} \
+            --r-bins       "{params.bins}" \
+        """
 
-
-# ##############################################################################
-# # RULE 3 – compute LD statistics for one window
-# ##############################################################################
-# rule ld_window:
-#     input:
-#         vcf_gz = f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win:04d}}.vcf.gz",
-#         cfg    = EXP_CFG
-#     output:
-#         pkl    = f"{LD_ROOT}/sim_{{sid}}/LD_stats/LD_stats_window_{{win:04d}}.pkl"
-#     params:
-#         sim_dir = lambda w: f"{LD_ROOT}/sim_{w.sid}",
-#         bins    = R_BINS_STR
-#     log:
-#         f"{LD_ROOT}/sim_{{sid}}/LD_stats/ld_window_{{win:04d}}.log"
-#     threads: 1
-#     shell:
-#         """
-#         python "{LD_SCRIPT}" \
-#             --sim-dir      {params.sim_dir} \
-#             --window-index {wildcards.win} \
-#             --config-file  {input.cfg} \
-#             --r-bins       "{params.bins}" \
-#         > {log} 2>&1
-#         """
+##############################################################################
+# RULE 4 – combine LD windows & run optimisation for one simulation
+##############################################################################
+rule optimize_momentsld:
+    input:
+        pkls = lambda w: expand(
+            f"{LD_ROOT}/sim_{w.sid}/LD_stats/LD_stats_window_{{win}}.pkl",
+            win=WINDOWS),
+        cfg  = EXP_CFG
+    output:
+        mv    = f"{LD_ROOT}/sim_{{sid}}/means.varcovs.pkl",
+        boot  = f"{LD_ROOT}/sim_{{sid}}/bootstrap_sets.pkl",
+        pdf   = f"{LD_ROOT}/sim_{{sid}}/bottleneck_comparison.pdf",
+        best  = f"{LD_ROOT}/sim_{{sid}}/best_fit.pkl"
+    params:
+        sim_dir   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+        LD_dir    = lambda w: f"{LD_ROOT}/sim_{w.sid}",
+        bins      = R_BINS_STR,
+        n_windows = NUM_WINDOWS
+    threads: 1
+    shell:
+        """
+        python "snakemake_scripts/LD_inference.py" \
+            --sim-dir      {params.sim_dir} \
+            --LD_dir       {params.LD_dir} \
+            --config-file  {input.cfg} \
+            --num-windows  {params.n_windows} \
+            --r-bins       "{params.bins}"
+        """

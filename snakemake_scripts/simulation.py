@@ -58,7 +58,7 @@ def run_simulation(simulation_dir: Path, experiment_config: Path, model_type: st
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # simulate
-    sampled_params = sample_params(cfg["priors"], rng=rng)
+    sampled_params = sample_params(cfg["priors"])
     ts, _ = simulation(sampled_params, model_type, cfg)
     sfs   = create_SFS(ts)
 

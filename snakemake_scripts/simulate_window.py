@@ -39,6 +39,12 @@ if str(SRC) not in sys.path:
 
 from simulation import bottleneck_model  # noqa: E402
 
+def write_samples_and_map(*, L: int, r: float, n: int, out_dir: Path):
+    (out_dir / "samples.txt").write_text(
+        "sample\tpop\n" + "\n".join(f"tsk_{i}\tN0" for i in range(n)) + "\n")
+    (out_dir / "flat_map.txt").write_text(
+        f"pos\tMap(cM)\n0\t0\n{L}\t{r * L * 100}\n")
+
 # ------------------------------------------------------------------ main
 
 def main() -> None:
@@ -78,6 +84,9 @@ def main() -> None:
     with vcf.open("w") as fh:
         ts.write_vcf(fh, allow_position_zero=True)
     os.system(f"gzip -f {vcf}")
+
+    write_samples_and_map(L=cfg["genome_length"], r=cfg["recombination_rate"],
+                          n=cfg["num_samples"]["N0"], out_dir=out_dir)
 
     print(f"✓ replicate {args.rep_index:04d} → {vcf.with_suffix('.vcf.gz').relative_to(out_dir.parent.parent)}")
 
