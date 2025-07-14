@@ -25,7 +25,7 @@ SRC_DIR      = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from simulation import bottleneck_model, simulation, create_SFS  # noqa: E402
+from simulation import bottleneck_model, split_isolation_model, split_migration_model, drosophila_three_epoch, simulation, create_SFS  # noqa: E402
 
 # ------------------------------------------------------------------
 # parameter sampling helper
@@ -68,10 +68,32 @@ def run_simulation(simulation_dir: Path, experiment_config: Path, model_type: st
     ts.dump(out_dir / "tree_sequence.trees")
 
     # plot demography
-    ax = demesdraw.tubes(bottleneck_model(sampled_params))
+
+    model = cfg["demographic_model"]
+
+    if model == "bottleneck":                       # ⇢ 3‑epoch, 1‑population
+        # three_epoch params: (nu1, nu2, T1, T2, Ne)
+        demo_func = bottleneck_model
+ 
+    elif model == "split_isolation":                # ⇢ 2‑pop, split then no mig
+        demo_func = split_isolation_model
+
+    elif model == "split_migration":                # ⇢ 2‑pop, split + mig #TODO: Need to update the island model function to use t_split 
+        demo_func = split_migration_model
+        # (nu1, nu2, T_split, m12, m21, Ne)
+
+    elif model == "drosophila_three_epoch":         # ⇢ your stdpopsim wrapper #TODO: Need to write a custom MomentsLD function for this model
+        demo_func = drosophila_three_epoch
+        # map however the wrapped function expects; an illustrative example:
+  
+    else:
+        raise ValueError(f"Need p_guess mapping for model '{model}'")
+
+
+    ax = demesdraw.tubes(demo_func(sampled_params)) #TODO: Change from bottleneck model to the model_type
     ax.set_xlabel("Time (generations)")
     ax.set_ylabel("N")
-    plt.savefig(out_dir / f"demes_{cfg['demographic_model']}.png", dpi=300,
+    plt.savefig(out_dir / f"demes.png", dpi=300,
                 bbox_inches="tight")
     plt.close(ax.figure)
 

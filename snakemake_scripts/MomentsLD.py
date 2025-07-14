@@ -7,7 +7,7 @@ Outputs are written under
         ├─ LD_stats/ld_stats_window_<j>.pkl        (one per replicate)
         ├─ means.varcovs.pkl
         ├─ bootstrap_sets.pkl
-        ├─ bottleneck_comparison.pdf
+        ├─ *DEMOGRAPHIC_MODEL*_comparison.pdf
         └─ best_fit.pkl
 
 Usage (Snakemake will pass these flags):
@@ -39,8 +39,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR      = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
-
-from simulation import bottleneck_model  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -99,6 +97,16 @@ def main():
         sampled_params: Dict[str, Any] = pickle.load(f)
     cfg = json.loads(args.config_file.read_text())
 
+    if cfg['demographic_model'] == "bottleneck":
+        from simulation import bottleneck_model  as demo_model 
+    elif cfg['demographic_model'] == "drosophila_three_epoch":
+        from simulation import drosophila_three_epoch as demo_model  # noqa: E402
+    elif cfg['demographic_model'] == "split_isolation": 
+        from simulation import split_isolation_model as demo_model
+    elif cfg['demographic_model'] == 'split_migration':
+        from simulation import split_migration_model as demo_model
+
+
     run_idx = int(args.run_dir.name.split("_")[-1])
     sim_dir = args.output_root / f"sim_{run_idx:04d}"
     sim_dir.mkdir(parents=True, exist_ok=True)
@@ -113,7 +121,7 @@ def main():
     # ----------------------------------------------------------------------
     if not (mean_file.exists() and boot_file.exists()):
         # fresh simulation + LD parsing ------------------------------------
-        g = bottleneck_model(sampled_params)
+        g = demo_model(sampled_params)
         run_msprime_reps(g, L=cfg["genome_length"], u=cfg["mutation_rate"],
                          r=cfg["recombination_rate"], n=cfg["num_samples"]["N0"],
                          num_reps=args.reps, out_dir=sim_dir)
@@ -136,35 +144,161 @@ def main():
     else:
         mv = pickle.load(mean_file.open("rb"))
 
+    # Get the population deme names from the cfg file
+    sampled_demes = list(cfg['num_samples'].keys())
+    print(sampled_demes)
+
     # ----------------------------------------------------------------------
-    g = bottleneck_model(sampled_params)
-    y = moments.Demes.LD(g, sampled_demes=["N0"], rho=4 * sampled_params["N0"] * r_bins)
+    g = demo_model(sampled_params)
+    y = moments.Demes.LD(g, sampled_demes=sampled_demes, rho=4 * sampled_params["N0"] * r_bins)
     y = moments.LD.LDstats([(yl + yr) / 2 for yl, yr in zip(y[:-2], y[1:-1])] + [y[-1]],
                             num_pops=y.num_pops, pop_ids=y.pop_ids)
     y = moments.LD.Inference.sigmaD2(y)
 
-    pdf_path = sim_dir / "bottleneck_comparison.pdf"
-    moments.LD.Plotting.plot_ld_curves_comp(
-        y, mv["means"][:-1], mv["varcovs"][:-1], rs=r_bins,
-        stats_to_plot=[["DD_0_0"], ["Dz_0_0_0"], ["pi2_0_0_0_0"]],
-        labels=[[r"$D_0^2$"], [r"$Dz_{0,0,0}$"], [r"$\pi_{2;0,0,0,0}$"]],
-        rows=3, plot_vcs=True, show=False, fig_size=(6, 4), output=str(pdf_path))
+    pdf_path = sim_dir / "empirical_vs_theoretical_comparison.pdf"
+
+    if cfg['demographic_model'] == "bottleneck_model":
+        stats_to_plot = [
+            ["DD_0_0"],
+            ["Dz_0_0_0"],
+            ["pi2_0_0_0_0"],
+        ]
+        labels = [
+            [r"$D_0^2$"],
+            [r"$Dz_{0,0,0}$"],
+            [r"$\pi_{2;0,0,0,0}$"],
+        ]
+
+    elif cfg['demographic_model'] in ["split_isolation_model", "split_migration_model", "drosophila_three_epoch"]:
+        stats_to_plot = [
+            ["DD_0_0"],
+            ["DD_0_1"],
+            ["DD_1_1"],
+            ["Dz_0_0_0"],
+            ["Dz_0_1_1"],
+            ["Dz_1_1_1"],
+            ["pi2_0_0_1_1"],
+            ["pi2_0_1_0_1"],
+            ["pi2_1_1_1_1"],
+        ]
+        labels = [
+            [r"$D_0^2$"],
+            [r"$D_0 D_1$"],
+            [r"$D_1^2$"],
+            [r"$Dz_{0,0,0}$"],
+            [r"$Dz_{0,1,1}$"],
+            [r"$Dz_{1,1,1}$"],
+            [r"$\pi_{2;0,0,1,1}$"],
+            [r"$\pi_{2;0,1,0,1}$"],
+            [r"$\pi_{2;1,1,1,1}$"],
+        ]
+    else:
+        raise ValueError(f"Unsupported demographic model: {cfg['demographic_model']}")
+
+    # Plot LD curves
+    fig = moments.LD.Plotting.plot_ld_curves_comp(
+        y,
+        mv["means"][:-1],
+        mv["varcovs"][:-1],
+        rs=r_bins,
+        stats_to_plot=stats_to_plot,
+        labels=labels,
+        rows=3,
+        plot_vcs=True,
+        show=False,
+        fig_size=(6, 4),
+    )
+
+    fig.savefig(pdf_path, dpi=300)   # <- write the PDF
+    plt.close(fig)                   # optional: free memory when running many sims
+
 
     # optimisation ---------------------------------------------------------
-    p_guess = [
-        sampled_params["N_bottleneck"] / sampled_params["N0"],
-        sampled_params["N_recover"] / sampled_params["N0"],
-        (sampled_params["t_bottleneck_start"] - sampled_params["t_bottleneck_end"]) / (2 * sampled_params["N0"]),
-        sampled_params["t_bottleneck_end"] / (2 * sampled_params["N0"]),
-        sampled_params["N0"],
-    ]
-    demo_func = moments.LD.Demographics1D.three_epoch
+
+    # Take the mean of the prior distribution for the parameters
+    # and use it as the initial guess for the optimisation
+
+    # ------------------------------------------------------------------  initial guess from priors
+    # take the midpoint of every [low, high] interval
+    prior_means: dict[str, float] = {
+        name: 0.5 * (low + high) for name, (low, high) in cfg["priors"].items()
+    }
+
+    model = cfg["demographic_model"]
+
+    fixed_params = [None]*len(prior_means)  # will be set later
+
+    if model == "bottleneck":                       # ⇢ 3‑epoch, 1‑population
+        # three_epoch params: (nu1, nu2, T1, T2, Ne)
+        demo_func = moments.LD.Demographics1D.three_epoch
+        p_guess = [
+            prior_means["N_bottleneck"] / prior_means["N0"],           # ν1
+            prior_means["N_recover"]    / prior_means["N0"],           # ν2
+            (prior_means["t_bottleneck_start"] -                      # T1
+            prior_means["t_bottleneck_end"]) / (2 * prior_means["N0"]),
+            prior_means["t_bottleneck_end"] / (2 * prior_means["N0"]), # T2
+            prior_means["N0"],                                         # Ne
+        ]
+
+        fixed_params = [p_guess[0], p_guess[1], None, None, None]
+
+    elif model == "split_isolation":                # ⇢ 2‑pop, split then no mig
+        demo_func = moments.LD.Demographics2D.split_mig
+        p_guess = [
+            prior_means["N1"]  / prior_means["N0"],                    # ν1
+            prior_means["N2"]  / prior_means["N0"],                    # ν2
+            prior_means["t_split"] / (2 * prior_means["N0"]),          # T_split
+            prior_means["N0"],                                         # Ne
+        ]
+
+
+    elif model == "split_migration":                # ⇢ 2‑pop, split + mig #TODO: Need to update the island model function to use t_split 
+        # (nu1, nu2, T_split, m12, m21, Ne)
+        p_guess = [
+            prior_means["N1"]  / prior_means["N0"],                    # ν1
+            prior_means["N2"]  / prior_means["N0"],                    # ν2
+            prior_means["t_split"] / (2 * prior_means["N0"]),          # T_split
+            prior_means["m12"],                                        # m12
+            prior_means["m21"],                                        # m21
+            prior_means["N0"],                                         # Ne
+        ]
+
+    elif model == "drosophila_three_epoch":         # ⇢ your stdpopsim wrapper #TODO: Need to write a custom MomentsLD function for this model
+        # map however the wrapped function expects; an illustrative example:
+        p_guess = [
+            prior_means["AFR"],                                        # African size
+            prior_means["EUR_recover"],                                # European size
+            (prior_means["T_AFR_expansion"] -                          # T1
+            prior_means["T_AFR_EUR_split"]) / (2 * prior_means["N0"]),
+            prior_means["T_AFR_EUR_split"] / (2 * prior_means["N0"]),  # T2
+            prior_means["N0"],                                         # Ne
+        ]
+
+    else:
+        raise ValueError(f"Need p_guess mapping for model '{model}'")
+
+    # TODO: Need to have a logical way to handle fixed parameters 
     opt_params, LL = moments.LD.Inference.optimize_log_fmin(
         p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
-        fixed_params=[p_guess[0], p_guess[1], None, None, None], verbose=0)
-
-    physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
-    best_fit = dict(zip(["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"], physical))
+        fixed_params=fixed_params, verbose=0)
+    
+    if cfg['demographic_model'] == "bottleneck":
+        # rescale the parameters to physical units
+        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
+        best_fit = dict(zip(["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"], physical))
+    elif cfg['demographic_model'] == "split_isolation":
+        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "Ne"])
+        best_fit = dict(zip(["N1", "N2", "t_split", "N0"], physical))
+    elif cfg['demographic_model'] == "split_migration":
+        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m12", "m21", "Ne"])
+        best_fit = dict(zip(["N1", "N2", "t_split", "m12", "m21", "N0"], physical))
+    elif cfg['demographic_model'] == "drosophila_three_epoch":
+        # rescale the parameters to physical units
+        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
+        best_fit = dict(zip(["AFR", "EUR_recover", "T_AFR_expansion", "T_AFR_EUR_split", "N0"], physical))
+    else:
+        raise ValueError(f"Need physical rescaling for model '{cfg['demographic_model']}'")
+    
     pickle.dump({"opt_params": best_fit, "loglik": LL}, (sim_dir / "best_fit.pkl").open("wb"))
 
     print(f"✓ moments-LD finished for {sim_dir.relative_to(args.output_root.parent)}")

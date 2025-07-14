@@ -6,7 +6,7 @@ Called by Snakemake rule ``ld_window``:
     python compute_ld_window.py \
         --sim-dir      MomentsLD/LD_stats/sim_0007          # same as --output-root/sim_<sid>
         --window-index 42
-        --config-file  config_files/experiment_config_bottleneck.json
+        --config-file  config_files/experiment_config_*DEMOGRAPHIC_MODEL*.json
         --r-bins       "0,1e-6,3.2e-6,1e-5,3.2e-5,1e-4,3.2e-4,1e-3"
 
 The script expects the following files already exist in *sim-dir*:
@@ -67,15 +67,21 @@ def main():
     if out_pkl.exists():
         print(f"✓ window {idx}: already computed → {out_pkl.relative_to(sim_dir)}")
         return
+    
+    # ----------------------------------------- grab every unique pop ID
+    # read unique pop IDs from the samples file
+    with samples_t.open() as fh:
+        pops = sorted({line.split()[1] for line in fh if line.strip() and not line.startswith("sample")})
+
 
     # compute LD statistics ----------------------------------------
     stats = moments.LD.Parsing.compute_ld_statistics(
         str(vcf_gz),
         rec_map_file=str(rec_map_t),
         pop_file=str(samples_t),
-        pops=["N0"],
+        pops=pops,
         r_bins=r_bins,
-        report=False,
+        report=False
     )
 
     # write pickle --------------------------------------------------
