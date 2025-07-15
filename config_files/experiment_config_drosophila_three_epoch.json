@@ -1,18 +1,18 @@
 {
-    "genome_length": 1e6,
+    "genome_length": 1e8,
     "mutation_rate": 1.45e-09,
     "recombination_rate": 1.45e-09,
-  
     "demographic_model": "drosophila_three_epoch",
-  
+    "log_dir": "bottleneck/inferences/moments/logs",
     "num_samples": {
       "AFR": 20,
       "EUR": 20
     },
   
     "seed": 42,
-    "num_optimizations": 3,
-    "top_k": 3,
+    "num_optimizations": 1,
+    "top_k": 1,
+    "num_draws": 10,
   
     "priors": {
       "N0"            :  [5000,  20000],    

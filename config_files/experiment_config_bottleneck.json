@@ -8,13 +8,20 @@
         "N0": 10
     }, 
     "seed": 42, 
-    "num_optimizations": 3, 
+    "num_optimizations": 1, 
     "top_k": 1, 
+    "num_sims_pretrain": 10,
     "priors": {
-        "N0"                : [5000, 20000],
-        "N_bottleneck"      : [  200,  5000],
-        "N_recover"         : [1000, 20000],
-        "t_bottleneck_start": [  500,  5000],
-        "t_bottleneck_end"  : [   10,   499]
-      }    
+    "N0"                : [2000, 20000],
+    "N_bottleneck"      : [100, 1999],
+    "N_recover"         : [2000, 20000],
+    "t_bottleneck_start": [1701, 3000],
+    "t_bottleneck_end"  : [ 100,  1700]
+    }, 
+    "dadi_analysis": true, 
+    "moments_analysis": true,
+    "moments_ld_analysis": true, 
+    "k": 3,
+    "top_values_k": 2, 
+    "training_percentage": 0.5
 }
