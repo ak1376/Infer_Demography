@@ -10,9 +10,9 @@ if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__ver
 SIM_SCRIPT  = "snakemake_scripts/simulation.py"          # base simulator
 WIN_SCRIPT  = "snakemake_scripts/simulate_window.py"     # 1 window ➜ VCF
 LD_SCRIPT   = "snakemake_scripts/compute_ld_window.py"   # 1 window ➜ LD.pkl
-EXP_CFG     = "config_files/experiment_config_bottleneck.json"
+EXP_CFG     = "config_files/experiment_config_split_isolation.json"
 
-SIM_BASEDIR = "ld_experiments/bottleneck/simulations"    # simulations/<sid>
+SIM_BASEDIR = "ld_experiments/split_isolation/simulations"    # simulations/<sid>
 LD_ROOT     = "MomentsLD/LD_stats"                       # final LD folder
 
 NUM_WINDOWS = 100                                        # per simulation
@@ -44,7 +44,7 @@ rule all:
         expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",            sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",sid=SIM_IDS),
-        expand(f"{SIM_BASEDIR}/{{sid}}/demes_bottleneck.png",sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",sid=SIM_IDS),
 
         # every VCF window
         expand(f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win}}.vcf.gz",
@@ -66,7 +66,7 @@ rule simulate:
         sfs     = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params  = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         tree    = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
-        fig     = f"{SIM_BASEDIR}/{{sid}}/demes_bottleneck.png",
+        fig     = f"{SIM_BASEDIR}/{{sid}}/demes.png",
     params:
         sim_dir = SIM_BASEDIR,
         cfg     = EXP_CFG,
@@ -141,7 +141,7 @@ rule optimize_momentsld:
     output:
         mv    = f"{LD_ROOT}/sim_{{sid}}/means.varcovs.pkl",
         boot  = f"{LD_ROOT}/sim_{{sid}}/bootstrap_sets.pkl",
-        pdf   = f"{LD_ROOT}/sim_{{sid}}/bottleneck_comparison.pdf",
+        pdf   = f"{LD_ROOT}/sim_{{sid}}/empirical_vs_theoretical_comparison.pdf",
         best  = f"{LD_ROOT}/sim_{{sid}}/best_fit.pkl"
     params:
         sim_dir   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
