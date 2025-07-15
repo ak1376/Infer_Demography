@@ -64,6 +64,7 @@ rule simulate:
         sim_dir = SIM_BASEDIR,
         cfg     = EXP_CFG,
         model   = MODEL,
+        
     threads: 1
     shell:
         """
