@@ -50,66 +50,72 @@ def fit_model(
     *,
     sampled_params: dict | None = None,
 ):
-    num_opt   = experiment_config["num_optimizations"]
-    top_k     = experiment_config["top_k"]
-    priors    = experiment_config["priors"]
+    """
+    Run **one** dadi optimisation and return a single param‑vector / LL.
+    The lists in the returned dict therefore contain exactly one element.
+    """
+    # ─── pull out a few things from the JSON --------------------------------
+    priors   = experiment_config["priors"]
+    # top_k    = experiment_config.get("top_k", 1)      # keeps interface intact
+    # assert top_k == 1, "With one optimisation only, TOP_K must be 1"
 
-    # parameter order / start vector
+    # ─── parameter order / start vector -------------------------------------
     param_names = list(start_dict.keys())
     start_vec   = np.array([start_dict[p] for p in param_names])
 
-    # sample sizes & pts grid
+    # ─── sample sizes & pts grid --------------------------------------------
+    from collections import OrderedDict
     sample_sizes = OrderedDict(
         (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
     )
     n_max_hap = max(2 * n for n in sample_sizes.values())
     pts_l     = [n_max_hap, n_max_hap + 20, n_max_hap + 40]
 
-    # bounds from priors
+    # ─── bounds from priors --------------------------------------------------
     lower_bounds = [priors[p][0] for p in param_names]
     upper_bounds = [priors[p][1] for p in param_names]
 
-    # one optimisation replicate (keeps your log-file machinery intact)
-    def _optimise(p0: np.ndarray, tag: str):
-        log_dir  = Path(experiment_config.get("log_dir", "."))
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"{tag}.txt"
+    # ─── single optimisation call -------------------------------------------
+    import datetime, dadi, nlopt
+    from contextlib import redirect_stdout, redirect_stderr
+    from io import StringIO
+    from pathlib import Path
 
-        buf = StringIO()
-        with redirect_stdout(buf), redirect_stderr(buf):
-            opt_params, ll_val = dadi.Inference.opt(
-                p0,
-                sfs,
-                lambda p, n, pts=None: diffusion_sfs(
-                    p, demo_model, param_names, sample_sizes, pts_l
-                ),
-                pts         = pts_l,
-                algorithm   = nlopt.LN_BOBYQA,
-                maxeval     = 10_000,
-                verbose     = 1,
-                lower_bound = lower_bounds,
-                upper_bound = upper_bounds,
-                fixed_params=[
-                    sampled_params.get("N0"),
-                    sampled_params.get("N_bottleneck"),
-                    None, None, None,
-                ] if sampled_params else None,
-            )
+    log_dir  = Path(experiment_config.get("log_dir", "."))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "optim_single.txt"
 
-        log_path.write_text(
-            f"# dadi optimisation {tag}\n"
-            f"# started: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n"
-            + buf.getvalue()
+    # (optional)  small random perturbation of the midpoint start
+    seed_vec = dadi.Misc.perturb_params(start_vec, fold=0.1)
+
+    buf = StringIO()
+    with redirect_stdout(buf), redirect_stderr(buf):
+        opt_params, ll_val = dadi.Inference.opt(
+            seed_vec,
+            sfs,
+            lambda p, n, pts=None: diffusion_sfs(
+                p, demo_model, param_names, sample_sizes, pts_l
+            ),
+            pts         = pts_l,
+            algorithm   = nlopt.LN_BOBYQA,
+            maxeval     = 10_000,
+            verbose     = 1,
+            lower_bound = lower_bounds,
+            upper_bound = upper_bounds,
+            fixed_params=[
+                sampled_params.get("N0"),
+                sampled_params.get("N_bottleneck"),
+                None, None, None,
+            ] if sampled_params else None,
         )
-        return opt_params, ll_val
 
-    # replicate loop ----------------------------------------------------
-    fits = []
-    for i in range(num_opt):
-        seed_vec = dadi.Misc.perturb_params(start_vec, fold=0.1)
-        fits.append(_optimise(seed_vec, tag=f"optim_{i:04d}"))
+    log_path.write_text(
+        "# dadi single optimisation\n"
+        f"# finished: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n"
+        + buf.getvalue()
+    )
 
-    fits.sort(key=lambda t: t[1], reverse=True)
-    best_params = [p  for p, _ in fits[:top_k]]
-    best_lls    = [ll for _, ll in fits[:top_k]]
+    # ─── wrap into the usual return format ----------------------------------
+    best_params = [opt_params]   # lists of length 1
+    best_lls    = [ll_val]
     return best_params, best_lls

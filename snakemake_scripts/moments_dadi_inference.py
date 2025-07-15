@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:                      # prepend once, idempotent
 # -----------------------------------------------------------------------------
 
 import argparse, json, pickle
+from typing import Dict, Any     
 #  now the local imports work
 from moments_inference import fit_model as moments_fit_model
 from dadi_inference    import fit_model as dadi_fit_model

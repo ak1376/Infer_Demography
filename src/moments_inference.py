@@ -127,30 +127,43 @@ def fit_model(
     sampled_params: Dict | None = None,
 ) -> Tuple[List[np.ndarray], List[float]]:
     """
-    Run *num_optimizations* Powell searches; return the best `top_k`
-    parameter vectors and their log-likelihoods.
+    Run a **single** moments optimisation and return the best parameter
+    vector / log‑likelihood wrapped in 1‑element lists.
     """
-    num_opt = experiment_config["num_optimizations"]
-    top_k   = experiment_config["top_k"]
-    priors  = experiment_config["priors"]
+    # ----- pull settings ------------------------------------------------
+    priors = experiment_config["priors"]
+    # # we keep TOP_K in the cfg for symmetry, but enforce it to be 1 here
+    # top_k  = experiment_config.get("top_k", 1)
+    # assert top_k == 1, "Using one optimiser run ⇒ top_k must be 1"
 
-    # ---- parameter order & start vector -------------------------------
+    # ----- order & initial vector --------------------------------------
     param_names = list(start_dict.keys())
     start_vec   = np.array([start_dict[p] for p in param_names])
-    print(f'Starting parameters: {start_dict}')
 
-    # ---- sample sizes (diploid) ---------------------------------------
+    # ----- sample sizes (convert SFS axes → diploid counts) -------------
     sample_sizes = OrderedDict(
-        (p, (n - 1) // 2)                # convert axis length → diploids
-        for p, n in zip(sfs.pop_ids, sfs.shape)
+        (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
     )
 
-    # ---- bounds from priors -------------------------------------------
+    # ----- bounds from priors ------------------------------------------
     lower_bounds = [priors[p][0] for p in param_names]
     upper_bounds = [priors[p][1] for p in param_names]
 
-    # ---- single optimisation replicate --------------------------------
-    def _optimise(seed_vec: np.ndarray, tag: str):
+    # ----- single optimisation call ------------------------------------
+    import datetime, moments
+    from io import StringIO
+    from contextlib import redirect_stdout, redirect_stderr
+    from pathlib import Path
+
+    log_dir  = Path(experiment_config.get("log_dir", ".")) / "moments"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "optim_single.txt"
+
+    # (optional) add a small perturbation; remove if you want deterministic starts
+    seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
+
+    buf = StringIO()
+    with redirect_stdout(buf), redirect_stderr(buf):
         xopt = moments.Inference.optimize_log_lbfgsb(
             seed_vec,
             sfs,
@@ -171,20 +184,16 @@ def fit_model(
             ] if sampled_params else None,
         )
 
-        p_opt = xopt[0]
-        ll_val = xopt[1]
+    opt_params, ll_val = xopt[0], xopt[1]
 
-        return p_opt, ll_val
+    # write short optimiser log
+    log_file.write_text(
+        "# moments single optimisation\n"
+        f"# finished: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n"
+        + buf.getvalue()
+    )
 
-    # ---- replicate loop ------------------------------------------------
-    fits: List[Tuple[np.ndarray, float]] = []
-    for i in range(num_opt):
-        seed_vec = np.copy(start_vec)
-        # seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
-        fits.append(_optimise(seed_vec, tag=f"optim_{i:04d}"))
-
-    # ---- top-k ---------------------------------------------------------
-    fits.sort(key=lambda t: t[1], reverse=True)
-    best_params = [p  for p, _ in fits[:top_k]]
-    best_lls    = [ll for _, ll in fits[:top_k]]
+    # ----- wrap & return ------------------------------------------------
+    best_params = [opt_params]  # lists of length 1
+    best_lls    = [ll_val]
     return best_params, best_lls
