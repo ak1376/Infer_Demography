@@ -1,67 +1,72 @@
 ##############################################################################
-# CONFIG – Paths and Constants (Edit These)
+# CONFIG – Paths and Constants (edit here only)                             #
 ##############################################################################
 import json, math, sys
 from pathlib import Path
 
-# Clean shadowed bottleneck import (if present)
+# ── guard against shadow‑import of the Bottleneck C library ────────────────
 if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
     del sys.modules["bottleneck"]
 
-# Scripts
-SIM_SCRIPT    = "snakemake_scripts/simulation.py"
-INFER_SCRIPT  = "snakemake_scripts/moments_dadi_inference.py"
-WIN_SCRIPT    = "snakemake_scripts/simulate_window.py"
-LD_SCRIPT     = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG       = "config_files/experiment_config_bottleneck.json"
+# ── external scripts -------------------------------------------------------
+SIM_SCRIPT   = "snakemake_scripts/simulation.py"
+INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
+WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
+LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
+EXP_CFG      = "config_files/experiment_config_split_isolation.json"
 
-# Load config
-CFG         = json.loads(Path(EXP_CFG).read_text())
-MODEL       = CFG["demographic_model"]
-NUM_DRAWS   = CFG["num_draws"]
-NUM_OPTIMS  = CFG.get("num_optimizations", 3)
-TOP_K       = CFG.get("top_k", 2)
-NUM_WINDOWS = 100
-R_BINS_STR  = "0,1e-6,3.2e-6,1e-5,3.2e-5,1e-4,3.2e-4,1e-3"
+# ── experiment metadata ----------------------------------------------------
+CFG           = json.loads(Path(EXP_CFG).read_text())
+MODEL         = CFG["demographic_model"]
+NUM_DRAWS     = CFG["num_draws"]          # number of independent sims
+NUM_OPTIMS    = CFG.get("num_optimizations", 3)
+TOP_K         = CFG.get("top_k", 2)
+NUM_WINDOWS   = 100                       # LD windows per simulation
+R_BINS_STR    = "0,1e-6,3.2e-6,1e-5,3.2e-5,1e-4,3.2e-4,1e-3"
 
-# IDs
 _pad     = int(math.log10(NUM_DRAWS - 1)) + 1
-SIM_IDS  = [f"{i:0{_pad}d}" for i in range(NUM_DRAWS)]
+SIM_IDS  = [f"{i:0{_pad}d}" for i in range(NUM_DRAWS)]  # 00, 01 …
 WINDOWS  = range(NUM_WINDOWS)
 
-# Paths
-SIM_BASEDIR = f"experiments/{MODEL}/simulations"
+# ── canonical path builders -----------------------------------------------
+SIM_BASEDIR = f"experiments/{MODEL}/simulations"                      # per‑sim artefacts
 RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
-LD_ROOT     = lambda sid: f"experiments/{MODEL}/inferences/sim_{sid}/MomentsLD"
+LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"  # use {{sid}} wildcard
 
 opt_pkl   = lambda sid, opt, tool: f"{RUN_DIR(sid, opt)}/inferences/{tool}/fit_params.pkl"
 final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/fit_params.pkl"
 
 ##############################################################################
-# RULE all – Everything
+# RULE all – final targets the workflow must create                         #
 ##############################################################################
 rule all:
     input:
-        # simulation + inference
+        # simulation + moments/dadi inference summary files
         expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", sid=SIM_IDS),
-        expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl", sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-        expand(f"{SIM_BASEDIR}/{{sid}}/demes.png", sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
         [final_pkl(sid, "moments") for sid in SIM_IDS],
         [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        # LD windows + LD‑stats + best‑fit results
+        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",    sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS), 
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
+            sid=SIM_IDS
+        ),
 
-        # LD: windows and LD stats
-        expand(f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win}}.vcf.gz", sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/sim_{{sid}}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/sim_{{sid}}/best_fit.pkl", sid=SIM_IDS)
 
+##############################################################################
+# RULE simulate – one complete tree‑sequence + SFS                          #
 ##############################################################################
 rule simulate:
     output:
-        sfs     = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params  = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        tree    = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
-        fig     = f"{SIM_BASEDIR}/{{sid}}/demes.png",
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        tree   = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
+        fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
     params:
         sim_dir = SIM_BASEDIR,
         cfg     = EXP_CFG,
@@ -76,6 +81,9 @@ rule simulate:
             --simulation-number {wildcards.sid}
         """
 
+##############################################################################
+# RULE infer_sfs – one optimiser start (moments + dadi)                     #
+##############################################################################
 rule infer_sfs:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
@@ -84,7 +92,6 @@ rule infer_sfs:
     output:
         mom  = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
         dadi = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
-
     params:
         run_dir = lambda w: RUN_DIR(w.sid, w.opt)
     threads: 4
@@ -100,6 +107,9 @@ rule infer_sfs:
             --run-dadi       True
         """
 
+##############################################################################
+# RULE aggregate_opts – keep the TOP_K best fits per simulation             #
+##############################################################################
 rule aggregate_opts:
     input:
         mom  = lambda w: [opt_pkl(w.sid, o, "moments") for o in range(NUM_OPTIMS)],
@@ -109,7 +119,6 @@ rule aggregate_opts:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-
         def merge_keep_best(in_files, out_file):
             params, lls = [], []
             for pkl in in_files:
@@ -121,20 +130,22 @@ rule aggregate_opts:
                     "best_lls"   : [lls[i]    for i in keep]}
             pathlib.Path(out_file).parent.mkdir(parents=True, exist_ok=True)
             pickle.dump(best, open(out_file, "wb"))
-
         merge_keep_best(input.mom,  output.mom)
         merge_keep_best(input.dadi, output.dadi)
 
+##############################################################################
+# RULE simulate_window – one VCF window                                     #
+##############################################################################
 rule simulate_window:
     input:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         cfg    = EXP_CFG
     output:
-        vcf_gz = f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win}}.vcf.gz"
+        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
     params:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        out_winDir = lambda w: f"{LD_ROOT}/sim_{w.sid}/windows",
-        rep_idx    = lambda w: int(w.win)
+        out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
+        rep_idx    = "{win}"
     threads: 1
     shell:
         """
@@ -145,14 +156,17 @@ rule simulate_window:
             --out-dir      {params.out_winDir}
         """
 
+##############################################################################
+# RULE ld_window – LD statistics for one window                             #
+##############################################################################
 rule ld_window:
     input:
-        vcf_gz = f"{LD_ROOT}/sim_{{sid}}/windows/window_{{win}}.vcf.gz",
+        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
         cfg    = EXP_CFG
     output:
-        pkl    = f"{LD_ROOT}/sim_{{sid}}/LD_stats/LD_stats_window_{{win}}.pkl"
+        pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
-        sim_dir = lambda w: f"{LD_ROOT}/sim_{w.sid}",
+        sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins    = R_BINS_STR
     threads: 1
     shell:
@@ -164,18 +178,25 @@ rule ld_window:
             --r-bins       "{params.bins}"
         """
 
+##############################################################################
+# RULE optimize_momentsld – aggregate windows & optimise momentsLD          #
+##############################################################################
 rule optimize_momentsld:
     input:
-        pkls = lambda w: expand(f"{LD_ROOT}/sim_{w.sid}/LD_stats/LD_stats_window_{{win}}.pkl", win=WINDOWS),
+        pkls = lambda w: expand(
+            f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl",
+            sid=[w.sid],
+            win=WINDOWS
+        ),
         cfg  = EXP_CFG
     output:
-        mv    = f"{LD_ROOT}/sim_{{sid}}/means.varcovs.pkl",
-        boot  = f"{LD_ROOT}/sim_{{sid}}/bootstrap_sets.pkl",
-        pdf   = f"{LD_ROOT}/sim_{{sid}}/empirical_vs_theoretical_comparison.pdf",
-        best  = f"{LD_ROOT}/sim_{{sid}}/best_fit.pkl"
+        mv   = f"{LD_ROOT}/means.varcovs.pkl",
+        boot = f"{LD_ROOT}/bootstrap_sets.pkl",
+        pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
+        best = f"{LD_ROOT}/best_fit.pkl"
     params:
         sim_dir   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        LD_dir    = lambda w: f"{LD_ROOT}/sim_{w.sid}",
+        LD_dir    = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins      = R_BINS_STR,
         n_windows = NUM_WINDOWS
     threads: 1
@@ -190,7 +211,30 @@ rule optimize_momentsld:
         """
 
 ##############################################################################
-# Wildcard Constraints
+# RULE combine_results – merge dadi / moments / moments‑LD fits per sim
+##############################################################################
+rule combine_results:
+    input:
+        dadi      = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
+        moments   = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
+        momentsLD = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl"
+    output:
+        combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
+    run:
+        import pickle, pathlib
+        outdir = pathlib.Path(output.combo).parent
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        summary = {
+            "moments"  : pickle.load(open(input.moments,   "rb")),
+            "dadi"     : pickle.load(open(input.dadi,      "rb")),
+            "momentsLD": pickle.load(open(input.momentsLD, "rb")),
+        }
+        pickle.dump(summary, open(output.combo, "wb"))
+        print(f"✓ combined → {output.combo}")
+
+##############################################################################
+# Wildcard Constraints                                                      #
 ##############################################################################
 wildcard_constraints:
     opt = "|".join(str(i) for i in range(NUM_OPTIMS))

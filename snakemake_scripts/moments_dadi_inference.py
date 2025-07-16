@@ -62,7 +62,10 @@ if run_moments:
         experiment_config={**cfg, "log_dir": str(mom_out / "logs")},
         sampled_params=pars,
     )
-    pickle.dump({"best_params": vecs, "best_lls": lls},
+
+    opt_params = {k: v for k, v in zip(start_dict.keys(), vecs)}
+
+    pickle.dump({"best_params": opt_params, "best_lls": lls},
                 (mom_out / "fit_params.pkl").open("wb"))
 
 if run_dadi:
@@ -73,5 +76,8 @@ if run_dadi:
         experiment_config={**cfg, "log_dir": str(dadi_out / "logs")},
         sampled_params=pars,
     )
-    pickle.dump({"best_params": vecs, "best_lls": lls},
+    # Convert vecs into a dictionary with the same keys as start_dict
+    opt_params = {k: v for k, v in zip(start_dict.keys(), vecs)}
+
+    pickle.dump({"best_params": opt_params, "best_lls": lls},
                 (dadi_out / "fit_params.pkl").open("wb"))
