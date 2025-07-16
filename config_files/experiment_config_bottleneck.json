@@ -10,7 +10,7 @@
     "seed": 42, 
     "num_optimizations": 1, 
     "top_k": 1, 
-    "num_sims_pretrain": 10,
+    "num_draws": 2,
     "priors": {
     "N0"                : [2000, 20000],
     "N_bottleneck"      : [100, 1999],
