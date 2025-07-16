@@ -1,26 +1,26 @@
 #!/bin/bash
-#SBATCH --job-name=opt_momLD
-#SBATCH --output=logs/optLD_%A_%a.out
-#SBATCH --error=logs/optLD_%A_%a.err
-#SBATCH --time=1:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --job-name=combine_inf
+#SBATCH --output=logs/combine_%A_%a.out
+#SBATCH --error=logs/combine_%A_%a.err
+#SBATCH --time=00:15:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 
 # --------------------------------------------------------------------------
-# 0. paths & config --------------------------------------------------------
+# 0. paths & experiment constants -----------------------------------------
 # --------------------------------------------------------------------------
 CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws' "$CFG")          # e.g. 10
-MODEL=$(jq -r '.demographic_model' "$CFG")      # bottleneck | split_isolation …
+NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")   # e.g. 10
+MODEL=$(jq -r '.demographic_model'      "$CFG")   # bottleneck | split_isolation …
 
-# zero‑padding width for sid (“00”, “01”…)
+# How many digits to pad sid with (00, 01 …)
 PAD=$(python - <<EOF
 import math, sys; n=int(sys.argv[1])
 print(int(math.log10(n-1))+1)
@@ -28,7 +28,7 @@ EOF
 "$NUM_DRAWS")
 
 # --------------------------------------------------------------------------
-# 1. auto‑set --array if missing -------------------------------------------
+# 1. (re)submit with the correct --array range if none was provided ---------
 # --------------------------------------------------------------------------
 if [[ -z "$SLURM_ARRAY_TASK_ID" ]]; then
     sbatch --array=0-$(( NUM_DRAWS - 1 )) "$0" "$@"
@@ -40,15 +40,14 @@ fi
 # --------------------------------------------------------------------------
 sid=$SLURM_ARRAY_TASK_ID
 pad_sid=$(printf "%0${PAD}d" "$sid")
-echo "optimize_momentsLD: sid=$sid (folder $pad_sid)"
+echo "combine_results: sid=$sid  (folder $pad_sid)"
 
 # --------------------------------------------------------------------------
 # 3. Snakemake target for this simulation ----------------------------------
 # --------------------------------------------------------------------------
-TARGET="experiments/${MODEL}/inferences/sim_${pad_sid}/MomentsLD/best_fit.pkl"
+TARGET="experiments/${MODEL}/inferences/sim_${pad_sid}/all_inferences.pkl"
 
-# asking for best_fit.pkl triggers rule optimize_momentsld, which also
-# creates means.varcovs.pkl, bootstrap_sets.pkl, and the PDF.
+# This file is produced by rule `combine_results`.
 # --------------------------------------------------------------------------
 snakemake -j "$SLURM_CPUS_PER_TASK" \
   --snakefile "$SNAKEFILE" \

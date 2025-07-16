@@ -24,8 +24,7 @@ TOP_K         = CFG.get("top_k", 2)
 NUM_WINDOWS   = 100                       # LD windows per simulation
 R_BINS_STR    = "0,1e-6,3.2e-6,1e-5,3.2e-5,1e-4,3.2e-4,1e-3"
 
-_pad     = int(math.log10(NUM_DRAWS - 1)) + 1
-SIM_IDS  = [f"{i:0{_pad}d}" for i in range(NUM_DRAWS)]  # 00, 01 …
+SIM_IDS  = [i for i in range(NUM_DRAWS)]
 WINDOWS  = range(NUM_WINDOWS)
 
 # ── canonical path builders -----------------------------------------------
@@ -41,22 +40,26 @@ final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/
 ##############################################################################
 rule all:
     input:
-        # simulation + moments/dadi inference summary files
-        expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", sid=SIM_IDS),
-        expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-        expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-        expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+        # ── raw simulation artefacts ────────────────────────────────────────
+        expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",    sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",               sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",   sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",             sid=SIM_IDS),
+
+        # ── aggregated optimiser results (produced by rule aggregate_opts) ─
         [final_pkl(sid, "moments") for sid in SIM_IDS],
         [final_pkl(sid, "dadi")    for sid in SIM_IDS],
-        # LD windows + LD‑stats + best‑fit results
-        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",    sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS), 
+
+        # ── LD: per‑window VCFs & statistics, plus best‑fit summary ─────────
+        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",         sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl",  sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/best_fit.pkl",                          sid=SIM_IDS),
+
+        # ── final merge of all three inference types ───────────────────────
         expand(
             f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
             sid=SIM_IDS
         ),
-
 
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS                          #
@@ -82,20 +85,19 @@ rule simulate:
         """
 
 ##############################################################################
-# RULE infer_sfs – one optimiser start (moments + dadi)                     #
+# RULE INFER_MOMENTS 
 ##############################################################################
-rule infer_sfs:
+rule infer_moments:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         cfg    = EXP_CFG
-    output:
-        mom  = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-        dadi = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
-    params:
-        run_dir = lambda w: RUN_DIR(w.sid, w.opt)
-    threads: 4
-    shell:
+    output: 
+        f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
+    params: 
+        run_dir=lambda w: RUN_DIR(w.sid, w.opt)
+    threads: 8
+    shell:  
         """
         python "{INFER_SCRIPT}" \
             --run-dir        "{params.run_dir}" \
@@ -103,8 +105,31 @@ rule infer_sfs:
             --sfs            "{input.sfs}" \
             --sampled-params "{input.params}" \
             --rep-index      {wildcards.opt} \
-            --run-moments    True \
-            --run-dadi       True
+            --run-moments    True  --run-dadi False
+        """
+
+##############################################################################
+# RULE infer_dadi – inference using dadi                                    #
+##############################################################################        
+rule infer_dadi:
+    input:  
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        cfg    = EXP_CFG
+    output: 
+        f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
+    params: 
+        run_dir=lambda w: RUN_DIR(w.sid, w.opt)
+    threads: 8
+    shell: 
+        """
+        python "{INFER_SCRIPT}" \
+            --run-dir        "{params.run_dir}" \
+            --config-file    "{input.cfg}" \
+            --sfs            "{input.sfs}" \
+            --sampled-params "{input.params}" \
+            --rep-index      {wildcards.opt} \
+            --run-moments    False --run-dadi True
         """
 
 ##############################################################################

@@ -18,7 +18,7 @@ BATCH_SIZE=1
 TOTAL_TASKS=10
 
 # Set up the simulation directory and other variables
-EXPERIMENT_CONFIG_FILE='/home/akapoor/kernlab/Infer_Demography/experiment_config_bottleneck.json'
+EXPERIMENT_CONFIG_FILE='/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json'
 
 # Extract the values from the JSON config
 DEMOGRAPHIC_MODEL=$(jq -r '.demographic_model' $EXPERIMENT_CONFIG_FILE)
@@ -70,16 +70,14 @@ EXP_ROOT="/projects/kernlab/akapoor/Infer_Demography/experiments/${DEMOGRAPHIC_M
 
 # Run Snakemake rule for each task in the batch
 for TASK_ID in $(seq $BATCH_START $BATCH_END); do
-    echo "Processing task ${TASK_ID}"
+    PAD_ID=$(printf "$TASK_ID")   # 0 → 00, 1 → 01 …
 
-    snakemake \
-    --snakefile   /projects/kernlab/akapoor/Infer_Demography/Snakefile \
-    --directory   /gpfs/projects/kernlab/akapoor/Infer_Demography \
-    --rerun-incomplete \
-    "${EXP_ROOT}/${TASK_ID}/sampled_params.pkl" \
-    "${EXP_ROOT}/${TASK_ID}/SFS.pkl" \
-    "${EXP_ROOT}/${TASK_ID}/tree_sequence.trees" \
-    "${EXP_ROOT}/${TASK_ID}/demes.png"
+    snakemake -j "$SLURM_CPUS_PER_TASK" \
+      --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
+      --directory /projects/kernlab/akapoor/Infer_Demography \
+      --rerun-incomplete \
+      "experiments/${DEMOGRAPHIC_MODEL}/simulations/${PAD_ID}/tree_sequence.trees"
+done
 
 # Calculate the overall elapsed time only at the last task in the array
 if [ "$SLURM_ARRAY_TASK_ID" -eq $((TOTAL_TASKS / BATCH_SIZE - 1)) ]; then
