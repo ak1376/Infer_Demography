@@ -17,8 +17,9 @@
 BATCH_SIZE=1
 TOTAL_TASKS=10
 
-# Set up the simulation directory and other variables
-EXPERIMENT_CONFIG_FILE='/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json'
+# the master script exports CFG_PATH; abort if it is not set
+: "${CFG_PATH:?CFG_PATH is not defined}"
+EXPERIMENT_CONFIG_FILE="$CFG_PATH"
 
 # Extract the values from the JSON config
 DEMOGRAPHIC_MODEL=$(jq -r '.demographic_model' $EXPERIMENT_CONFIG_FILE)

@@ -14,7 +14,9 @@
 # --------------------------------------------------------------------------
 # 0. paths & config --------------------------------------------------------
 # --------------------------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+# the master script exports CFG_PATH; abort if it is not set
+: "${CFG_PATH:?CFG_PATH is not defined}"
+CFG="$CFG_PATH"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
