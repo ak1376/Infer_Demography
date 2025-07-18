@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=mom_infer
-#SBATCH --array=0-19                            # Array range (adjust based on the number of tasks and batch size)
+#SBATCH --array=0-29                            # Array range (adjust based on the number of tasks and batch size)
 #SBATCH --output=logs/mom_%A_%a.out
 #SBATCH --error=logs/mom_%A_%a.err
 #SBATCH --time=2:00:00
@@ -46,4 +46,5 @@ snakemake -j "$SLURM_CPUS_PER_TASK" \
   --snakefile "$SNAKEFILE" \
   --directory "$ROOT" \
   --rerun-incomplete \
+  --nolock \
   "experiments/${MODEL}/runs/run_${pad_sid}_${opt}/inferences/moments/fit_params.pkl"

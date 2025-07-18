@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer
-#SBATCH --array=0-19                            # Array range (adjust based on the number of tasks and batch size)
+#SBATCH --array=0-29                            # Array range (adjust based on the number of tasks and batch size)
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
 #SBATCH --time=2:00:00
@@ -42,4 +42,5 @@ snakemake -j "$SLURM_CPUS_PER_TASK" \
   --snakefile "$SNAKEFILE" \
   --directory "$ROOT" \
   --rerun-incomplete \
+  --nolock \
   "experiments/${MODEL}/runs/run_${pad_sid}_${opt}/inferences/dadi/fit_params.pkl"

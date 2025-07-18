@@ -299,7 +299,7 @@ def main():
     else:
         raise ValueError(f"Need physical rescaling for model '{cfg['demographic_model']}'")
     
-    pickle.dump({"opt_params": best_fit, "loglik": LL}, (sim_dir / "best_fit.pkl").open("wb"))
+    pickle.dump({"best_params": best_fit, "best_lls": LL}, (sim_dir / "best_fit.pkl").open("wb"))
 
     print(f"✓ moments-LD finished for {sim_dir.relative_to(args.output_root.parent)}")
 

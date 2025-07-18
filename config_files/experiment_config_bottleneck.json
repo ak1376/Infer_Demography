@@ -1,5 +1,5 @@
 {
-    "genome_length": 1e6,
+    "genome_length": 1e8,
     "mutation_rate": 1.5e-08,
     "recombination_rate": 1.5e-08,
     "demographic_model": "bottleneck",
@@ -8,7 +8,7 @@
         "N0": 10
     }, 
     "seed": 42, 
-    "num_optimizations": 2, 
+    "num_optimizations": 3, 
     "top_k": 1, 
     "num_draws": 10,
     "priors": {

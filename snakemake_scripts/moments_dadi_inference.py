@@ -63,11 +63,11 @@ if run_moments:
         sampled_params=pars,
     )
 
-    opt_params = {k: v for k, v in zip(start_dict.keys(), vecs)}
+    vec       = vecs[0]
+    opt_params = dict(zip(start_dict.keys(), vec))
 
-    pickle.dump({"best_params": opt_params, "best_lls": lls},
+    pickle.dump({"best_params": opt_params, "best_lls": lls[0]},
                 (mom_out / "fit_params.pkl").open("wb"))
-
 if run_dadi:
     vecs, lls = dadi_fit_model(
         sfs,
@@ -76,8 +76,8 @@ if run_dadi:
         experiment_config={**cfg, "log_dir": str(dadi_out / "logs")},
         sampled_params=pars,
     )
-    # Convert vecs into a dictionary with the same keys as start_dict
-    opt_params = {k: v for k, v in zip(start_dict.keys(), vecs)}
+    vec       = vecs[0]                     # the 1-element array
+    opt_params = dict(zip(start_dict.keys(), vec))
 
-    pickle.dump({"best_params": opt_params, "best_lls": lls},
+    pickle.dump({"best_params": opt_params, "best_lls": lls[0]},
                 (dadi_out / "fit_params.pkl").open("wb"))

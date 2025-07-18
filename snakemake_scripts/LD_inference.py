@@ -161,15 +161,15 @@ def main() -> None:
         # three_epoch params: (nu1, nu2, T1, T2, Ne)
         demo_func = moments.LD.Demographics1D.three_epoch
         p_guess = [
-            prior_means["N_bottleneck"] / prior_means["N0"],           # ν1
+            samp["N_bottleneck"] / samp["N0"],           # ν1
             prior_means["N_recover"]    / prior_means["N0"],           # ν2
             (prior_means["t_bottleneck_start"] -                      # T1
             prior_means["t_bottleneck_end"]) / (2 * prior_means["N0"]),
             prior_means["t_bottleneck_end"] / (2 * prior_means["N0"]), # T2
-            prior_means["N0"],                                         # Ne
+            samp["N0"],                                         # Ne
         ]
 
-        fixed_params = [p_guess[0], p_guess[1], None, None, None]
+        fixed_params = [p_guess[0], None, None, None, p_guess[4]]
 
     elif model == "split_isolation":                # ⇢ 2‑pop, split then no mig
         demo_func = moments.LD.Demographics2D.split_mig
@@ -210,15 +210,17 @@ def main() -> None:
     # TODO: Need to have a logical way to handle fixed parameters 
     opt_params, LL = moments.LD.Inference.optimize_log_fmin(
         p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
-        fixed_params=fixed_params, verbose=0)
+        fixed_params=fixed_params, verbose=1)
     
     if cfg['demographic_model'] == "bottleneck":
         # rescale the parameters to physical units
         physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
         best_fit = dict(zip(["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"], physical))
     elif cfg['demographic_model'] == "split_isolation":
+        print(f'Optimised parameters: {opt_params}')
         physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m", "Ne"])
-        best_fit = dict(zip(["N1", "N2", "t_split", "N0"], physical))
+        print(f'Physical units: {physical}')
+        best_fit = dict(zip(["N1", "N2", "t_split", "m", "N0"], physical))
     elif cfg['demographic_model'] == "split_migration":
         physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m12", "m21", "Ne"])
         best_fit = dict(zip(["N1", "N2", "t_split", "m12", "m21", "N0"], physical))
@@ -229,7 +231,7 @@ def main() -> None:
     else:
         raise ValueError(f"Need physical rescaling for model '{cfg['demographic_model']}'")
     
-    pickle.dump({"opt_params": best_fit, "loglik": LL}, (LD_dir / "best_fit.pkl").open("wb"))
+    pickle.dump({"best_params": best_fit, "best_lls": LL}, (LD_dir / "best_fit.pkl").open("wb"))
 
     print(f"✓ moments‑LD finished for {sim_dir.name}  (LL={LL:.3f})")
 

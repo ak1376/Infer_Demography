@@ -61,6 +61,29 @@ rule all:
             sid=SIM_IDS
         ),
 
+        # ── final feature / target tables (raw, normalised, train/val) ──────
+        # full matrices
+        f"experiments/{MODEL}/modeling/features.npy",
+        f"experiments/{MODEL}/modeling/features_norm.npy",
+        f"experiments/{MODEL}/modeling/targets.npy",
+        f"experiments/{MODEL}/modeling/targets_norm.npy",
+
+        # train / validation splits
+        f"experiments/{MODEL}/modeling/features_train.npy",
+        f"experiments/{MODEL}/modeling/features_val.npy",
+        f"experiments/{MODEL}/modeling/features_train_norm.npy",
+        f"experiments/{MODEL}/modeling/features_val_norm.npy",
+        f"experiments/{MODEL}/modeling/targets_train.npy",
+        f"experiments/{MODEL}/modeling/targets_val.npy",
+        f"experiments/{MODEL}/modeling/targets_train_norm.npy",
+        f"experiments/{MODEL}/modeling/targets_val_norm.npy",
+
+        # DataFrame pickles (optional but handy)
+        f"experiments/{MODEL}/modeling/features_df.pkl",
+        f"experiments/{MODEL}/modeling/features_norm_df.pkl",
+        f"experiments/{MODEL}/modeling/targets_df.pkl",
+        f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
+
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS                          #
 ##############################################################################
@@ -144,17 +167,25 @@ rule aggregate_opts:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
+
+        def _as_list(x):
+            """Return *x* as a list (wrap scalars)."""
+            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+
         def merge_keep_best(in_files, out_file):
             params, lls = [], []
             for pkl in in_files:
                 d = pickle.load(open(pkl, "rb"))
-                params.extend(d["best_params"])
-                lls.extend(d["best_lls"])
-            keep = np.argsort(lls)[::-1][:TOP_K]
+                params.extend(_as_list(d["best_params"]))
+                lls.extend(_as_list(d["best_lls"]))
+
+            keep = np.argsort(lls)[::-1][:TOP_K]            # top‑K by LL
             best = {"best_params": [params[i] for i in keep],
                     "best_lls"   : [lls[i]    for i in keep]}
+
             pathlib.Path(out_file).parent.mkdir(parents=True, exist_ok=True)
             pickle.dump(best, open(out_file, "wb"))
+
         merge_keep_best(input.mom,  output.mom)
         merge_keep_best(input.dadi, output.dadi)
 
@@ -257,6 +288,48 @@ rule combine_results:
         }
         pickle.dump(summary, open(output.combo, "wb"))
         print(f"✓ combined → {output.combo}")
+
+##############################################################################
+# RULE combine_features – build raw + normalised feature/target matrices    #
+##############################################################################
+rule combine_features:
+    input:
+        cfg    = EXP_CFG,
+        infs   = expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
+            sid=SIM_IDS
+        ),
+        truths = expand(
+            f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+            sid=SIM_IDS
+        )
+    output:
+        # NumPy matrices ----------------------------------------------------
+        feats         = f"experiments/{MODEL}/modeling/features.npy",
+        feats_norm    = f"experiments/{MODEL}/modeling/features_norm.npy",
+        feats_train   = f"experiments/{MODEL}/modeling/features_train.npy",
+        feats_val     = f"experiments/{MODEL}/modeling/features_val.npy",
+        feats_train_n = f"experiments/{MODEL}/modeling/features_train_norm.npy",
+        feats_val_n   = f"experiments/{MODEL}/modeling/features_val_norm.npy",
+        targ          = f"experiments/{MODEL}/modeling/targets.npy",
+        targ_norm     = f"experiments/{MODEL}/modeling/targets_norm.npy",
+        targ_train    = f"experiments/{MODEL}/modeling/targets_train.npy",
+        targ_val      = f"experiments/{MODEL}/modeling/targets_val.npy",
+        targ_train_n  = f"experiments/{MODEL}/modeling/targets_train_norm.npy",
+        targ_val_n    = f"experiments/{MODEL}/modeling/targets_val_norm.npy",
+        # DataFrame pickles --------------------------------------------------
+        feats_df      = f"experiments/{MODEL}/modeling/features_df.pkl",
+        feats_norm_df = f"experiments/{MODEL}/modeling/features_norm_df.pkl",
+        targ_df       = f"experiments/{MODEL}/modeling/targets_df.pkl",
+        targ_norm_df  = f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
+    threads: 1
+    shell:
+        """
+        python "snakemake_scripts/feature_extraction.py" \
+            --experiment-config {input.cfg} \
+            --out-dir $(dirname {output.feats})
+        """
+
 
 ##############################################################################
 # Wildcard Constraints                                                      #
