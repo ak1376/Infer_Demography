@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=batched_ld_stats
-#SBATCH --array=0-999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=1:00:00
@@ -13,7 +13,7 @@
 #SBATCH --verbose
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1          # number of (sim,window) jobs per array task
+BATCH_SIZE=50          # number of (sim,window) jobs per array task
 # ----------------------------------------------------------------------------
 
 # -------- config & constants -----------------------------------------------

@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=batched_win_sim
-#SBATCH --array=0-999
+#SBATCH --job-name=win_sim
+#SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
 #SBATCH --time=2:00:00
@@ -16,7 +16,7 @@
 # ---------------------------------------------------------------------------
 # 0. batching parameters (adjust if desired) --------------------------------
 # ---------------------------------------------------------------------------
-BATCH_SIZE=1          # number of (sim,window) combos this array task processes
+BATCH_SIZE=50          # number of (sim,window) combos this array task processes
 
 # ---------------------------------------------------------------------------
 # 1. config & derived constants --------------------------------------------

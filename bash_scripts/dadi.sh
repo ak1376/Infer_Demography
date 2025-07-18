@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=batched_dadi_infer
-#SBATCH --array=0-29
+#SBATCH --array=0-4999
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
 #SBATCH --time=2:00:00
@@ -13,7 +13,7 @@
 #SBATCH --verbose
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1          # number of (sim,opt) pairs this array task handles
+BATCH_SIZE=3          # number of (sim,opt) pairs this array task handles
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------

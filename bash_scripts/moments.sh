@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=batched_mom_infer
-#SBATCH --array=0-29
+#SBATCH --array=0-4999
 #SBATCH --output=logs/mom_%A_%a.out
 #SBATCH --error=logs/mom_%A_%a.err
 #SBATCH --time=2:00:00
@@ -13,7 +13,7 @@
 #SBATCH --verbose
 
 # --------------- batching parameters (tweak here) --------------------------
-BATCH_SIZE=1          # number of (sim,opt) jobs per array task. This is #sims x #optimisations per sim.
+BATCH_SIZE=3          # number of (sim,opt) jobs per array task. This is #sims x #optimisations per sim.
 # ---------------------------------------------------------------------------
 
 # --------------- paths & config --------------------------------------------

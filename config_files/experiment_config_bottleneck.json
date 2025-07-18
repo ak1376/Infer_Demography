@@ -10,7 +10,7 @@
     "seed": 42, 
     "num_optimizations": 3, 
     "top_k": 2, 
-    "num_draws": 10,
+    "num_draws": 5000,
     "priors": {
     "N0"                : [2000, 20000],
     "N_bottleneck"      : [100, 1999],
