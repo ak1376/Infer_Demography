@@ -9,7 +9,7 @@
     }, 
     "seed": 42, 
     "num_optimizations": 3, 
-    "top_k": 1, 
+    "top_k": 2, 
     "num_draws": 10,
     "priors": {
     "N0"                : [2000, 20000],

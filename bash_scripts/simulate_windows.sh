@@ -1,66 +1,87 @@
 #!/bin/bash
-#SBATCH --job-name=win_sim
-#SBATCH --array=0-999                            # Array range (adjust based on the number of tasks and batch size)
-#SBATCH --output=logs/win_%A_%a.out
-#SBATCH --error=logs/win_%A_%a.err
-#SBATCH --time=1:00:00
+#SBATCH --job-name=batched_win_sim
+#SBATCH --array=0-999
+#SBATCH --output=logs/win_sim_%A_%a.out
+#SBATCH --error=logs/win_sim_%A_%a.err
+#SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=4G
+#SBATCH --mem=6G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
+#SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
+#SBATCH --verbose
 
-# --------------------------------------------------------------------------
-# 0. paths & config --------------------------------------------------------
-# --------------------------------------------------------------------------
-# the master script exports CFG_PATH; abort if it is not set
-: "${CFG_PATH:?CFG_PATH is not defined}"
+# ---------------------------------------------------------------------------
+# 0. batching parameters (adjust if desired) --------------------------------
+# ---------------------------------------------------------------------------
+BATCH_SIZE=1          # number of (sim,window) combos this array task processes
+
+# ---------------------------------------------------------------------------
+# 1. config & derived constants --------------------------------------------
+# ---------------------------------------------------------------------------
+: "${CFG_PATH:?CFG_PATH is not defined}"          # exported by the driver script
 CFG="$CFG_PATH"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws'  "$CFG")        # e.g. 10
-NUM_WINDOWS=100                                # hard‑coded in Snakefile
-MODEL=$(jq -r '.demographic_model' "$CFG")     # bottleneck | split_isolation …
+NUM_DRAWS=$(jq -r '.num_draws'         "$CFG")
+MODEL=$(jq -r '.demographic_model'     "$CFG")
+NUM_WINDOWS=100                         # same constant as in Snakefile
 
-# width for zero‑padded sid (00, 01 …)
+TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))   # every (sim,window) pair
+
+# zero‑pad width for simulation folders
 PAD=$(python - <<EOF
-import math, sys
-print(int(math.log10(int(sys.argv[1])-1))+1)
+import math, sys; n=int(sys.argv[1]); print(int(math.log10(n-1))+1)
 EOF
 "$NUM_DRAWS")
 
-# --------------------------------------------------------------------------
-# 1. if launched without --array, resubmit with correct range --------------
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 2. (re)submit if script wasn't launched as an array yet -------------------
+# ---------------------------------------------------------------------------
 if [[ -z "$SLURM_ARRAY_TASK_ID" ]]; then
-    sbatch --array=0-$(( NUM_DRAWS*NUM_WINDOWS - 1 )) "$0" "$@"
+    NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
+    sbatch --array=0-"$NUM_ARRAY"%$MAX_CONCURRENT "$0" "$@"
     exit 0
 fi
 
-# --------------------------------------------------------------------------
-# 2. decode sid + win from array index -------------------------------------
-# --------------------------------------------------------------------------
-idx=$SLURM_ARRAY_TASK_ID
-sid=$(( idx / NUM_WINDOWS ))
-win=$(( idx % NUM_WINDOWS ))
-pad_sid=$(printf "%0${PAD}d" "$sid")
+# ---------------------------------------------------------------------------
+# 3. compute batch bounds for this array ID ---------------------------------
+# ---------------------------------------------------------------------------
+BATCH_START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
+BATCH_END=$((  (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
+[[ $BATCH_END -ge $TOTAL_TASKS ]] && BATCH_END=$(( TOTAL_TASKS - 1 ))
 
-echo "simulate_window: sid=$sid (folder $pad_sid)  win=$win"
+echo "Array task $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
 
-# --------------------------------------------------------------------------
-# 3. target path Snakemake must create -------------------------------------
-# --------------------------------------------------------------------------
-TARGET="experiments/${MODEL}/inferences/sim_${pad_sid}/MomentsLD/windows/window_${win}.vcf.gz"
+mkdir -p logs
 
-# --------------------------------------------------------------------------
-# 4. launch Snakemake ------------------------------------------------------
-# --------------------------------------------------------------------------
-snakemake -j "$SLURM_CPUS_PER_TASK" \
-  --snakefile "$SNAKEFILE" \
-  --directory "$ROOT" \
-  --rerun-incomplete \
-  --nolock \
-  "$TARGET"
+# ---------------------------------------------------------------------------
+# 4. loop over indices in this batch ---------------------------------------
+# ---------------------------------------------------------------------------
+for TASK_ID in $(seq "$BATCH_START" "$BATCH_END"); do
+    SID=$(( TASK_ID / NUM_WINDOWS ))
+    WIN=$(( TASK_ID % NUM_WINDOWS ))
+    PAD_SID=$(printf "%0${PAD}d" "$SID")
+
+    TARGET="experiments/${MODEL}/inferences/sim_${PAD_SID}/MomentsLD/windows/window_${WIN}.vcf.gz"
+    echo "Processing SID=$SID  WIN=$WIN  →  $TARGET"
+
+    snakemake --snakefile "$SNAKEFILE" \
+              --directory  "$ROOT" \
+              --nolock \
+              --rerun-incomplete \
+              -j "$SLURM_CPUS_PER_TASK" \
+              --latency-wait 60 \
+              "$TARGET"
+
+    if [[ $? -ne 0 ]]; then
+        echo "Snakemake failed for SID=$SID WIN=$WIN"
+        exit 1
+    fi
+done
+
+echo "Array task $SLURM_ARRAY_TASK_ID finished successfully."

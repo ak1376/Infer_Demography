@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=ld_stats
-#SBATCH --array=0-999                            # Array range (adjust based on the number of tasks and batch size)
+#SBATCH --job-name=batched_ld_stats
+#SBATCH --array=0-999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=1:00:00
@@ -10,56 +10,57 @@
 #SBATCH --account=kernlab
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
+#SBATCH --verbose
 
-# --------------------------------------------------------------------------
-# 0. paths & config --------------------------------------------------------
-# --------------------------------------------------------------------------
-# the master script exports CFG_PATH; abort if it is not set
+# -------- batching knobs ---------------------------------------------------
+BATCH_SIZE=1          # number of (sim,window) jobs per array task
+# ----------------------------------------------------------------------------
+
+# -------- config & constants -----------------------------------------------
 : "${CFG_PATH:?CFG_PATH is not defined}"
 CFG="$CFG_PATH"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")   # e.g. 10
-NUM_WINDOWS=100                                   # hard‑coded in Snakefile
-MODEL=$(jq -r '.demographic_model'      "$CFG")   # bottleneck | split_isolation …
+NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
+MODEL=$(jq -r '.demographic_model'      "$CFG")
+NUM_WINDOWS=100                          # → keep in sync with Snakefile
+TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
 
-# width for zero‑padded sid (00, 01 …)
 PAD=$(python - <<EOF
-import math, sys; n=int(sys.argv[1])
-print(int(math.log10(n-1))+1)
+import math, sys; n=int(sys.argv[1]); print(int(math.log10(n-1))+1)
 EOF
 "$NUM_DRAWS")
 
-# --------------------------------------------------------------------------
-# 1. if launched without --array, resubmit with correct range --------------
-# --------------------------------------------------------------------------
+# -------- first launch: resubmit with correct --array ----------------------
 if [[ -z "$SLURM_ARRAY_TASK_ID" ]]; then
-    sbatch --array=0-$(( NUM_DRAWS*NUM_WINDOWS - 1 )) "$0" "$@"
+    NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
+    sbatch --array=0-"$NUM_ARRAY"%$MAX_CONCURRENT "$0" "$@"
     exit 0
 fi
 
-# --------------------------------------------------------------------------
-# 2. decode sid + win from array index -------------------------------------
-# --------------------------------------------------------------------------
-idx=$SLURM_ARRAY_TASK_ID
-sid=$(( idx / NUM_WINDOWS ))
-win=$(( idx % NUM_WINDOWS ))
-pad_sid=$(printf "%0${PAD}d" "$sid")
+# -------- slice of indices handled by *this* array task --------------------
+START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
+END=$((   (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
+[[ $END -ge $TOTAL_TASKS ]] && END=$(( TOTAL_TASKS - 1 ))
 
-echo "LD‑stats: sid=$sid (folder $pad_sid)  win=$win"
+echo "Array $SLURM_ARRAY_TASK_ID → indices $START .. $END"
 
-# --------------------------------------------------------------------------
-# 3. target path Snakemake must build --------------------------------------
-# --------------------------------------------------------------------------
-TARGET="experiments/${MODEL}/inferences/sim_${pad_sid}/MomentsLD/LD_stats/LD_stats_window_${win}.pkl"
+# -------- loop over (sim, window) pairs ------------------------------------
+for IDX in $(seq "$START" "$END"); do
+    SID=$(( IDX / NUM_WINDOWS ))
+    WIN=$(( IDX % NUM_WINDOWS ))
+    PAD_SID=$(printf "%0${PAD}d" "$SID")
 
-# --------------------------------------------------------------------------
-# 4. launch Snakemake ------------------------------------------------------
-# --------------------------------------------------------------------------
-snakemake -j "$SLURM_CPUS_PER_TASK" \
-  --snakefile "$SNAKEFILE" \
-  --directory "$ROOT" \
-  --rerun-incomplete \
-  --nolock \
-  "$TARGET"
+    TARGET="experiments/${MODEL}/inferences/sim_${PAD_SID}/MomentsLD/LD_stats/LD_stats_window_${WIN}.pkl"
+    echo "LD‑stats: SID=$SID  WIN=$WIN  →  $TARGET"
+
+    snakemake --snakefile "$SNAKEFILE" \
+              --directory  "$ROOT"      \
+              --rerun-incomplete        \
+              --nolock                  \
+              -j "$SLURM_CPUS_PER_TASK" \
+              "$TARGET" || { echo "Failed for SID=$SID WIN=$WIN"; exit 1; }
+done
+
+echo "Array task $SLURM_ARRAY_TASK_ID finished."

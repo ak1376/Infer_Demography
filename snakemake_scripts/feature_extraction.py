@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
 """
 Aggregate fitted parameters + ground‑truth parameters across all simulations,
-optionally normalise them by the prior distribution, and split into
-train / validation sets.
+optionally normalise them by the prior distribution, split into train / validation
+sets, and create replicate‑specific columns when best_params contains a list.
 
-Outputs (all written to --out-dir):
-
-    ├─ features.npy                – full (raw)
-    ├─ targets.npy
-    ├─ features_norm.npy           – full (normalised)
-    ├─ targets_norm.npy
-    ├─ features_train.npy
-    ├─ targets_train.npy
-    ├─ features_val.npy
-    ├─ targets_val.npy
-    ├─ features_train_norm.npy
-    ├─ targets_train_norm.npy
-    ├─ features_val_norm.npy
-    └─ targets_val_norm.npy
-plus identical *.pkl files with DataFrames for convenient inspection.
+Outputs (written to --out-dir):
+  features*.npy / targets*.npy  +   features*.pkl / targets*.pkl
+(see docstring in the original script for the full list)
 """
 
 from __future__ import annotations
@@ -27,24 +15,22 @@ import argparse, json, pickle
 import numpy as np
 import pandas as pd
 
+
 # --------------------------------------------------------------------------- #
-def best_param_dict(tool: str, blob: dict) -> dict:
-    """
-    Return a flat {param: value} dict for moments / dadi / MomentsLD outputs.
-    """
+def param_dicts(tool: str, blob: dict) -> list[dict]:
+    """Return a *list* of {param: value} dicts (1 per replicate)."""
     if tool.lower() == "momentsld":
-        # preferred Moments‑LD structure
+        # preferred single‑rep format
         if "opt_params" in blob:
-            return blob["opt_params"]
-    # fall back to moments/dadi shape
+            return [blob["opt_params"]]
+    # fall back to generic {"best_params": …}
     bp = blob.get("best_params")
-    return bp[0] if isinstance(bp, list) else bp
+    if isinstance(bp, list):
+        return bp
+    return [bp]
 
 
 def prior_stats(priors: dict[str, list[float]]) -> tuple[dict[str, float], dict[str, float]]:
-    """
-    mean = (lo+hi)/2 ;  std = (hi‑lo)/sqrt(12)  for a uniform prior
-    """
     mu, sigma = {}, {}
     for p, (lo, hi) in priors.items():
         mu[p]    = (lo + hi) / 2
@@ -55,28 +41,31 @@ def prior_stats(priors: dict[str, list[float]]) -> tuple[dict[str, float], dict[
 def normalise_df(df: pd.DataFrame, mu: dict[str, float], sigma: dict[str, float],
                  feature_cols_have_prefix: bool) -> pd.DataFrame:
     """
-    Apply (x - mu) / sigma column‑wise.
-    If feature_cols_have_prefix == True, strip the leading '<tool>_' before lookup.
+    Apply (x - mu) / sigma column‑wise, correctly handling _rep_ suffixes.
     """
     out = df.copy()
     for col in out.columns:
-        key = col.split("_", 1)[1] if feature_cols_have_prefix else col
+        key = col
+        if feature_cols_have_prefix:
+            key = key.split("_", 1)[1]             # drop tool_
+        key = key.split("_rep_", 1)[0]              # drop _rep_N if present
         out[col] = (out[col] - mu[key]) / sigma[key]
     return out
 
 
+# --------------------------------------------------------------------------- #
 def main(cfg_path: Path, out_dir: Path) -> None:
-    cfg   = json.loads(cfg_path.read_text())
-    model = cfg["demographic_model"]
-    n_sims = int(cfg["num_draws"])
-    train_pct = float(cfg.get("training_percentage", 0.8))
-    rng = np.random.default_rng(cfg.get("seed", 42))
+    cfg        = json.loads(cfg_path.read_text())
+    model      = cfg["demographic_model"]
+    n_sims     = int(cfg["num_draws"])
+    train_pct  = float(cfg.get("training_percentage", 0.8))
+    rng        = np.random.default_rng(cfg.get("seed", 42))
 
     sim_basedir   = Path(f"experiments/{model}/simulations")
     infer_basedir = Path(f"experiments/{model}/inferences")
 
-    # ---------- gather rows ------------------------------------------------ #
     feature_rows, target_rows, index = [], [], []
+
     for sid in range(n_sims):
         inf_pickle   = infer_basedir / f"sim_{sid}/all_inferences.pkl"
         truth_pickle = sim_basedir   / f"{sid}/sampled_params.pkl"
@@ -87,8 +76,13 @@ def main(cfg_path: Path, out_dir: Path) -> None:
         row = {}
         for tool in ("moments", "dadi", "momentsLD"):
             if tool in data:
-                for k, v in best_param_dict(tool, data[tool]).items():
-                    row[f"{tool}_{k}"] = v
+                for rep_idx, pdict in enumerate(param_dicts(tool, data[tool])):
+                    for k, v in pdict.items():
+                        if tool.lower() == "momentsld":
+                            col = f"{tool}_{k}"
+                        else:
+                            col = f"{tool}_{k}_rep_{rep_idx}"
+                        row[col] = v
         feature_rows.append(row)
         target_rows.append(truth)
         index.append(sid)
@@ -102,22 +96,18 @@ def main(cfg_path: Path, out_dir: Path) -> None:
     targ_norm_df = normalise_df(targ_df, mu, sigma, feature_cols_have_prefix=False)
 
     # ---------- train / val split ------------------------------------------ #
-    perm = rng.permutation(n_sims)
-    n_train = int(round(train_pct * n_sims))
-    train_idx, val_idx = perm[:n_train], perm[n_train:]
+    perm      = rng.permutation(n_sims)
+    n_train   = int(round(train_pct * n_sims))
+    train_idx = perm[:n_train]
+    val_idx   = perm[n_train:]
 
     split = lambda df, idx: df.iloc[idx].to_numpy(float)
 
-    feats      = feat_df.to_numpy(float)
-    feats_norm = feat_norm_df.to_numpy(float)
-    targs      = targ_df.to_numpy(float)
-    targs_norm = targ_norm_df.to_numpy(float)
-
     arrays = {
-        "features.npy"           : feats,
-        "targets.npy"            : targs,
-        "features_norm.npy"      : feats_norm,
-        "targets_norm.npy"       : targs_norm,
+        "features.npy"           : feat_df.to_numpy(float),
+        "targets.npy"            : targ_df.to_numpy(float),
+        "features_norm.npy"      : feat_norm_df.to_numpy(float),
+        "targets_norm.npy"       : targ_norm_df.to_numpy(float),
         "features_train.npy"     : split(feat_df,  train_idx),
         "targets_train.npy"      : split(targ_df,  train_idx),
         "features_val.npy"       : split(feat_df,  val_idx),
@@ -132,11 +122,21 @@ def main(cfg_path: Path, out_dir: Path) -> None:
     for fname, arr in arrays.items():
         np.save(out_dir / fname, arr)
 
-    # also pickle DataFrames for convenience
+    # DataFrame pickles (full)
     feat_df.to_pickle(out_dir / "features_df.pkl")
     targ_df.to_pickle(out_dir / "targets_df.pkl")
     feat_norm_df.to_pickle(out_dir / "features_norm_df.pkl")
     targ_norm_df.to_pickle(out_dir / "targets_norm_df.pkl")
+
+    # OPTIONAL: train / val DataFrames (uncomment if you need them)
+    # feat_df.iloc[train_idx].to_pickle(out_dir / "features_train_df.pkl")
+    # targ_df.iloc[train_idx].to_pickle(out_dir / "targets_train_df.pkl")
+    # feat_df.iloc[val_idx].to_pickle(out_dir / "features_val_df.pkl")
+    # targ_df.iloc[val_idx].to_pickle(out_dir / "targets_val_df.pkl")
+    # feat_norm_df.iloc[train_idx].to_pickle(out_dir / "features_train_norm_df.pkl")
+    # targ_norm_df.iloc[train_idx].to_pickle(out_dir / "targets_train_norm_df.pkl")
+    # feat_norm_df.iloc[val_idx].to_pickle(out_dir / "features_val_norm_df.pkl")
+    # targ_norm_df.iloc[val_idx].to_pickle(out_dir / "targets_val_norm_df.pkl")
 
     print(f"✓ wrote {len(arrays)} .npy files + 4 DataFrames → {out_dir}")
 
