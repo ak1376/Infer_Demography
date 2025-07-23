@@ -13,7 +13,7 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_bottleneck.json"
+EXP_CFG      = "config_files/experiment_config_split_isolation.json"
 
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -68,7 +68,7 @@ rule all:
         f"experiments/{MODEL}/modeling/targets.npy",
         f"experiments/{MODEL}/modeling/targets_norm.npy",
 
-        # train / validation splits
+        # train / validation splits (NumPy)
         f"experiments/{MODEL}/modeling/features_train.npy",
         f"experiments/{MODEL}/modeling/features_val.npy",
         f"experiments/{MODEL}/modeling/features_train_norm.npy",
@@ -78,11 +78,22 @@ rule all:
         f"experiments/{MODEL}/modeling/targets_train_norm.npy",
         f"experiments/{MODEL}/modeling/targets_val_norm.npy",
 
-        # DataFrame pickles (optional but handy)
+        # DataFrame pickles (full)
         f"experiments/{MODEL}/modeling/features_df.pkl",
         f"experiments/{MODEL}/modeling/features_norm_df.pkl",
         f"experiments/{MODEL}/modeling/targets_df.pkl",
         f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
+
+        # NEW: DataFrame pickles (train / val)
+        f"experiments/{MODEL}/modeling/features_train_df.pkl",
+        f"experiments/{MODEL}/modeling/features_val_df.pkl",
+        f"experiments/{MODEL}/modeling/targets_train_df.pkl",
+        f"experiments/{MODEL}/modeling/targets_val_df.pkl",
+        f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
+        f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
+        f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
+        f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+
 
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS                          #
@@ -318,10 +329,20 @@ rule combine_features:
         targ_train_n  = f"experiments/{MODEL}/modeling/targets_train_norm.npy",
         targ_val_n    = f"experiments/{MODEL}/modeling/targets_val_norm.npy",
         # DataFrame pickles --------------------------------------------------
-        feats_df      = f"experiments/{MODEL}/modeling/features_df.pkl",
-        feats_norm_df = f"experiments/{MODEL}/modeling/features_norm_df.pkl",
-        targ_df       = f"experiments/{MODEL}/modeling/targets_df.pkl",
-        targ_norm_df  = f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
+        feats_df            = f"experiments/{MODEL}/modeling/features_df.pkl",
+        feats_norm_df       = f"experiments/{MODEL}/modeling/features_norm_df.pkl",
+        targ_df             = f"experiments/{MODEL}/modeling/targets_df.pkl",
+        targ_norm_df        = f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
+        # NEW: train / val DataFrame pickles ---------------------------------
+        feats_train_df      = f"experiments/{MODEL}/modeling/features_train_df.pkl",
+        feats_val_df        = f"experiments/{MODEL}/modeling/features_val_df.pkl",
+        targ_train_df       = f"experiments/{MODEL}/modeling/targets_train_df.pkl",
+        targ_val_df         = f"experiments/{MODEL}/modeling/targets_val_df.pkl",
+        feats_train_norm_df = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
+        feats_val_norm_df   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
+        targ_train_norm_df  = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
+        targ_val_norm_df    = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+
     threads: 1
     shell:
         """

@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from simulation import bottleneck_model, split_isolation_model, split_migration_model, drosophila_three_epoch
-
+from Moments_LD_theoretical import split_asym_mig_MomentsLD
 
 
 def main() -> None:
@@ -43,6 +43,7 @@ def main() -> None:
 
     sim_dir   = args.sim_dir.resolve()
     LD_dir    = args.LD_dir.resolve()
+    print(LD_dir)
     cfg       = json.loads(args.config_file.read_text())
 
     samp      = pickle.load((sim_dir / "sampled_params.pkl").open("rb"))
@@ -184,6 +185,7 @@ def main() -> None:
 
     elif model == "split_migration":                # ⇢ 2‑pop, split + mig #TODO: Need to update the island model function to use t_split 
         # (nu1, nu2, T_split, m12, m21, Ne)
+        demo_func = split_asym_mig_MomentsLD
         p_guess = [
             prior_means["N1"]  / prior_means["N0"],                    # ν1
             prior_means["N2"]  / prior_means["N0"],                    # ν2
@@ -207,7 +209,7 @@ def main() -> None:
     else:
         raise ValueError(f"Need p_guess mapping for model '{model}'")
 
-    # TODO: Need to have a logical way to handle fixed parameters 
+    # TODO: Need to have bounds perhaps ? 
     opt_params, LL = moments.LD.Inference.optimize_log_fmin(
         p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
         fixed_params=fixed_params, verbose=1)
@@ -222,7 +224,7 @@ def main() -> None:
         print(f'Physical units: {physical}')
         best_fit = dict(zip(["N1", "N2", "t_split", "m", "N0"], physical))
     elif cfg['demographic_model'] == "split_migration":
-        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m12", "m21", "Ne"])
+        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m", "m", "Ne"])
         best_fit = dict(zip(["N1", "N2", "t_split", "m12", "m21", "N0"], physical))
     elif cfg['demographic_model'] == "drosophila_three_epoch":
         # rescale the parameters to physical units

@@ -129,14 +129,14 @@ def main(cfg_path: Path, out_dir: Path) -> None:
     targ_norm_df.to_pickle(out_dir / "targets_norm_df.pkl")
 
     # OPTIONAL: train / val DataFrames (uncomment if you need them)
-    # feat_df.iloc[train_idx].to_pickle(out_dir / "features_train_df.pkl")
-    # targ_df.iloc[train_idx].to_pickle(out_dir / "targets_train_df.pkl")
-    # feat_df.iloc[val_idx].to_pickle(out_dir / "features_val_df.pkl")
-    # targ_df.iloc[val_idx].to_pickle(out_dir / "targets_val_df.pkl")
-    # feat_norm_df.iloc[train_idx].to_pickle(out_dir / "features_train_norm_df.pkl")
-    # targ_norm_df.iloc[train_idx].to_pickle(out_dir / "targets_train_norm_df.pkl")
-    # feat_norm_df.iloc[val_idx].to_pickle(out_dir / "features_val_norm_df.pkl")
-    # targ_norm_df.iloc[val_idx].to_pickle(out_dir / "targets_val_norm_df.pkl")
+    feat_df.iloc[train_idx].to_pickle(out_dir / "features_train_df.pkl")
+    targ_df.iloc[train_idx].to_pickle(out_dir / "targets_train_df.pkl")
+    feat_df.iloc[val_idx].to_pickle(out_dir / "features_val_df.pkl")
+    targ_df.iloc[val_idx].to_pickle(out_dir / "targets_val_df.pkl")
+    feat_norm_df.iloc[train_idx].to_pickle(out_dir / "features_train_norm_df.pkl")
+    targ_norm_df.iloc[train_idx].to_pickle(out_dir / "targets_train_norm_df.pkl")
+    feat_norm_df.iloc[val_idx].to_pickle(out_dir / "features_val_norm_df.pkl")
+    targ_norm_df.iloc[val_idx].to_pickle(out_dir / "targets_val_norm_df.pkl")
 
     print(f"✓ wrote {len(arrays)} .npy files + 4 DataFrames → {out_dir}")
 

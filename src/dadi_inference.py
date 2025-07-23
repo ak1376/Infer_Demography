@@ -106,7 +106,7 @@ def fit_model(
                 sampled_params.get("N0"),
                 sampled_params.get("N_bottleneck"),
                 None, None, None,
-            ] if sampled_params else None,
+            ] if experiment_config['demographic_model'] == "bottleneck" else None,
         )
 
     log_path.write_text(
