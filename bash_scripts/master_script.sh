@@ -17,7 +17,7 @@ mkdir -p logs
 ##############################################################################
 # 1. single place to define the config file for **all** stages
 ##############################################################################
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 export CFG_PATH        # every sbatch inherits this
 
 ##############################################################################
@@ -72,4 +72,8 @@ echo "aggregate_moments_dadi → $agg_id"
 comb_id=$(submit --dependency=afterok:$momLD_id:$agg_id bash_scripts/run_combine.sh)
 echo "run_combine.sh         → $comb_id"
 
-echo "Pipeline submitted. Final job ID (run_combine): $comb_id"
+# 4.8 build feature / target matrices after all‑inferences are ready
+feat_id=$(submit --dependency=afterok:$comb_id bash_scripts/aggregate_features.sh)
+echo "aggregate_features.sh  → $feat_id"
+
+echo "Pipeline submitted. Final job ID (aggregate_features): $feat_id"
