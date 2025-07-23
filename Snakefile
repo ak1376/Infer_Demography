@@ -124,18 +124,19 @@ rule simulate:
 rule infer_moments:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        cfg    = EXP_CFG
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"
     output: 
         f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
     params: 
-        run_dir=lambda w: RUN_DIR(w.sid, w.opt)
+        run_dir=lambda w: RUN_DIR(w.sid, w.opt), 
+        cfg    = EXP_CFG
+
     threads: 8
     shell:  
         """
         python "{INFER_SCRIPT}" \
             --run-dir        "{params.run_dir}" \
-            --config-file    "{input.cfg}" \
+            --config-file    "{params.cfg}" \
             --sfs            "{input.sfs}" \
             --sampled-params "{input.params}" \
             --rep-index      {wildcards.opt} \
@@ -148,18 +149,19 @@ rule infer_moments:
 rule infer_dadi:
     input:  
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        cfg    = EXP_CFG
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"
     output: 
         f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
     params: 
-        run_dir=lambda w: RUN_DIR(w.sid, w.opt)
+        run_dir=lambda w: RUN_DIR(w.sid, w.opt),
+        cfg    = EXP_CFG
+
     threads: 8
     shell: 
         """
         python "{INFER_SCRIPT}" \
             --run-dir        "{params.run_dir}" \
-            --config-file    "{input.cfg}" \
+            --config-file    "{params.cfg}" \
             --sfs            "{input.sfs}" \
             --sampled-params "{input.params}" \
             --rep-index      {wildcards.opt} \
@@ -206,20 +208,20 @@ rule aggregate_opts:
 rule simulate_window:
     input:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        cfg    = EXP_CFG
     output:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
     params:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
-        rep_idx    = "{win}"
+        rep_idx    = "{win}",
+        cfg        = EXP_CFG
     threads: 1
     shell:
         """
         python "{WIN_SCRIPT}" \
             --sim-dir      {params.base_sim} \
             --rep-index    {params.rep_idx} \
-            --config-file  {input.cfg} \
+            --config-file  {params.cfg} \
             --out-dir      {params.out_winDir}
         """
 
@@ -229,19 +231,20 @@ rule simulate_window:
 rule ld_window:
     input:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-        cfg    = EXP_CFG
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
         sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        bins    = R_BINS_STR
+        bins    = R_BINS_STR,
+        cfg    = EXP_CFG
+
     threads: 1
     shell:
         """
         python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
-            --config-file  {input.cfg} \
+            --config-file  {params.cfg} \
             --r-bins       "{params.bins}"
         """
 
@@ -255,7 +258,6 @@ rule optimize_momentsld:
             sid=[w.sid],
             win=WINDOWS
         ),
-        cfg  = EXP_CFG
     output:
         mv   = f"{LD_ROOT}/means.varcovs.pkl",
         boot = f"{LD_ROOT}/bootstrap_sets.pkl",
@@ -265,14 +267,16 @@ rule optimize_momentsld:
         sim_dir   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         LD_dir    = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins      = R_BINS_STR,
-        n_windows = NUM_WINDOWS
+        n_windows = NUM_WINDOWS,
+        cfg  = EXP_CFG
+
     threads: 1
     shell:
         """
         python "snakemake_scripts/LD_inference.py" \
             --sim-dir      {params.sim_dir} \
             --LD_dir       {params.LD_dir} \
-            --config-file  {input.cfg} \
+            --config-file  {params.cfg} \
             --num-windows  {params.n_windows} \
             --r-bins       "{params.bins}"
         """
