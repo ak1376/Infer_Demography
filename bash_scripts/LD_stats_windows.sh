@@ -8,6 +8,7 @@
 #SBATCH --mem=12G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
+#SBATCH --requeue                               # Requeue on preemption
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
