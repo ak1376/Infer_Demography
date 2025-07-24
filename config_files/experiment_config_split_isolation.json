@@ -10,9 +10,9 @@
     },
   
     "seed": 42,
-    "num_optimizations": 2,
+    "num_optimizations": 1,
     "top_k": 1,
-    "num_draws": 20,
+    "num_draws": 1,
   
     "priors": {
       "N0"     : [100, 3e4],   

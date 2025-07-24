@@ -238,7 +238,9 @@ rule ld_window:
         bins    = R_BINS_STR,
         cfg    = EXP_CFG
 
-    threads: 1
+    threads: 4
+    resources:
+        ld_cores=4
     shell:
         """
         python "{LD_SCRIPT}" \
