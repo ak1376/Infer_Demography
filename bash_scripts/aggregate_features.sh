@@ -1,12 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=combine_features
-#SBATCH --output=logs/combine_features_%j.out
-#SBATCH --error=logs/combine_features_%j.err
+#SBATCH --job-name=postprocessing_features
+#SBATCH --output=logs/postprocessing_features_%j.out
+#SBATCH --error=logs/postprocessing_features_%j.err
 #SBATCH --time=02:00:00               # adjust as needed
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
+#SBATCH --requeue                               # Requeue on preemption
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose

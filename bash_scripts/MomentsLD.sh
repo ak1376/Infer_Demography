@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-4999
+#SBATCH --array=0-9
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=1:00:00
@@ -8,6 +8,7 @@
 #SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
+#SBATCH --requeue                               # Requeue on preemption
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
