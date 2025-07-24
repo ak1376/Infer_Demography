@@ -8,6 +8,9 @@ from pathlib import Path
 if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
     del sys.modules["bottleneck"]
 
+configfile: "config_files/model_config.yaml"
+REG_TYPES = config["linear"]["types"]  # ["standard","ridge","lasso","elasticnet"]
+
 # ── external scripts -------------------------------------------------------
 SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
@@ -93,6 +96,31 @@ rule all:
         f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
         f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
         f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+
+        # ── color schemes for plotting ──────────────────────────────────────
+        f"experiments/{MODEL}/modeling/color_shades.pkl",
+        f"experiments/{MODEL}/modeling/main_colors.pkl", 
+
+        # ── linear regression results ───────────────────────────────────────
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+
+        # ── random forest results ──────────────────────────────────────────
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+
+        # ── XGBoost results ───────────────────────────────────────────────
+        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+
 
 
 ##############################################################################
@@ -357,6 +385,205 @@ rule combine_features:
             --out-dir $(dirname {output.feats})
         """
 
+##############################################################################
+# RULE make_color_scheme – build color_shades.pkl & main_colors.pkl
+##############################################################################
+rule make_color_scheme:
+    output:
+        shades = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        mains  = f"experiments/{MODEL}/modeling/main_colors.pkl"
+    params:
+        script = "snakemake_scripts/setup_colors.py",
+        cfg    = EXP_CFG
+    threads: 1
+    benchmark:
+        "benchmarks/make_color_scheme.tsv"
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python "{params.script}" \
+            --config "{params.cfg}" \
+            --out-dir "$(dirname {output.shades})"
+
+        test -f "{output.shades}" && test -f "{output.mains}"
+        """
+
+##############################################################################
+# RULE linear_regression                                                     #
+##############################################################################
+rule linear_regression:
+    input:
+        X_train = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
+        y_train = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
+        mdlcfg  = "config_files/model_config.yaml"   # optional
+    output:
+        obj   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+        errjs = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
+        mdl   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
+        plot  = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png"
+    params:
+        script   = "snakemake_scripts/linear_evaluation.py",
+        expcfg   = EXP_CFG,
+        alpha    = lambda w: config["linear"].get(w.reg, {}).get("alpha", 0.0),
+        l1_ratio = lambda w: config["linear"].get(w.reg, {}).get("l1_ratio", 0.5),
+        gridflag = lambda w: "--do_grid_search" if config["linear"].get(w.reg, {}).get("grid_search", False) else ""
+    threads: 2
+    benchmark:
+        f"benchmarks/linear_regression_{{reg}}.tsv"
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python "{params.script}" \
+            --X_train_path "{input.X_train}" \
+            --y_train_path "{input.y_train}" \
+            --X_val_path   "{input.X_val}" \
+            --y_val_path   "{input.y_val}" \
+            --experiment_config_path "{params.expcfg}" \
+            --model_config_path      "{input.mdlcfg}" \
+            --color_shades_file      "{input.shades}" \
+            --main_colors_file       "{input.colors}" \
+            --regression_type "{wildcards.reg}" \
+            --alpha {params.alpha} \
+            --l1_ratio {params.l1_ratio} \
+            {params.gridflag}
+
+        test -f "{output.obj}" && test -f "{output.errjs}" && test -f "{output.mdl}"
+        """
+
+##############################################################################
+# RULE random_forest                                                        #
+##############################################################################
+rule random_forest:
+    input:
+        X_train = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
+        y_train = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
+        expcfg  = EXP_CFG,
+        mdlcfg  = "config_files/model_config.yaml"
+    output:
+        obj   = f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        errjs = f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        mdl   = f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        plot  = f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        fi    = f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png"
+    params:
+        script    = "snakemake_scripts/random_forest.py",
+        model_dir = f"experiments/{MODEL}/modeling/random_forest",
+        opt_flags = lambda w: " ".join([
+            f"--n_estimators {config['rf']['n_estimators']}" \
+                if config.get('rf', {}).get('n_estimators') is not None else "",
+            f"--max_depth {config['rf']['max_depth']}" \
+                if config.get('rf', {}).get('max_depth') is not None else "",
+            f"--min_samples_split {config['rf']['min_samples_split']}" \
+                if config.get('rf', {}).get('min_samples_split') is not None else "",
+            f"--random_state {config['rf']['random_state']}" \
+                if config.get('rf', {}).get('random_state') is not None else "",
+            f"--n_iter {config['rf']['n_iter']}" \
+                if config.get('rf', {}).get('n_iter') is not None else "",
+            "--do_random_search" if config.get('rf', {}).get('random_search', False) else ""
+        ]).strip()
+    threads: 4
+    benchmark:
+        "benchmarks/random_forest.tsv"
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python "{params.script}" \
+            --X_train_path "{input.X_train}" \
+            --y_train_path "{input.y_train}" \
+            --X_val_path   "{input.X_val}" \
+            --y_val_path   "{input.y_val}" \
+            --experiment_config_path "{input.expcfg}" \
+            --model_config_path      "{input.mdlcfg}" \
+            --color_shades_file      "{input.shades}" \
+            --main_colors_file       "{input.colors}" \
+            --model_directory "{params.model_dir}" \
+            {params.opt_flags}
+
+        # sanity check
+        test -f "{output.obj}"   && \
+        test -f "{output.errjs}" && \
+        test -f "{output.mdl}"   && \
+        test -f "{output.plot}"  && \
+        test -f "{output.fi}"
+        """
+
+##############################################################################
+# RULE xgboost                                                               #
+##############################################################################
+rule xgboost:
+    input:
+        X_train = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
+        y_train = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
+        expcfg  = EXP_CFG,
+        mdlcfg  = "config_files/model_config.yaml"
+    output:
+        obj   = f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        errjs = f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        mdl   = f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        plot  = f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        fi    = f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png"
+    params:
+        script    = "snakemake_scripts/xgboost_evaluation.py",
+        model_dir = f"experiments/{MODEL}/modeling/xgboost",
+        opt_flags = lambda w: " ".join([
+            f"--n_estimators {config['xgb']['n_estimators']}" \
+                if config.get('xgb', {}).get('n_estimators') is not None else "",
+            f"--max_depth {config['xgb']['max_depth']}" \
+                if config['xgb'].get('max_depth') is not None else "",
+            f"--learning_rate {config['xgb']['learning_rate']}" \
+                if config['xgb'].get('learning_rate') is not None else "",
+            f"--subsample {config['xgb']['subsample']}" \
+                if config['xgb'].get('subsample') is not None else "",
+            f"--colsample_bytree {config['xgb']['colsample_bytree']}" \
+                if config['xgb'].get('colsample_bytree') is not None else "",
+            f"--min_child_weight {config['xgb']['min_child_weight']}" \
+                if config['xgb'].get('min_child_weight') is not None else "",
+            f"--reg_lambda {config['xgb']['reg_lambda']}" \
+                if config['xgb'].get('reg_lambda') is not None else "",
+            f"--reg_alpha {config['xgb']['reg_alpha']}" \
+                if config['xgb'].get('reg_alpha') is not None else "",
+            f"--n_iter {config['xgb']['n_iter']}" \
+                if config['xgb'].get('n_iter') is not None else "",
+            f"--top_k_features_plot {config['xgb']['top_k_plot']}" \
+                if config['xgb'].get('top_k_plot') is not None else "",
+            "--do_random_search" if config.get('xgb', {}).get('do_random_search', False) else ""
+        ]).strip()
+    threads: 4
+    benchmark:
+        "benchmarks/xgboost.tsv"
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python "{params.script}" \
+            --X_train_path "{input.X_train}" \
+            --y_train_path "{input.y_train}" \
+            --X_val_path   "{input.X_val}" \
+            --y_val_path   "{input.y_val}" \
+            --experiment_config_path "{input.expcfg}" \
+            --model_config_path      "{input.mdlcfg}" \
+            --color_shades_file      "{input.shades}" \
+            --main_colors_file       "{input.colors}" \
+            --model_directory "{params.model_dir}" \
+            {params.opt_flags}
+
+        test -f "{output.obj}"   && \
+        test -f "{output.errjs}" && \
+        test -f "{output.mdl}"   && \
+        test -f "{output.plot}"  && \
+        test -f "{output.fi}"
+        """
 
 ##############################################################################
 # Wildcard Constraints                                                      #

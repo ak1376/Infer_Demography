@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-9
+#SBATCH --array=0-19
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
-#SBATCH --time=1:00:00
+#SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu

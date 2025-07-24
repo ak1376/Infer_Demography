@@ -1,0 +1,37 @@
+linear:
+  types: ["standard", "ridge", "lasso", "elasticnet"]
+  standard: {}
+  ridge:
+    alpha: 10.0
+    grid_search: false
+  lasso:
+    alpha: 0.1
+    grid_search: true
+  elasticnet:
+    alpha: 0.5
+    l1_ratio: 0.2
+    grid_search: false
+
+rf:
+  enable: true          # set false to skip RF outputs/rule all
+  random_search: true   # let the script do RandomizedSearchCV if True and no params given
+  n_iter: 20            # RS iterations
+  n_estimators: null    # null => let RS choose (or use defaults)
+  max_depth: null
+  min_samples_split: null
+  random_state: 42
+
+xgb:
+  do_random_search: true
+  n_iter: 20
+  random_state: 42
+  # override defaults (or leave None to let search fill them)
+  n_estimators: null
+  max_depth: null
+  learning_rate: null
+  subsample: null
+  colsample_bytree: null
+  min_child_weight: null
+  reg_lambda: null
+  reg_alpha: null
+  top_k_plot: 20

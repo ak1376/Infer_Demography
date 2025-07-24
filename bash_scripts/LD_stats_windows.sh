@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=ld_stats
-#SBATCH --array=0-999
+#SBATCH --array=0-1999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
-#SBATCH --time=10:00:00
+#SBATCH --time=5:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=12G
 #SBATCH --partition=kern,preempt,kerngpu

@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=mom_infer
-#SBATCH --array=0-9
+#SBATCH --array=0-19
 #SBATCH --output=logs/mom_%A_%a.out
 #SBATCH --error=logs/mom_%A_%a.err
-#SBATCH --time=2:00:00
+#SBATCH --time=6:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=4G
 #SBATCH --partition=kern,preempt,kerngpu
