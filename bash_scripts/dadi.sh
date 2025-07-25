@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer
-#SBATCH --array=0-19
+#SBATCH --array=0-99
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
-#SBATCH --time=6:00:00
+#SBATCH --time=4:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=4G
 #SBATCH --partition=kern,preempt,kerngpu

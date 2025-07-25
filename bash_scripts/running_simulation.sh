@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=sim_job_array                # Job name
-#SBATCH --array=0-19                            # Array range (adjust based on the number of tasks and batch size)
+#SBATCH --array=0-99                            # Array range (adjust based on the number of tasks and batch size)
 #SBATCH --output=logs/simulation_%A_%a.out      # Standard output log file (%A is job ID, %a is the array index)
 #SBATCH --error=logs/simulation_%A_%a.err       # Standard error log file
-#SBATCH --time=5:00:00                          # Time limit
+#SBATCH --time=3:00:00                          # Time limit
 #SBATCH --cpus-per-task=8                       # Number of CPU cores per task
 #SBATCH --mem=8G                                # Memory per task
 #SBATCH --partition=kern,preempt,kerngpu        # Partitions to submit the job to
@@ -15,7 +15,7 @@
 
 # Define batch size and total number of tasks
 BATCH_SIZE=1
-TOTAL_TASKS=20
+TOTAL_TASKS=100
 
 # the master script exports CFG_PATH; abort if it is not set
 : "${CFG_PATH:?CFG_PATH is not defined}"
@@ -45,10 +45,6 @@ capitalize_bool() {
 DADI_ANALYSIS=$(capitalize_bool $DADI_ANALYSIS)
 MOMENTS_ANALYSIS=$(capitalize_bool $MOMENTS_ANALYSIS)
 MOMENTS_LD_ANALYSIS=$(capitalize_bool $MOMENTS_LD_ANALYSIS)
-
-# Set up the simulation directory
-SIM_DIRECTORY="${DEMOGRAPHIC_MODEL}_dadi_analysis_${DADI_ANALYSIS}_moments_analysis_${MOMENTS_ANALYSIS}_momentsLD_analysis_${MOMENTS_LD_ANALYSIS}_seed_${SEED}/sims/sims_pretrain_${NUM_SIMS_PRETRAIN}_seed_${SEED}_num_replicates_${K}_top_values_${TOP_VALUES_K}"
-echo "Simulation directory: $SIM_DIRECTORY"
 
 # Only measure the time for the full execution of the entire job array
 if [ "$SLURM_ARRAY_TASK_ID" -eq 0 ]; then

@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=win_sim
-#SBATCH --array=0-1999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
-#SBATCH --time=5:00:00
+#SBATCH --time=6:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=6G
 #SBATCH --partition=kern,preempt,kerngpu

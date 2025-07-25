@@ -124,7 +124,7 @@ rule all:
 
 
 ##############################################################################
-# RULE simulate – one complete tree‑sequence + SFS                          #
+# RULE simulate – one complete tree‑sequence + SFS
 ##############################################################################
 rule simulate:
     output:
@@ -132,19 +132,31 @@ rule simulate:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         tree   = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
+        done   = f"{SIM_BASEDIR}/{{sid}}/.done",
     params:
         sim_dir = SIM_BASEDIR,
         cfg     = EXP_CFG,
-        model   = MODEL,
+        model   = MODEL
     threads: 1
     shell:
-        """
+        r"""
+        set -euo pipefail
+
         python "{SIM_SCRIPT}" \
-            --simulation-dir {params.sim_dir} \
-            --experiment-config {params.cfg} \
-            --model-type {params.model} \
-            --simulation-number {wildcards.sid}
+          --simulation-dir "{params.sim_dir}" \
+          --experiment-config "{params.cfg}" \
+          --model-type "{params.model}" \
+          --simulation-number {wildcards.sid}
+
+        # ensure expected outputs exist, then create sentinel
+        test -f "{output.sfs}" && \
+        test -f "{output.params}" && \
+        test -f "{output.tree}" && \
+        test -f "{output.fig}"
+        touch "{output.done}"
         """
+
+
 
 ##############################################################################
 # RULE INFER_MOMENTS 
@@ -231,11 +243,12 @@ rule aggregate_opts:
         merge_keep_best(input.dadi, output.dadi)
 
 ##############################################################################
-# RULE simulate_window – one VCF window                                     #
+# RULE simulate_window – one VCF window
 ##############################################################################
 rule simulate_window:
     input:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        done   = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
     params:
@@ -245,12 +258,12 @@ rule simulate_window:
         cfg        = EXP_CFG
     threads: 1
     shell:
-        """
+        r"""
         python "{WIN_SCRIPT}" \
-            --sim-dir      {params.base_sim} \
+            --sim-dir      "{params.base_sim}" \
             --rep-index    {params.rep_idx} \
-            --config-file  {params.cfg} \
-            --out-dir      {params.out_winDir}
+            --config-file  "{params.cfg}" \
+            --out-dir      "{params.out_winDir}"
         """
 
 ##############################################################################
