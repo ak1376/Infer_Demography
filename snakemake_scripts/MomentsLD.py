@@ -248,6 +248,7 @@ def main():
             prior_means["N1"]  / prior_means["N0"],                    # ν1
             prior_means["N2"]  / prior_means["N0"],                    # ν2
             prior_means["t_split"] / (2 * prior_means["N0"]),          # T_split
+            prior_means["N0"] * 2,                                     # m (migration rate)
             prior_means["N0"],                                         # Ne
         ]
 
@@ -287,8 +288,8 @@ def main():
         physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
         best_fit = dict(zip(["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"], physical))
     elif cfg['demographic_model'] == "split_isolation":
-        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "Ne"])
-        best_fit = dict(zip(["N1", "N2", "t_split", "N0"], physical))
+        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m", "Ne"])
+        best_fit = dict(zip(["N1", "N2", "t_split", "m", "N0"], physical))
     elif cfg['demographic_model'] == "split_migration":
         physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m12", "m21", "Ne"])
         best_fit = dict(zip(["N1", "N2", "t_split", "m12", "m21", "N0"], physical))

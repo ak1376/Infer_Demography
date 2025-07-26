@@ -64,38 +64,14 @@ rule all:
             sid=SIM_IDS
         ),
 
-        # ── final feature / target tables (raw, normalised, train/val) ──────
-        # full matrices
-        f"experiments/{MODEL}/modeling/features.npy",
-        f"experiments/{MODEL}/modeling/features_norm.npy",
-        f"experiments/{MODEL}/modeling/targets.npy",
-        f"experiments/{MODEL}/modeling/targets_norm.npy",
-
-        # train / validation splits (NumPy)
-        f"experiments/{MODEL}/modeling/features_train.npy",
-        f"experiments/{MODEL}/modeling/features_val.npy",
-        f"experiments/{MODEL}/modeling/features_train_norm.npy",
-        f"experiments/{MODEL}/modeling/features_val_norm.npy",
-        f"experiments/{MODEL}/modeling/targets_train.npy",
-        f"experiments/{MODEL}/modeling/targets_val.npy",
-        f"experiments/{MODEL}/modeling/targets_train_norm.npy",
-        f"experiments/{MODEL}/modeling/targets_val_norm.npy",
-
-        # DataFrame pickles (full)
-        f"experiments/{MODEL}/modeling/features_df.pkl",
-        f"experiments/{MODEL}/modeling/features_norm_df.pkl",
-        f"experiments/{MODEL}/modeling/targets_df.pkl",
-        f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
-
-        # NEW: DataFrame pickles (train / val)
-        f"experiments/{MODEL}/modeling/features_train_df.pkl",
-        f"experiments/{MODEL}/modeling/features_val_df.pkl",
-        f"experiments/{MODEL}/modeling/targets_train_df.pkl",
-        f"experiments/{MODEL}/modeling/targets_val_df.pkl",
-        f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
-        f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
-        f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
-        f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        # ── modeling datasets (after outlier removal, split, normalization) ─
+        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png", 
 
         # ── color schemes for plotting ──────────────────────────────────────
         f"experiments/{MODEL}/modeling/color_shades.pkl",
@@ -120,7 +96,6 @@ rule all:
         f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
         f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
         f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
-
 
 
 ##############################################################################
@@ -348,7 +323,7 @@ rule combine_results:
         print(f"✓ combined → {output.combo}")
 
 ##############################################################################
-# RULE combine_features – build raw + normalised feature/target matrices    #
+# RULE combine_features – build datasets (outlier-filtered, split, normalized)
 ##############################################################################
 rule combine_features:
     input:
@@ -362,41 +337,34 @@ rule combine_features:
             sid=SIM_IDS
         )
     output:
-        # NumPy matrices ----------------------------------------------------
-        feats         = f"experiments/{MODEL}/modeling/features.npy",
-        feats_norm    = f"experiments/{MODEL}/modeling/features_norm.npy",
-        feats_train   = f"experiments/{MODEL}/modeling/features_train.npy",
-        feats_val     = f"experiments/{MODEL}/modeling/features_val.npy",
-        feats_train_n = f"experiments/{MODEL}/modeling/features_train_norm.npy",
-        feats_val_n   = f"experiments/{MODEL}/modeling/features_val_norm.npy",
-        targ          = f"experiments/{MODEL}/modeling/targets.npy",
-        targ_norm     = f"experiments/{MODEL}/modeling/targets_norm.npy",
-        targ_train    = f"experiments/{MODEL}/modeling/targets_train.npy",
-        targ_val      = f"experiments/{MODEL}/modeling/targets_val.npy",
-        targ_train_n  = f"experiments/{MODEL}/modeling/targets_train_norm.npy",
-        targ_val_n    = f"experiments/{MODEL}/modeling/targets_val_norm.npy",
-        # DataFrame pickles --------------------------------------------------
-        feats_df            = f"experiments/{MODEL}/modeling/features_df.pkl",
-        feats_norm_df       = f"experiments/{MODEL}/modeling/features_norm_df.pkl",
-        targ_df             = f"experiments/{MODEL}/modeling/targets_df.pkl",
-        targ_norm_df        = f"experiments/{MODEL}/modeling/targets_norm_df.pkl",
-        # NEW: train / val DataFrame pickles ---------------------------------
-        feats_train_df      = f"experiments/{MODEL}/modeling/features_train_df.pkl",
-        feats_val_df        = f"experiments/{MODEL}/modeling/features_val_df.pkl",
-        targ_train_df       = f"experiments/{MODEL}/modeling/targets_train_df.pkl",
-        targ_val_df         = f"experiments/{MODEL}/modeling/targets_val_df.pkl",
-        feats_train_norm_df = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
-        feats_val_norm_df   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
-        targ_train_norm_df  = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
-        targ_val_norm_df    = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
-
+        features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        ntrain_X      = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        ntrain_y      = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        nval_X        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        nval_y        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png"
+    params:
+        script = "snakemake_scripts/feature_extraction.py",
+        outdir = f"experiments/{MODEL}/modeling"
     threads: 1
     shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python "{params.script}" \
+            --experiment-config "{input.cfg}" \
+            --out-dir "{params.outdir}"
+
+        # sanity checks
+        test -f "{output.features_df}" && \
+        test -f "{output.targets_df}"  && \
+        test -f "{output.ntrain_X}"    && \
+        test -f "{output.ntrain_y}"    && \
+        test -f "{output.nval_X}"      && \
+        test -f "{output.nval_y}"      && \
+        test -f "{output.scatter_png}"
         """
-        python "snakemake_scripts/feature_extraction.py" \
-            --experiment-config {input.cfg} \
-            --out-dir $(dirname {output.feats})
-        """
+
 
 ##############################################################################
 # RULE make_color_scheme – build color_shades.pkl & main_colors.pkl
@@ -426,10 +394,10 @@ rule make_color_scheme:
 ##############################################################################
 rule linear_regression:
     input:
-        X_train = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
-        y_train = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         mdlcfg  = "config_files/model_config.yaml"   # optional
@@ -468,14 +436,14 @@ rule linear_regression:
         """
 
 ##############################################################################
-# RULE random_forest                                                        #
+# RULE random_forest                                                         #
 ##############################################################################
 rule random_forest:
     input:
-        X_train = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
-        y_train = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         expcfg  = EXP_CFG,
@@ -520,7 +488,6 @@ rule random_forest:
             --model_directory "{params.model_dir}" \
             {params.opt_flags}
 
-        # sanity check
         test -f "{output.obj}"   && \
         test -f "{output.errjs}" && \
         test -f "{output.mdl}"   && \
@@ -533,10 +500,10 @@ rule random_forest:
 ##############################################################################
 rule xgboost:
     input:
-        X_train = f"experiments/{MODEL}/modeling/features_train_norm_df.pkl",
-        y_train = f"experiments/{MODEL}/modeling/targets_train_norm_df.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/features_val_norm_df.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/targets_val_norm_df.pkl",
+        X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         expcfg  = EXP_CFG,
@@ -554,23 +521,23 @@ rule xgboost:
             f"--n_estimators {config['xgb']['n_estimators']}" \
                 if config.get('xgb', {}).get('n_estimators') is not None else "",
             f"--max_depth {config['xgb']['max_depth']}" \
-                if config['xgb'].get('max_depth') is not None else "",
+                if config.get('xgb', {}).get('max_depth') is not None else "",
             f"--learning_rate {config['xgb']['learning_rate']}" \
-                if config['xgb'].get('learning_rate') is not None else "",
+                if config.get('xgb', {}).get('learning_rate') is not None else "",
             f"--subsample {config['xgb']['subsample']}" \
-                if config['xgb'].get('subsample') is not None else "",
+                if config.get('xgb', {}).get('subsample') is not None else "",
             f"--colsample_bytree {config['xgb']['colsample_bytree']}" \
-                if config['xgb'].get('colsample_bytree') is not None else "",
+                if config.get('xgb', {}).get('colsample_bytree') is not None else "",
             f"--min_child_weight {config['xgb']['min_child_weight']}" \
-                if config['xgb'].get('min_child_weight') is not None else "",
+                if config.get('xgb', {}).get('min_child_weight') is not None else "",
             f"--reg_lambda {config['xgb']['reg_lambda']}" \
-                if config['xgb'].get('reg_lambda') is not None else "",
+                if config.get('xgb', {}).get('reg_lambda') is not None else "",
             f"--reg_alpha {config['xgb']['reg_alpha']}" \
-                if config['xgb'].get('reg_alpha') is not None else "",
+                if config.get('xgb', {}).get('reg_alpha') is not None else "",
             f"--n_iter {config['xgb']['n_iter']}" \
-                if config['xgb'].get('n_iter') is not None else "",
+                if config.get('xgb', {}).get('n_iter') is not None else "",
             f"--top_k_features_plot {config['xgb']['top_k_plot']}" \
-                if config['xgb'].get('top_k_plot') is not None else "",
+                if config.get('xgb', {}).get('top_k_plot') is not None else "",
             "--do_random_search" if config.get('xgb', {}).get('do_random_search', False) else ""
         ]).strip()
     threads: 4

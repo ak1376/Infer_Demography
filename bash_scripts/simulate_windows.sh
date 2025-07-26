@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=win_sim
-#SBATCH --array=0-9999
+#SBATCH --array=0-999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
 #SBATCH --time=6:00:00

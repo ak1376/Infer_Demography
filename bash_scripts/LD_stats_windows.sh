@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ld_stats
-#SBATCH --array=0-9999
+#SBATCH --array=0-999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=6:00:00

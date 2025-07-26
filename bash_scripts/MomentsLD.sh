@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-99
+#SBATCH --array=0-9
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=4:00:00

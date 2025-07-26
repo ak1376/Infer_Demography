@@ -30,5 +30,4 @@ snakemake --snakefile "$SNAKEFILE" \
           --directory  "$ROOT"     \
           --nolock                \
           --rerun-incomplete      \
-          -j "$SLURM_CPUS_PER_TASK" \
-          combine_features
+          -j "$SLURM_CPUS_PER_TASK" 

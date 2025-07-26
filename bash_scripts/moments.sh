@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=mom_infer
-#SBATCH --array=0-99
+#SBATCH --array=0-29
 #SBATCH --output=logs/mom_%A_%a.out
 #SBATCH --error=logs/mom_%A_%a.err
 #SBATCH --time=4:00:00

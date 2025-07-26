@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer
-#SBATCH --array=0-99
+#SBATCH --array=0-29
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
 #SBATCH --time=4:00:00

@@ -69,7 +69,7 @@ def fit_model(
         (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
     )
     n_max_hap = max(2 * n for n in sample_sizes.values())
-    pts_l     = [n_max_hap, n_max_hap + 20, n_max_hap + 40]
+    pts_l     = [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60] # TODO: Change this to [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60] 
 
     # ─── bounds from priors --------------------------------------------------
     lower_bounds = [priors[p][0] for p in param_names]
