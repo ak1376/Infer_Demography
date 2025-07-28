@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=win_sim
-#SBATCH --array=0-999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
-#SBATCH --time=6:00:00
+#SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=6G
 #SBATCH --partition=kern,preempt,kerngpu
@@ -13,75 +13,57 @@
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
 
-# ---------------------------------------------------------------------------
-# 0. batching parameters (adjust if desired) --------------------------------
-# ---------------------------------------------------------------------------
-BATCH_SIZE=1          # number of (sim,window) combos this array task processes
+set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# 1. config & derived constants --------------------------------------------
-# ---------------------------------------------------------------------------
-: "${CFG_PATH:?CFG_PATH is not defined}"          # exported by the driver script
+BATCH_SIZE=10
+
+: "${CFG_PATH:?CFG_PATH is not defined}"
 CFG="$CFG_PATH"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws'         "$CFG")
-MODEL=$(jq -r '.demographic_model'     "$CFG")
-NUM_WINDOWS=100                         # same constant as in Snakefile
+NUM_DRAWS=$(jq -r '.num_draws' "$CFG")
+MODEL=$(jq -r '.demographic_model' "$CFG")
+NUM_WINDOWS=100
+TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
 
-TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))   # every (sim,window) pair
-
-# zero‑pad width for simulation folders
-PAD=$(python - <<EOF
-import math, sys; n=int(sys.argv[1]); print(int(math.log10(n-1))+1)
-EOF
-"$NUM_DRAWS")
-
-# ---------------------------------------------------------------------------
-# 2. (re)submit if script wasn't launched as an array yet -------------------
-# ---------------------------------------------------------------------------
-if [[ -z "$SLURM_ARRAY_TASK_ID" ]]; then
+# first launch: resubmit with proper array range
+if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    : "${MAX_CONCURRENT:=200}"
     NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
-    sbatch --array=0-"$NUM_ARRAY"%$MAX_CONCURRENT "$0" "$@"
+    sbatch --array=0-"$NUM_ARRAY"%$MAX_CONCURRENT "$0"
     exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# 3. compute batch bounds for this array ID ---------------------------------
-# ---------------------------------------------------------------------------
-BATCH_START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
-BATCH_END=$((  (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
-[[ $BATCH_END -ge $TOTAL_TASKS ]] && BATCH_END=$(( TOTAL_TASKS - 1 ))
+START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
+END=$((   (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
+(( END >= TOTAL_TASKS )) && END=$(( TOTAL_TASKS - 1 ))
 
-echo "Array task $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
+echo "Array $SLURM_ARRAY_TASK_ID → indices $START .. $END"
 
-mkdir -p logs
+for IDX in $(seq "$START" "$END"); do
+    SID=$(( IDX / NUM_WINDOWS ))
+    WIN=$(( IDX % NUM_WINDOWS ))
 
-# ---------------------------------------------------------------------------
-# 4. loop over indices in this batch ---------------------------------------
-# ---------------------------------------------------------------------------
-for TASK_ID in $(seq "$BATCH_START" "$BATCH_END"); do
-    SID=$(( TASK_ID / NUM_WINDOWS ))
-    WIN=$(( TASK_ID % NUM_WINDOWS ))
-    PAD_SID=$(printf "%0${PAD}d" "$SID")
+    # Guard: only attempt windows when simulation is finished
+    SIM_DIR="$ROOT/experiments/$MODEL/simulations/$SID"
+    if [[ ! -f "$SIM_DIR/.done" ]] || [[ ! -f "$SIM_DIR/sampled_params.pkl" ]]; then
+        echo "[SKIP] SID=$SID not ready (.done or sampled_params missing)"
+        continue
+    fi
 
-    TARGET="experiments/${MODEL}/inferences/sim_${PAD_SID}/MomentsLD/windows/window_${WIN}.vcf.gz"
-    echo "Processing SID=$SID  WIN=$WIN  →  $TARGET"
+    TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/windows/window_${WIN}.vcf.gz"
+    echo "→ SID=$SID WIN=$WIN  Target=$TARGET"
 
     snakemake --snakefile "$SNAKEFILE" \
               --directory  "$ROOT" \
               --nolock \
               --rerun-incomplete \
+              --allowed-rules simulate_window ld_window \
+              --latency-wait 300 \
               -j "$SLURM_CPUS_PER_TASK" \
-              --latency-wait 60 \
               "$TARGET"
-
-    if [[ $? -ne 0 ]]; then
-        echo "Snakemake failed for SID=$SID WIN=$WIN"
-        exit 1
-    fi
 done
 
-echo "Array task $SLURM_ARRAY_TASK_ID finished successfully."
+echo "Array task $SLURM_ARRAY_TASK_ID finished."

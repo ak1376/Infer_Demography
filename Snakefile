@@ -3,6 +3,7 @@
 ##############################################################################
 import json, math, sys
 from pathlib import Path
+from snakemake.io import protected
 
 # ── guard against shadow‑import of the Bottleneck C library ────────────────
 if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
@@ -107,7 +108,7 @@ rule simulate:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         tree   = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
-        done   = f"{SIM_BASEDIR}/{{sid}}/.done",
+        done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
     params:
         sim_dir = SIM_BASEDIR,
         cfg     = EXP_CFG,

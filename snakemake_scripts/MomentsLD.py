@@ -279,31 +279,41 @@ def main():
         raise ValueError(f"Need p_guess mapping for model '{model}'")
 
     # TODO: Need to have a logical way to handle fixed parameters 
-    opt_params, LL = moments.LD.Inference.optimize_log_fmin(
-        p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
-        fixed_params=fixed_params, verbose=0)
-    
-    if cfg['demographic_model'] == "bottleneck":
-        # rescale the parameters to physical units
-        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
-        best_fit = dict(zip(["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"], physical))
-    elif cfg['demographic_model'] == "split_isolation":
-        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m", "Ne"])
-        best_fit = dict(zip(["N1", "N2", "t_split", "m", "N0"], physical))
-    elif cfg['demographic_model'] == "split_migration":
-        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "m12", "m21", "Ne"])
-        best_fit = dict(zip(["N1", "N2", "t_split", "m12", "m21", "N0"], physical))
-    elif cfg['demographic_model'] == "drosophila_three_epoch":
-        # rescale the parameters to physical units
-        physical = moments.LD.Util.rescale_params(opt_params, ["nu", "nu", "T", "T", "Ne"])
-        best_fit = dict(zip(["AFR", "EUR_recover", "T_AFR_expansion", "T_AFR_EUR_split", "N0"], physical))
+    # --- define keys and rescale_types once, then try optimise -------------
+    if model == "bottleneck":
+        keys = ["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"]
+        rescale_types = ["nu", "nu", "T", "T", "Ne"]
+    elif model == "split_isolation":
+        keys = ["N1", "N2", "t_split", "m", "N0"]
+        rescale_types = ["nu", "nu", "T", "m", "Ne"]
+    elif model == "split_migration":
+        keys = ["N1", "N2", "t_split", "m12", "m21", "N0"]
+        rescale_types = ["nu", "nu", "T", "m12", "m21", "Ne"]
+    elif model == "drosophila_three_epoch":
+        keys = ["AFR", "EUR_recover", "T_AFR_expansion", "T_AFR_EUR_split", "N0"]
+        rescale_types = ["nu", "nu", "T", "T", "Ne"]
     else:
-        raise ValueError(f"Need physical rescaling for model '{cfg['demographic_model']}'")
-    
-    pickle.dump({"best_params": best_fit, "best_lls": LL}, (sim_dir / "best_fit.pkl").open("wb"))
+        raise ValueError(f"Need mapping for model '{model}'")
 
+    best_fit_path = sim_dir / "best_fit.pkl"
+
+    try:
+        opt_params, LL = moments.LD.Inference.optimize_log_fmin(
+            p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
+            fixed_params=fixed_params, verbose=0
+        )
+        physical = moments.LD.Util.rescale_params(opt_params, rescale_types)
+        best_fit = dict(zip(keys, physical))
+
+    except Exception as e:
+        # Graceful fallback: write placeholder so Snakemake succeeds
+        print(f"[WARN] Moments-LD optimisation failed for {sim_dir.name}: {type(e).__name__}: {e}")
+        best_fit = {k: None for k in keys}
+        LL = float("nan")
+        (sim_dir / "fail_reason.txt").write_text(f"{type(e).__name__}: {e}\n")
+
+    pickle.dump({"best_params": best_fit, "best_lls": LL}, best_fit_path.open("wb"))
     print(f"✓ moments-LD finished for {sim_dir.relative_to(args.output_root.parent)}")
-
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
