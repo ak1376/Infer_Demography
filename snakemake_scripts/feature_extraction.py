@@ -21,7 +21,11 @@ Outputs in datasets/:
 
 Additionally written (not tracked by Snakemake unless you add them):
   outliers_removed.tsv         # all extreme outlier rows (tab-separated)
-  outliers_preview.txt         # readable summary + first N rows + counts
+  outliers_preview.txt         # readable summary + rows + counts
+
+Notes:
+- Pass --preview-rows -1 to include *all* outlier rows in the preview file
+  and stdout (this is the default here).
 """
 
 from __future__ import annotations
@@ -152,7 +156,7 @@ def main(
     tol_rel: float = 1e-9,
     tol_abs: float = 0.0,
     zmax: float = 6.0,
-    preview_rows: int = 50,
+    preview_rows: int = -1,   # -1 ⇒ show all rows
 ) -> None:
     cfg        = json.loads(cfg_path.read_text())
     model      = cfg["demographic_model"]
@@ -277,6 +281,10 @@ def main(
         outliers_df.to_csv(outliers_path, sep="\t", index=False)
         print(f"[INFO] Wrote detailed outliers to: {outliers_path}")
 
+        # decide how many rows to show in preview/stdout
+        show_all = (preview_rows is None) or (int(preview_rows) < 0)
+        to_show = len(outliers_df) if show_all else min(int(preview_rows), len(outliers_df))
+
         with open(preview_path, "w") as fh:
             fh.write("Outlier filtering summary\n")
             fh.write("=========================\n")
@@ -284,8 +292,8 @@ def main(
             fh.write(f"zmax={zmax}, tol_rel={tol_rel}, tol_abs={tol_abs}\n")
             fh.write(f"total outlier rows: {len(outliers_df)}\n\n")
 
-            fh.write(f"First {min(preview_rows, len(outliers_df))} rows:\n")
-            fh.write(outliers_df.head(preview_rows).to_string(index=False))
+            fh.write("All outlier rows:\n" if show_all else f"First {to_show} rows:\n")
+            fh.write((outliers_df if show_all else outliers_df.head(to_show)).to_string(index=False))
             fh.write("\n\nCounts by base_param and reason:\n")
             counts = (
                 outliers_df.groupby(["base_param", "reason"])
@@ -297,10 +305,14 @@ def main(
             fh.write("\n")
 
         print(f"[INFO] Wrote preview to: {preview_path}")
-        # also echo the first few rows to stdout for convenience
-        to_show = min(preview_rows, len(outliers_df))
-        print(f"[INFO] Showing first {to_show} extreme outlier rows:")
-        print(outliers_df.head(to_show).to_string(index=False))
+
+        # also echo to stdout (can be large!)
+        if show_all:
+            print(f"[INFO] Showing ALL {len(outliers_df)} extreme outlier rows:")
+            print(outliers_df.to_string(index=False))
+        else:
+            print(f"[INFO] Showing first {to_show} extreme outlier rows:")
+            print(outliers_df.head(to_show).to_string(index=False))
     else:
         with open(preview_path, "w") as fh:
             fh.write("Outlier filtering summary\n")
@@ -370,8 +382,8 @@ if __name__ == "__main__":
                     help="Absolute tolerance for comparing to prior bounds.")
     ap.add_argument("--zmax", type=float, default=6.0,
                     help="Drop only if |(x-μ)/σ| > zmax *and* outside bounds.")
-    ap.add_argument("--preview-rows", type=int, default=50,
-                    help="How many outlier rows to include in outliers_preview.txt.")
+    ap.add_argument("--preview-rows", type=int, default=-1,
+                    help="How many outlier rows to include in outliers_preview.txt. Use -1 to include all rows.")
     args = ap.parse_args()
 
     main(
