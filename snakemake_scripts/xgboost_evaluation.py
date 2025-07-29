@@ -73,30 +73,38 @@ def _detect_outer_jobs(user, default=1):
         return int(user)
     return int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or default))
 
-def _random_search_xgb(X_train, y_train, n_iter=20, random_state=42, cv_verbose=3):
-    """Hyperparameter search on the first target (if multi-output) with rich logging."""
+def _random_search_xgb(X_train, y_train, n_iter=6, random_state=42, cv_verbose=3):
+    """Fast RandomizedSearchCV on first target with rich logging and small space."""
     start = time.perf_counter()
+
+    # Avoid oversubscription: sklearn parallelizes candidates/folds; XGB uses 1 thread.
     base = XGBRegressor(
         objective="reg:squarederror",
-        n_jobs=-1,            # let CV parallelize folds/candidates
-        tree_method="hist",   # fast default
+        n_jobs=1,              # important: let sklearn own the parallelism
+        tree_method="hist",    # fast CPU algorithm
         random_state=random_state,
+        verbosity=1,
     )
+
+    # Small, sensible space
     param_dist = {
-        "n_estimators":      [100, 200, 300, 400, 500],
-        "max_depth":         [2, 3, 4, 5, 8, 10],
-        "learning_rate":     [0.01, 0.05, 0.1, 0.2],
-        "subsample":         [0.6, 0.8, 1.0],
-        "colsample_bytree":  [0.6, 0.8, 1.0],
-        "min_child_weight":  [1, 3, 5],
-        "reg_lambda":        [1, 2, 5, 10],
-        "reg_alpha":         [0, 0.1, 0.5, 1.0],
-        "tree_method":       ["hist"],
+        "n_estimators":     [150, 250],
+        "max_depth":        [3, 5],
+        "learning_rate":    [0.05, 0.10],
+        "subsample":        [0.8, 1.0],
+        "colsample_bytree": [0.8, 1.0],
+        "min_child_weight": [1, 3],
+        "reg_lambda":       [1.0, 5.0],
+        "reg_alpha":        [0.0, 0.1],
+        "tree_method":      ["hist"],
     }
+
     scorer = make_scorer(mse_sklearn, greater_is_better=False)
     y_search = y_train[:, 0] if y_train.ndim > 1 and y_train.shape[1] > 1 else y_train
 
+    print(f"[CV] Shapes: X_train={X_train.shape}, y_search={y_search.shape}")
     print(f"[CV] RandomizedSearchCV: {n_iter} candidates × 3-fold ≈ {n_iter*3} fits")
+
     rs = RandomizedSearchCV(
         estimator=base,
         param_distributions=param_dist,
@@ -104,15 +112,38 @@ def _random_search_xgb(X_train, y_train, n_iter=20, random_state=42, cv_verbose=
         cv=3,
         scoring=scorer,
         random_state=random_state,
-        n_jobs=-1,
-        verbose=cv_verbose,       # >=3 prints fold & candidate indices + timings
+        n_jobs=-1,               # sklearn parallelism across folds/candidates
+        verbose=cv_verbose,      # >=3 prints folds and timings
         pre_dispatch="2*n_jobs",
         return_train_score=False,
     )
+
     rs.fit(X_train, y_search)
+
     dur = time.perf_counter() - start
-    print(f"[CV] Best params: {rs.best_params_}")
     print(f"[CV] Elapsed: {dur:.1f}s")
+    print(f"[CV] Best score (neg-MSE): {rs.best_score_:.6g}")
+    print(f"[CV] Best params: {rs.best_params_}")
+
+    # Summarize top candidates
+    try:
+        import pandas as pd
+        cv = rs.cv_results_
+        df = pd.DataFrame({
+            "rank": cv["rank_test_score"],
+            "mean_test": cv["mean_test_score"],
+            "std_test": cv["std_test_score"],
+            "params": cv["params"],
+            "fit_time": cv["mean_fit_time"],
+            "score_time": cv["mean_score_time"],
+        }).sort_values("rank").head(5)
+        print("[CV] Top candidates:")
+        for _, row in df.iterrows():
+            print(f"  rank={int(row['rank'])}  mean={row['mean_test']:.6g}±{row['std_test']:.3g}  "
+                  f"fit_time={row['fit_time']:.2f}s  params={row['params']}")
+    except Exception as e:
+        print(f"[CV] Could not print top candidates summary: {type(e).__name__}: {e}")
+
     return rs.best_params_
 
 def _plot_feature_importances_grid(model, feature_names, target_names, save_path, top_k=None):

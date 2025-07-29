@@ -13,16 +13,14 @@
 #SBATCH --verbose
 
 set -euo pipefail
-set -x  # <— show every command for debugging
 
 CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_split_isolation.json"
-PROJECT_ROOT="/projects/kernlab/akapoor/Infer_Demography"
-SNAKEFILE="$PROJECT_ROOT/Snakefile"
-CORES="${SLURM_CPUS_PER_TASK:-8}"
-
+ROOT="/projects/kernlab/akapoor/Infer_Demography"
+SNAKEFILE="$ROOT/Snakefile"
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 
-targets=(
+# XGBoost outputs (Snakemake will pull its inputs automatically)
+XGB_TARGETS=(
   "experiments/${MODEL}/modeling/xgboost/xgb_mdl_obj.pkl"
   "experiments/${MODEL}/modeling/xgboost/xgb_model_error.json"
   "experiments/${MODEL}/modeling/xgboost/xgb_model.pkl"
@@ -30,14 +28,17 @@ targets=(
   "experiments/${MODEL}/modeling/xgboost/xgb_feature_importances.png"
 )
 
-# echo targets to ensure the array expanded
-printf 'TARGET: %s\n' "${targets[@]}"
+# show targets for sanity
+printf 'XGB TARGET: %s\n' "${XGB_TARGETS[@]}"
 
 snakemake \
   --snakefile "$SNAKEFILE" \
-  --directory "$PROJECT_ROOT" \
-  --cores "$CORES" \
+  --directory "$ROOT" \
+  --cores "${SLURM_CPUS_PER_TASK}" \
   --nolock \
   --rerun-incomplete \
-  --allowed-rules xgboost make_color_scheme \
-  "${targets[@]}"
+  --latency-wait 60 \
+  --printshellcmds \
+  --allowed-rules xgboost combine_features make_color_scheme \
+  -- \
+  "${XGB_TARGETS[@]}"

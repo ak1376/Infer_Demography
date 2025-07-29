@@ -34,6 +34,7 @@ import argparse, json, pickle, re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import re
 
 
 # ------------------------------- helpers ---------------------------------- #
@@ -84,9 +85,12 @@ def plot_estimates_vs_truth_grid_multi_rep(
     params: list[str] | None = None,
     figsize_per_panel: tuple[float, float] = (3.2, 3.0),
     out_path: Path | str = "features_scatterplot.png",
+    # Only these tools will colorize by replicate. Leave default to just momentsLD.
+    colorize_reps_tools: set[str] | tuple[str, ...] = ("momentsLD",),
 ):
-    """Grid of panels: rows = tools, cols = parameters. Each panel overlays all reps."""
-    # infer parameter list if not provided: intersection across tools & targets
+    colorize_reps_tools = set()
+
+    # infer parameter list if not provided
     if params is None:
         common: set[str] = set(targets_df.columns)
         for tool in tools:
@@ -98,6 +102,13 @@ def plot_estimates_vs_truth_grid_multi_rep(
         params = sorted(common)
 
     tools = list(tools)
+
+    # one color per tool
+    palette = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
+    if not palette:
+        palette = ["C0", "C1", "C2", "C3", "C4", "C5"]
+    tool_color = {tool: palette[i % len(palette)] for i, tool in enumerate(tools)}
+
     n_rows, n_cols = len(tools), len(params)
     fig = plt.figure(figsize=(figsize_per_panel[0] * n_cols,
                               figsize_per_panel[1] * n_rows))
@@ -117,6 +128,7 @@ def plot_estimates_vs_truth_grid_multi_rep(
             matches.sort(key=lambda t: (-1 if t[0] is None else t[0]))
 
             y = targets_df[p]
+
             # panel limits over all reps
             x_all = [features_df[col].to_numpy() for _, col in matches]
             if x_all:
@@ -127,20 +139,34 @@ def plot_estimates_vs_truth_grid_multi_rep(
             else:
                 lo, hi = float(y.min()), float(y.max())
 
+            # plot
+            made_tool_label = False
             for rep, col in matches:
                 x = features_df[col]
-                label = (f"rep_{rep}" if rep is not None else tool)
-                ax.scatter(x, y, s=16, alpha=0.75, label=label)
+                if tool in colorize_reps_tools:
+                    # per‑rep labeling/coloring (only for the requested tools)
+                    lbl = f"rep_{rep}" if rep is not None else tool
+                    ax.scatter(x, y, s=16, alpha=0.75, label=lbl)  # default color cycle
+                else:
+                    # single color & legend entry for the whole tool
+                    lbl = (tool if not made_tool_label else None)
+                    ax.scatter(x, y, s=16, alpha=0.75, label=lbl, color=tool_color[tool])
+                    if lbl is not None:
+                        made_tool_label = True
 
             ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
             ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
             ax.set_aspect("equal", adjustable="box")
 
-            if r == 0: ax.set_title(p)
-            ax.set_ylabel(f"{tool}\nTrue" if c == 0 else "")
-            ax.set_xlabel("Estimated" if r == n_rows - 1 else "")
+            if r == 0:
+                ax.set_title(p)
+            if c == 0:
+                ax.set_ylabel(f"{tool}\nTrue")
+            if r == n_rows - 1:
+                ax.set_xlabel("Estimated")
 
-            if len(matches) > 1:
+            # show legend only if there’s more than one plotted series
+            if len(matches) > 0:
                 ax.legend(fontsize=7, frameon=False)
 
     fig.tight_layout()
