@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-999
+#SBATCH --array=0-999                # <— full range, no %MAX_CONCURRENT
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=5:00:00
@@ -12,19 +12,17 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
+set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # 0. batching parameters ----------------------------------------------------
 # ---------------------------------------------------------------------------
-BATCH_SIZE=1          # sims optimised per array task
-: "${MAX_CONCURRENT:=200}"
+BATCH_SIZE=1
 
 # ---------------------------------------------------------------------------
 # 1. paths & config ---------------------------------------------------------
 # ---------------------------------------------------------------------------
-: "${CFG_PATH:?CFG_PATH is not defined}"       # export this before sbatch
-CFG="$CFG_PATH"
-
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
@@ -32,11 +30,11 @@ NUM_DRAWS=$(jq -r '.num_draws' "$CFG")
 MODEL=$(jq -r '.demographic_model' "$CFG")
 
 # ---------------------------------------------------------------------------
-# 2. resubmit with correct --array range if first launch --------------------
+# 2. resubmit with correct --array range if launched without --array --------
 # ---------------------------------------------------------------------------
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     NUM_ARRAY=$(( (NUM_DRAWS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
-    sbatch --array=0-"$NUM_ARRAY"%$MAX_CONCURRENT "$0" "$@"
+    sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
     exit 0
 fi
 
@@ -50,18 +48,20 @@ BATCH_END=$((   (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 echo "Array $SLURM_ARRAY_TASK_ID → sims $BATCH_START .. $BATCH_END"
 
 # ---------------------------------------------------------------------------
-# 4. loop through the sims in this batch -----------------------------------
+# 4. run Snakemake for each sim in this batch -------------------------------
 # ---------------------------------------------------------------------------
 for SID in $(seq "$BATCH_START" "$BATCH_END"); do
     TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/best_fit.pkl"
     echo "Optimising Moments‑LD for SID=$SID  →  $TARGET"
 
     snakemake --snakefile "$SNAKEFILE" \
-              --directory  "$ROOT" \
+              --directory "$ROOT" \
               --rerun-incomplete \
               --nolock \
+              --forcerun "$TARGET" \
               -j "$SLURM_CPUS_PER_TASK" \
-              "$TARGET" || { echo "Snakemake failed for SID=$SID"; exit 1; }
+              "$TARGET" \
+              || { echo "Snakemake failed for SID=$SID"; exit 1; }
 done
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."

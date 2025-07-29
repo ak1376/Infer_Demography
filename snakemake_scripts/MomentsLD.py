@@ -227,6 +227,8 @@ def main():
     model = cfg["demographic_model"]
 
     fixed_params = [None]*len(prior_means)  # will be set later
+    lower_bounds = [None]*len(prior_means)  # will be set later
+    upper_bounds = [None]*len(prior_means)  # will be set later
 
     if model == "bottleneck":                       # ⇢ 3‑epoch, 1‑population
         # three_epoch params: (nu1, nu2, T1, T2, Ne)
@@ -252,6 +254,33 @@ def main():
             prior_means["N0"],                                         # Ne
         ]
 
+        # Helpful shorthands
+        p   = cfg["priors"].copy()               # just to shorten lines
+        N0L, N0U   = p["N0"]        # 100 … 30 000
+        N1L, N1U   = p["N1"]
+        N2L, N2U   = p["N2"]
+        mL,  mU    = p["m"]         # 1e‑8 … 1e‑4
+        tL,  tU    = p["t_split"]   # 500 … 20 000
+
+        # 1) bounds on the five free parameters (linear scale)
+        lower_bounds = [
+            N1L / N0U,              # ν1_min  = 100 / 30 000  ≈ 3.33 × 10⁻³
+            N2L / N0U,              # ν2_min  = 100 / 30 000
+            tL  / (2*N0U),          # T_min   = 500 / (2·30 000) ≈ 8.33 × 10⁻³
+            mL,                     # m_min   = 1 × 10⁻⁸
+            N0L                     # Ne_min  = 100
+        ]
+
+        upper_bounds = [
+            N1U / N0L,              # ν1_max  = 30 000 / 100 = 3 × 10²
+            N2U / N0L,              # ν2_max  = 3 × 10²
+            tU  / (2*N0L),          # T_max   = 20 000 / 200 = 1 × 10²
+            mU,                     # m_max   = 1 × 10⁻⁴
+            N0U                     # Ne_max  = 30 000
+        ]
+        # => numeric values
+        # lower = [3.333e‑3, 3.333e‑3, 8.333e‑3, 1e‑8, 1.0e2]
+        # upper = [3.0e2,   3.0e2,   1.0e2,   1e‑4, 3.0e4]
 
     elif model == "split_migration":                # ⇢ 2‑pop, split + mig #TODO: Need to update the island model function to use t_split 
         # (nu1, nu2, T_split, m12, m21, Ne)
@@ -300,7 +329,7 @@ def main():
     try:
         opt_params, LL = moments.LD.Inference.optimize_log_fmin(
             p_guess, [mv["means"], mv["varcovs"]], [demo_func], rs=r_bins,
-            fixed_params=fixed_params, verbose=0
+            fixed_params=fixed_params, verbose=1
         )
         physical = moments.LD.Util.rescale_params(opt_params, rescale_types)
         best_fit = dict(zip(keys, physical))
