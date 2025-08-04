@@ -30,7 +30,7 @@ def bottleneck_model(sampled_params):
 def split_isolation_model(sampled_params):
 
     # Unpack the sampled parameters
-    Na, N1, N2, m, t_split = (
+    N0, N1, N2, m, t_split = (
         sampled_params["N0"],  # Effective population size of the ancestral population
         sampled_params["N1"],  # Size of population 1 after split
         sampled_params["N2"],  # Size of population 2 after split
@@ -39,7 +39,7 @@ def split_isolation_model(sampled_params):
     )
 
     b = demes.Builder()
-    b.add_deme("N0", epochs=[dict(start_size=Na, end_time=t_split)])
+    b.add_deme("N0", epochs=[dict(start_size=N0, end_time=t_split)])
     b.add_deme("N1", ancestors=["N0"], epochs=[dict(start_size=N1)])
     b.add_deme("N2", ancestors=["N0"], epochs=[dict(start_size=N2)])
     b.add_migration(demes=["N1", "N2"], rate=m)

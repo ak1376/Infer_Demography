@@ -27,7 +27,13 @@ def diffusion_sfs_dadi(
     sequence_length: int,
     pts: list[int],
 ) -> dadi.Spectrum:
-    p_dict = dict(zip(sample_sizes.keys(), params))
+    p_dict = {
+        "N0": params[0],
+        "N1": params[1],
+        "N2": params[2],
+        "m": params[3],
+        "t_split": params[4]
+    }
     graph  = demo_model(p_dict)
 
     haploid_sizes = [2 * n for n in sample_sizes.values()]
@@ -49,7 +55,6 @@ def fit_model(
     start_dict: dict[str, float],
     demo_model,
     experiment_config: dict,
-    *,
     sampled_params: dict | None = None,
 ):
     """

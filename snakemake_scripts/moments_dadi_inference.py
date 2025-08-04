@@ -4,7 +4,6 @@
 from __future__ import annotations
 import sys
 from pathlib import Path     
-import dadi                                              # NEW
 
 # ------------------------------------------------------------------- add this
 ROOT = Path(__file__).resolve().parents[1]        # project root (…/Infer_Demography)
@@ -38,6 +37,7 @@ run_dadi    = args.run_dadi.lower()    in {"true", "1", "yes"}
 cfg  : Dict[str, Any] = json.loads(args.config_file.read_text())
 sfs  = pickle.load(args.sfs.open("rb"))
 pars = pickle.load(args.sampled_params.open("rb"))
+print(f'Sampled params: {pars}')
 
 demo_lookup = {
     "bottleneck"            : bottleneck_model,
@@ -48,6 +48,7 @@ demo_lookup = {
 demo_model = demo_lookup[cfg["demographic_model"]]
 
 start_dict = {k: (lo + hi) / 2 for k, (lo, hi) in cfg["priors"].items()}
+print(f"Start dict: {start_dict}")
 
 # make sure output folders exist
 mom_out  = args.run_dir / "inferences" / "moments"

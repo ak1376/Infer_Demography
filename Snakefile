@@ -293,11 +293,9 @@ rule optimize_momentsld:
     shell:
         """
         python "snakemake_scripts/LD_inference.py" \
-            --sim-dir      {params.sim_dir} \
-            --LD_dir       {params.LD_dir} \
-            --config-file  {params.cfg} \
-            --num-windows  {params.n_windows} \
-            --r-bins       "{params.bins}"
+            --run-dir      {params.sim_dir} \
+            --output-root  {params.LD_dir} \
+            --config-file  {params.cfg}
         """
 
 ##############################################################################

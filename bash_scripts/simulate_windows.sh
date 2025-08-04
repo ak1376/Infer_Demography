@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=win_sim
-#SBATCH --array=0-9999
+#SBATCH --array=0-999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
 #SBATCH --time=12:00:00
@@ -15,11 +15,11 @@
 
 set -euo pipefail
 
-BATCH_SIZE=10
+BATCH_SIZE=1
 
-# : "${CFG_PATH:?CFG_PATH is not defined}"
-# CFG="$CFG_PATH"
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
+: "${CFG_PATH:?CFG_PATH is not defined}"
+CFG="$CFG_PATH"
+# CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"

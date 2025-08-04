@@ -28,6 +28,7 @@ def load_config(config_path: Path) -> dict:
 
 # ─── Aggregation ───────────────────────────────────────────────────────────
 def aggregate_ld_stats(out_dir: Path) -> Dict[str, Any]:
+    print(f'Out Dir: {out_dir}')
     means = out_dir / "means.varcovs.pkl"
     boots = out_dir / "bootstrap_sets.pkl"
 
@@ -35,6 +36,7 @@ def aggregate_ld_stats(out_dir: Path) -> Dict[str, Any]:
         return pickle.loads(means.read_bytes())
 
     ld_dir = out_dir / "LD_stats"
+    print(f'Aggregating LD stats from {ld_dir}')
     ld_stats = {
         int(p.stem.split("_")[-1]): pickle.loads(p.read_bytes())
         for p in ld_dir.glob("LD_stats_window_*.pkl")
@@ -52,7 +54,8 @@ def aggregate_ld_stats(out_dir: Path) -> Dict[str, Any]:
 # ─── Plotting ──────────────────────────────────────────────────────────────
 def write_comparison_pdf(cfg: dict, sampled_params: dict, mv: dict,
                          r_vec: np.ndarray, out_dir: Path) -> None:
-    pdf = out_dir / f"{cfg['demographic_model']}_comparison.pdf"
+    print(f'Writing comparison PDF to {out_dir}')
+    pdf = out_dir / f"empirical_vs_theoretical_comparison.pdf"
     if pdf.exists():
         return
 
