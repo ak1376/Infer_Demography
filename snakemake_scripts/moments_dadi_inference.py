@@ -70,7 +70,6 @@ if run_moments:
     pickle.dump({"best_params": opt_params, "best_lls": lls[0]},
                 (mom_out / "fit_params.pkl").open("wb"))
 if run_dadi:
-    demo_model_ex = dadi.Numerics.make_extrap_func(demo_model)
     vecs, lls = dadi_fit_model(
         sfs,
         start_dict=start_dict,

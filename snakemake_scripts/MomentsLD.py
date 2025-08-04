@@ -250,7 +250,7 @@ def main():
             prior_means["N1"]  / prior_means["N0"],                    # ν1
             prior_means["N2"]  / prior_means["N0"],                    # ν2
             prior_means["t_split"] / (2 * prior_means["N0"]),          # T_split
-            prior_means["N0"] * 2,                                     # m (migration rate)
+            prior_means["m"] * prior_means["N0"] * 2,                                     # m (migration rate)
             prior_means["N0"],                                         # Ne
         ]
 

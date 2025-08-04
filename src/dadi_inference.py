@@ -1,49 +1,51 @@
 #!/usr/bin/env python3
 """
-dadi_inference.py  – dynamic pts grid + prior-based bounds
-----------------------------------------------------------
-Identical to your previous version except for:
-
-* `pts_l` is computed from the SFS at runtime;
-* `lower_bound` / `upper_bound` come straight from the JSON priors.
+dadi_inference.py – single‑run dadi optimisation
+------------------------------------------------
+* Dynamic pts grid (based on observed SFS).
+* Bounds taken straight from JSON priors.
+* Uses raw‑wrapper  ➜  make_extrap_func  ➜  dadi.Inference.opt.
+* No files written: everything prints to stdout/stderr.
 """
 
 from __future__ import annotations
 from collections import OrderedDict
-from contextlib  import redirect_stdout, redirect_stderr
-from io          import StringIO
-from pathlib     import Path
+from pathlib import Path
 import datetime
-
+import json
 import numpy as np
 import dadi
 import nlopt
 
-# ───────────────────────── helper: expected SFS ─────────────────────────
-def diffusion_sfs(
-    p_vec: np.ndarray,
-    demo_model,                      # callable(dict) → demes.Graph
-    param_names: list[str],
+
+# ── helper: expected SFS via dadi‑Demes ───────────────────────────────────
+def diffusion_sfs_dadi(
+    params: list[float],
     sample_sizes: OrderedDict[str, int],
-    pts_l: list[int],
-):
-    """Return the expected SFS for parameter vector `p_vec`."""
-    p_dict = dict(zip(param_names, p_vec))
+    demo_model,                      # callable(dict) → demes.Graph
+    mutation_rate: float,
+    sequence_length: int,
+    pts: list[int],
+) -> dadi.Spectrum:
+    p_dict = dict(zip(sample_sizes.keys(), params))
     graph  = demo_model(p_dict)
 
     haploid_sizes = [2 * n for n in sample_sizes.values()]
     sampled_demes = list(sample_sizes.keys())
 
-    return dadi.Spectrum.from_demes(
+    fs = dadi.Spectrum.from_demes(
         graph,
         sample_sizes = haploid_sizes,
         sampled_demes= sampled_demes,
-        pts          = pts_l,
+        pts          = pts,
     )
+    fs *= mutation_rate * sequence_length
+    return fs
 
-# ───────────────────────── fitting routine ──────────────────────────────
+
+# ── main fitting function (called by your pipeline) ──────────────────────
 def fit_model(
-    sfs,
+    sfs: dadi.Spectrum,
     start_dict: dict[str, float],
     demo_model,
     experiment_config: dict,
@@ -51,71 +53,82 @@ def fit_model(
     sampled_params: dict | None = None,
 ):
     """
-    Run **one** dadi optimisation and return a single param‑vector / LL.
-    The lists in the returned dict therefore contain exactly one element.
+    Run one dadi optimisation; return ([best_params], [best_ll]).
     """
-    # ─── pull out a few things from the JSON --------------------------------
-    priors   = experiment_config["priors"]
-    # top_k    = experiment_config.get("top_k", 1)      # keeps interface intact
-    # assert top_k == 1, "With one optimisation only, TOP_K must be 1"
+    priors = experiment_config["priors"]
 
-    # ─── parameter order / start vector -------------------------------------
+    # order / start vector / bounds ---------------------------------------
     param_names = list(start_dict.keys())
-    start_vec   = np.array([start_dict[p] for p in param_names])
+    p0          = np.array([start_dict[p] for p in param_names])
+    lower_b     = [priors[p][0] for p in param_names]
+    upper_b     = [priors[p][1] for p in param_names]
 
-    # ─── sample sizes & pts grid --------------------------------------------
-    from collections import OrderedDict
+    # dynamic pts grid -----------------------------------------------------
     sample_sizes = OrderedDict(
         (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
     )
     n_max_hap = max(2 * n for n in sample_sizes.values())
-    pts_l     = [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60] # TODO: Change this to [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60] 
+    pts_l     = [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60]
 
-    # ─── bounds from priors --------------------------------------------------
-    lower_bounds = [priors[p][0] for p in param_names]
-    upper_bounds = [priors[p][1] for p in param_names]
+    # wrap model -----------------------------------------------------------
+    mut_rate = experiment_config["mutation_rate"]
+    L        = experiment_config["genome_length"]
 
-    # ─── single optimisation call -------------------------------------------
-    import datetime, dadi, nlopt
-    from contextlib import redirect_stdout, redirect_stderr
-    from io import StringIO
-    from pathlib import Path
-
-    log_dir  = Path(experiment_config.get("log_dir", "."))
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "optim_single.txt"
-
-    # (optional)  small random perturbation of the midpoint start
-    seed_vec = dadi.Misc.perturb_params(start_vec, fold=0.1)
-
-    buf = StringIO()
-    with redirect_stdout(buf), redirect_stderr(buf):
-        opt_params, ll_val = dadi.Inference.opt(
-            seed_vec,
-            sfs,
-            lambda p, n, pts=None: diffusion_sfs(
-                p, demo_model, param_names, sample_sizes, pts_l
-            ),
-            pts         = pts_l,
-            algorithm   = nlopt.LN_BOBYQA,
-            maxeval     = 10_000,
-            verbose     = 1,
-            lower_bound = lower_bounds,
-            upper_bound = upper_bounds,
-            fixed_params=[
-                sampled_params.get("N0"),
-                sampled_params.get("N_bottleneck"),
-                None, None, None,
-            ] if experiment_config['demographic_model'] == "bottleneck" else None,
+    def raw_wrapper(params, ns, pts):
+        return diffusion_sfs_dadi(
+            params, sample_sizes, demo_model, mut_rate, L, pts
         )
 
-    log_path.write_text(
-        "# dadi single optimisation\n"
-        f"# finished: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n"
-        + buf.getvalue()
+    func_ex = dadi.Numerics.make_extrap_func(raw_wrapper)
+
+    # optional fixed params (bottleneck example) --------------------------
+    fixed = None
+    if experiment_config["demographic_model"] == "bottleneck":
+        fixed = [
+            sampled_params.get("N0"),
+            sampled_params.get("N_bottleneck"),
+            None, None, None,
+        ]
+
+    # optimisation --------------------------------------------------------
+    print("▶ dadi optimisation started –", datetime.datetime.now().isoformat(timespec='seconds'))
+    print("  lower bounds:", lower_b)
+    print("  upper bounds:", upper_b)
+
+    seed = dadi.Misc.perturb_params(p0, fold=0.1)
+    best_p, best_ll = dadi.Inference.opt(
+        seed, sfs, func_ex, pts=pts_l,
+        lower_bound=lower_b, upper_bound=upper_b,
+        algorithm=nlopt.LN_BOBYQA,
+        maxeval=10_000,
+        verbose=1,
+        fixed_params=fixed,
     )
 
-    # ─── wrap into the usual return format ----------------------------------
-    best_params = [opt_params]   # lists of length 1
-    best_lls    = [ll_val]
-    return best_params, best_lls
+    print("✔ finished –", datetime.datetime.now().isoformat(timespec='seconds'))
+    print("  LL  :", best_ll)
+    print("  params:", best_p)
+
+    return [best_p], [best_ll]   # keep list‑of‑one format
+
+
+# ── optional CLI for quick testing ---------------------------------------
+if __name__ == "__main__":
+    import argparse, importlib, pickle
+
+    cli = argparse.ArgumentParser("Standalone dadi single‑fit (no files written)")
+    cli.add_argument("--sfs-file", required=True, type=Path)
+    cli.add_argument("--config",   required=True, type=Path)
+    cli.add_argument("--model-py", required=True, type=str,
+                     help="python:module.function returning demes.Graph")
+    args = cli.parse_args()
+
+    sfs = pickle.loads(args.sfs_file.read_bytes())
+    cfg = json.loads(args.config.read_text())
+
+    mod_path, func_name = args.model_py.split(":")
+    demo_func = getattr(importlib.import_module(mod_path), func_name)
+
+    start = {k: (lo+hi)/2 for k,(lo,hi) in cfg["priors"].items()}
+
+    fit_model(sfs, start, demo_func, cfg)
