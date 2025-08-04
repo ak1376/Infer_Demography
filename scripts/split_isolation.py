@@ -142,7 +142,7 @@ def _aggregate_and_optimise(cfg: Path, exp_root: Path, rep: int, r_bins: str):
 
     priors = cfg_json["priors"]; pm = {k:(lo+hi)/2 for k,(lo,hi) in priors.items()}
     p0 = [pm["N1"]/pm["N0"], pm["N2"]/pm["N0"],
-          pm["t_split"]/(2*pm["N0"]), pm["m"], pm["N0"]]
+          pm["t_split"]/(2*pm["N0"]), 2*pm["m"]*pm["N0"], pm["N0"]]
 
     opt, ll = moments.LD.Inference.optimize_log_lbfgsb(
         p0, [mv["means"], mv["varcovs"]],
