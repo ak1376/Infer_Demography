@@ -72,20 +72,52 @@ def write_comparison_pdf(cfg: dict, sampled_params: dict, mv: dict,
     )
     y = moments.LD.Inference.sigmaD2(y)
 
-    stats = [
-        ["DD_0_0"], ["DD_0_1"], ["DD_1_1"],
-        ["Dz_0_0_0"], ["Dz_0_1_1"], ["Dz_1_1_1"],
-        ["pi2_0_0_1_1"], ["pi2_0_1_0_1"], ["pi2_1_1_1_1"],
-    ]
-    labels = [
-        [r"$D_0^2$"], [r"$D_0D_1$"], [r"$D_1^2$"],
-        [r"$Dz_{0,0,0}$"], [r"$Dz_{0,1,1}$"], [r"$Dz_{1,1,1}$"],
-        [r"$\pi_{2;0,0,1,1}$"], [r"$\pi_{2;0,1,0,1}$"], [r"$\pi_{2;1,1,1,1}$"],
-    ]
+    stats_to_plot = []
+    labels = []
+
+    # Determine which LD statistics to plot based on the demographic model
+    if cfg['demographic_model'] == "bottleneck_model":
+        stats_to_plot = [
+            ["DD_0_0"],
+            ["Dz_0_0_0"],
+            ["pi2_0_0_0_0"],
+        ]
+        labels = [
+            [r"$D_0^2$"],
+            [r"$Dz_{0,0,0}$"],
+            [r"$\pi_{2;0,0,0,0}$"],
+        ]
+
+    elif cfg['demographic_model'] in ["split_isolation_model", "split_migration_model", "island_model"]:
+        stats_to_plot = [
+            ["DD_0_0"],
+            ["DD_0_1"],
+            ["DD_1_1"],
+            ["Dz_0_0_0"],
+            ["Dz_0_1_1"],
+            ["Dz_1_1_1"],
+            ["pi2_0_0_1_1"],
+            ["pi2_0_1_0_1"],
+            ["pi2_1_1_1_1"],
+        ]
+        labels = [
+            [r"$D_0^2$"],
+            [r"$D_0 D_1$"],
+            [r"$D_1^2$"],
+            [r"$Dz_{0,0,0}$"],
+            [r"$Dz_{0,1,1}$"],
+            [r"$Dz_{1,1,1}$"],
+            [r"$\pi_{2;0,0,1,1}$"],
+            [r"$\pi_{2;0,1,0,1}$"],
+            [r"$\pi_{2;1,1,1,1}$"],
+        ]
+    else:
+        raise ValueError(f"Unsupported demographic model: {cfg['demographic_model']}")
+        
 
     fig = moments.LD.Plotting.plot_ld_curves_comp(
         y, mv["means"][:-1], mv["varcovs"][:-1],
-        rs=r_vec, stats_to_plot=stats, labels=labels,
+        rs=r_vec, stats_to_plot=stats_to_plot, labels=labels,
         rows=3, plot_vcs=True, show=False, fig_size=(6, 4),
     )
     fig.savefig(pdf, dpi=300)
