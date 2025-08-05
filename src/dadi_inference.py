@@ -45,7 +45,7 @@ def diffusion_sfs_dadi(
         sampled_demes= sampled_demes,
         pts          = pts,
     )
-    fs *= mutation_rate * sequence_length
+    fs *= 4 * params[0] * mutation_rate * sequence_length
     return fs
 
 

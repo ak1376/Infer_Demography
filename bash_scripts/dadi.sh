@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer
-#SBATCH --array=0-9
+#SBATCH --array=0-9999
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
 #SBATCH --time=8:00:00
@@ -16,12 +16,12 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1
+BATCH_SIZE=10
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
-# : "${CFG_PATH:?CFG_PATH is not defined}"
-# CFG="$CFG_PATH"
+# CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+: "${CFG_PATH:?CFG_PATH is not defined}"
+CFG="$CFG_PATH"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
