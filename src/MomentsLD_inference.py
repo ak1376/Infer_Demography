@@ -8,6 +8,7 @@ from typing import Any, Dict
 import numpy as np
 import matplotlib.pyplot as plt
 import moments
+from typing import Optional, Dict, Any
 
 
 # ─── Constants ─────────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ def write_comparison_pdf(cfg: dict, sampled_params: dict, mv: dict,
     labels = []
 
     # Determine which LD statistics to plot based on the demographic model
-    if cfg['demographic_model'] == "bottleneck_model":
+    if cfg['demographic_model'] == "bottleneck":
         stats_to_plot = [
             ["DD_0_0"],
             ["Dz_0_0_0"],
@@ -126,8 +127,23 @@ def write_comparison_pdf(cfg: dict, sampled_params: dict, mv: dict,
 
 
 # ─── Optimisation ──────────────────────────────────────────────────────────
-def run_moments_ld_optimization(cfg: dict, mv: dict,
-                                out_dir: Path, r_vec: np.ndarray) -> None:
+def run_moments_ld_optimization(
+    cfg: dict,
+    mv: dict,
+    out_dir: Path,
+    r_vec: np.ndarray,
+    sampled_params: Optional[Dict[str, Any]] = None,  # <-- new optional arg
+) -> None:
+    """
+    Run moments-LD optimisation and write best_fit.pkl.
+
+    If `cfg['demographic_model'] == 'bottleneck'` and `sampled_params`
+    includes 'N0' and 'N_bottleneck', we fix:
+        nu1 = N_bottleneck / N0
+        Ne  = N0
+    during optimisation (via `fixed_params`), and also seed p0 with these
+    exact values. For other models, `sampled_params` is ignored.
+    """
     best_pkl = out_dir / "best_fit.pkl"
     if best_pkl.exists():
         logging.info("best_fit.pkl already exists - skipping optimisation")
@@ -135,8 +151,9 @@ def run_moments_ld_optimization(cfg: dict, mv: dict,
 
     priors = cfg["priors"]
     pm = {k: 0.5 * (lo + hi) for k, (lo, hi) in priors.items()}
-
     model = cfg["demographic_model"]
+
+    fixed_params = None  # default: all parameters free
 
     if model == "split_isolation":
         demo_func = moments.LD.Demographics2D.split_mig
@@ -147,19 +164,32 @@ def run_moments_ld_optimization(cfg: dict, mv: dict,
             2 * pm["m"] * pm["N0"],
             pm["N0"],
         ]
-        keys = ["N1", "N2", "t_split", "m", "N0"]
-        rtypes = ["nu", "nu", "T", "m", "Ne"]
+        keys   = ["N1", "N2", "t_split", "m", "N0"]
+        rtypes = ["nu",  "nu",  "T",      "m", "Ne"]
+
     elif model == "bottleneck":
         demo_func = moments.LD.Demographics1D.three_epoch
+        # p0 from prior midpoints
         p0 = [
-            pm["N_bottleneck"] / pm["N0"],
-            pm["N_recover"] / pm["N0"],
-            (pm["t_bottleneck_start"] - pm["t_bottleneck_end"]) / (2 * pm["N0"]),
-            pm["t_bottleneck_end"] / (2 * pm["N0"]),
-            pm["N0"],
+            pm["N_bottleneck"] / pm["N0"],                                   # nu1
+            pm["N_recover"]    / pm["N0"],                                   # nu2
+            (pm["t_bottleneck_start"] - pm["t_bottleneck_end"]) / (2*pm["N0"]),  # T1
+            pm["t_bottleneck_end"] / (2 * pm["N0"]),                          # T2
+            pm["N0"],                                                         # Ne
         ]
-        keys = ["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"]
+        keys   = ["N_bottleneck", "N_recover", "t_bottleneck_start", "t_bottleneck_end", "N0"]
         rtypes = ["nu", "nu", "T", "T", "Ne"]
+
+        # If ground-truth sampled_params are provided, fix nu1 and Ne
+        if sampled_params and all(k in sampled_params for k in ("N0", "N_bottleneck")):
+            nu1_fixed = float(sampled_params["N_bottleneck"]) / float(sampled_params["N0"])
+            Ne_fixed  = float(sampled_params["N0"])
+            fixed_params = [nu1_fixed, None, None, None, Ne_fixed]
+            # Also seed p0 with the fixed values to aid convergence
+            p0[0] = nu1_fixed
+            p0[4] = Ne_fixed
+        else:
+            logging.info("Bottleneck optimisation without usable sampled_params – no fixed parameters.")
     else:
         logging.warning("Optimisation for model '%s' not implemented - writing placeholder", model)
         pickle.dump({"best_params": {}, "best_lls": float("nan")}, best_pkl.open("wb"))
@@ -167,7 +197,12 @@ def run_moments_ld_optimization(cfg: dict, mv: dict,
 
     try:
         opt, ll = moments.LD.Inference.optimize_log_lbfgsb(
-            p0, [mv["means"], mv["varcovs"]], [demo_func], rs=r_vec, verbose=1,
+            p0,
+            [mv["means"], mv["varcovs"]],
+            [demo_func],
+            rs=r_vec,
+            verbose=1,
+            fixed_params=fixed_params,  # may be None (harmless) or a list
         )
         phys = moments.LD.Util.rescale_params(opt, rtypes)
         best = dict(zip(keys, phys))

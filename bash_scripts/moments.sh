@@ -18,7 +18,7 @@ BATCH_SIZE=10          # number of (sim,opt) pairs this array task handles
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"

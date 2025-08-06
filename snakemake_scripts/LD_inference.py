@@ -102,9 +102,12 @@ def main():
     except Exception as e:
         logging.warning("Failed to generate comparison plot: %s", e)
 
-    # Optimize model
     try:
-        run_moments_ld_optimization(cfg, mv, sim_dir, r_bins)
+        if cfg.get("demographic_model") == "bottleneck":
+            run_moments_ld_optimization(cfg, mv, sim_dir, r_bins,
+                                        sampled_params=sampled_params)
+        else:
+            run_moments_ld_optimization(cfg, mv, sim_dir, r_bins)
     except Exception as e:
         logging.warning("Optimization failed: %s", e)
 
