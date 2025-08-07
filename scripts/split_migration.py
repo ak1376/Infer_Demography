@@ -1,178 +1,202 @@
 #!/usr/bin/env python3
 """
-split_migration.py – Ray-parallel runner with toggle-able Moments / Dadi
-=======================================================================
+window_sim.py – windows ⇒ LD stats ⇒ comparison PDF ⇒ moments‑LD optimisation
+==============================================================================
 
-Outputs
--------
-experiments/split_migration/runs/run_0001/…
-experiments/split_migration/inferences/scatter_{moments,dadi}_vs_true.png
+* Idempotent – skips work when outputs already exist.
+* Ray‑parallel – replicate × window jobs run concurrently.
+* Writes <model>_comparison.pdf **before** optimisation (true parameters).
+* Optimisation only for *split_isolation* (cached in best_fit.pkl).
 """
 from __future__ import annotations
-import argparse, json, pickle, sys, os
+import argparse, importlib, json, logging, pickle, subprocess, sys
 from pathlib import Path
-from typing  import Dict, Any, Tuple, List
+from typing import Dict, List
 
 import numpy as np
+import moments
 import matplotlib.pyplot as plt
-import demesdraw, moments, ray
+import ray
 
-# ── project paths ──────────────────────────────────────────────────────
+# ─── project paths ─────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC          = PROJECT_ROOT / "src"
-EXPERIMENTS  = PROJECT_ROOT / "experiments"
-sys.path.append(str(SRC))                        # import local modules
+SCRIPTS_DIR  = PROJECT_ROOT / "snakemake_scripts"
+SRC_DIR      = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-from simulation        import split_migration_model, simulation, create_SFS
-from moments_inference import fit_model as moments_fit, save_scatterplots
-from dadi_inference    import fit_model as dadi_fit
+from Moments_LD_theoretical import split_asym_mig_MomentsLD
 
-PARAM_NAMES = ["N0", "N1", "N2", "m12", "m21", "t_split"]
+SIM_SCRIPT = SCRIPTS_DIR / "simulation.py"
+WIN_SCRIPT = SCRIPTS_DIR / "simulate_window.py"
+LD_SCRIPT  = SCRIPTS_DIR / "compute_ld_window.py"
 
-# ── Ray init (no code cloning, just PYTHONPATH) ────────────────────────
-ray.init(
-    logging_level="ERROR",
-    runtime_env={"env_vars": {"PYTHONPATH": f"{PROJECT_ROOT}/src"}},
-    ignore_reinit_error=True,
-    num_cpus=5,  # adjust based on your system; 5 is a good default for 8-core CPUs
-)
-
-# ── helpers ────────────────────────────────────────────────────────────
-def _sample_priors(priors: Dict[str, list[float]],
-                   rng: np.random.Generator) -> Dict[str, float]:
-    return {k: rng.uniform(*b) for k, b in priors.items()}
-
-def _midpoint(priors: Dict[str, list[float]]) -> Dict[str, float]:
-    return {k: (lo + hi) / 2 for k, (lo, hi) in priors.items()}
-
-def _attach_ll(vecs: List[np.ndarray], lls: List[float]) -> List[dict]:
-    return [{**dict(zip(PARAM_NAMES, v.tolist())), "loglik": ll}
-            for v, ll in zip(vecs, lls)]
-
-# ── Ray tasks ──────────────────────────────────────────────────────────
-@ray.remote
-def _simulate(params: Dict[str, float], cfg: Dict[str, Any]):
-    ts, _ = simulation(params, "split_migration", cfg)
-    return ts, create_SFS(ts)
-
-@ray.remote
-def _moments(sfs, cfg, start_dict, params):
-    return moments_fit(
-        sfs,
-        start_dict=start_dict,
-        demo_model=split_migration_model,
-        experiment_config=cfg
+# ─── helpers ───────────────────────────────────────────────────────────────
+def _ensure_sampled_params(cfg_file: Path, exp_root: Path, rep: int) -> None:
+    sim_root = exp_root / "simulations"
+    pkl      = sim_root / str(rep) / "sampled_params.pkl"
+    if pkl.exists():
+        return
+    sim_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            sys.executable, str(SIM_SCRIPT),
+            "--simulation-dir",    str(sim_root),
+            "--experiment-config", str(cfg_file),
+            "--model-type",        json.loads(cfg_file.read_text())["demographic_model"],
+            "--simulation-number", str(rep),
+        ],
+        check=True,
     )
 
-@ray.remote
-def _dadi(sfs, cfg, start_dict, params):
-    return dadi_fit(
-        sfs,
-        start_dict=start_dict,
-        demo_model=split_migration_model,
-        experiment_config=cfg
-    )
+def _run_one_window_and_ld(cfg: Path, exp_root: Path, rep: int,
+                           win: int, r_bins: str):
+    sim_dir = exp_root / "simulations" / str(rep)
+    win_dir = exp_root / "inferences" / f"sim_{rep}" / "MomentsLD" / "windows"
+    win_dir.mkdir(parents=True, exist_ok=True)
 
-# ── one replicate ──────────────────────────────────────────────────────
-@ray.remote
-def _run_one(idx: int, params: Dict[str, float],
-             cfg: Dict[str, Any], base_dir: str,
-             run_mom: bool, run_dadi: bool):
+    if not (win_dir / f"window_{win}.vcf.gz").exists():
+        subprocess.run(
+            [
+                sys.executable, str(WIN_SCRIPT),
+                "--sim-dir", str(sim_dir),
+                "--rep-index", str(win),
+                "--config-file", str(cfg),
+                "--out-dir", str(win_dir),
+            ],
+            check=True,
+        )
 
-    run_dir  = Path(base_dir) / f"run_{idx:04d}"
-    data_dir = run_dir / "data"; data_dir.mkdir(parents=True, exist_ok=True)
+    ld_root = exp_root / "inferences" / f"sim_{rep}" / "MomentsLD"
+    ld_pkl  = ld_root / "LD_stats" / f"LD_stats_window_{win}.pkl"
+    if not ld_pkl.exists():
+        subprocess.run(
+            [
+                sys.executable, str(LD_SCRIPT),
+                "--sim-dir", str(ld_root),
+                "--window-index", str(win),
+                "--config-file", str(cfg),
+                "--r-bins", r_bins,
+            ],
+            check=True,
+        )
 
-    ts, sfs = ray.get(_simulate.remote(params, cfg))
+def _plot_comparison(cfg_json: dict, sampled_params: dict,
+                     mv: dict, r_vec: np.ndarray, out_dir: Path):
+    pdf = out_dir / f"{cfg_json['demographic_model']}_comparison.pdf"
+    if pdf.exists():
+        return
+    demo_mod  = importlib.import_module("simulation")
+    demo_func = getattr(demo_mod, f"{cfg_json['demographic_model']}_model")
+    graph     = demo_func(sampled_params)
 
-    ax = demesdraw.tubes(split_migration_model(params))
-    ax.set_xlabel("Time"); ax.set_ylabel("N")
-    plt.savefig(data_dir / "demes_split_migration_model.png",
-                dpi=300, bbox_inches="tight")
-    plt.close(ax.figure)
+    demes = list(cfg_json["num_samples"].keys())
+    y     = moments.Demes.LD(graph, sampled_demes=demes,
+                             rho=4*sampled_params["N0"]*r_vec)
+    y     = moments.LD.LDstats(
+        [(yl+yr)/2 for yl,yr in zip(y[:-2], y[1:-1])] + [y[-1]],
+        num_pops=y.num_pops, pop_ids=y.pop_ids)
+    y     = moments.LD.Inference.sigmaD2(y)
 
-    pickle.dump(params, (data_dir / "sampled_params.pkl").open("wb"))
-    pickle.dump(sfs,    (data_dir / "split_migration_SFS.pkl").open("wb"))
-    ts.dump(data_dir / "split_migration_tree_sequence.trees")
+    stats = [
+        ["DD_0_0"], ["DD_0_1"], ["DD_1_1"],
+        ["Dz_0_0_0"], ["Dz_0_1_1"], ["Dz_1_1_1"],
+        ["pi2_0_0_1_1"], ["pi2_0_1_0_1"], ["pi2_1_1_1_1"],
+    ]
+    labs  = [
+        [r"$D_0^2$"], [r"$D_0D_1$"], [r"$D_1^2$"],
+        [r"$Dz_{0,0,0}$"], [r"$Dz_{0,1,1}$"], [r"$Dz_{1,1,1}$"],
+        [r"$\pi_{2;0,0,1,1}$"], [r"$\pi_{2;0,1,0,1}$"],
+        [r"$\pi_{2;1,1,1,1}$"],
+    ]
+    fig = moments.LD.Plotting.plot_ld_curves_comp(
+        y, mv["means"][:-1], mv["varcovs"][:-1],
+        rs=r_vec, stats_to_plot=stats, labels=labs,
+        rows=3, plot_vcs=True, show=False, fig_size=(6, 4))
+    fig.savefig(pdf, dpi=300); plt.close(fig)
+    logging.info("PDF written → %s", pdf.name)
 
-    start_dict = _midpoint(cfg["priors"])
+def _aggregate_and_optimise(cfg: Path, exp_root: Path, rep: int, r_bins: str):
+    root   = exp_root / "inferences" / f"sim_{rep}" / "MomentsLD"
+    statsD = root / "LD_stats"
+    mean   = root / "means.varcovs.pkl"
+    boot   = root / "bootstrap_sets.pkl"
+    best   = root / "best_fit.pkl"
 
-    # per-replicate log dirs
-    mom_log = run_dir / "inferences/logs/moments"
-    dadi_log = run_dir / "inferences/logs/dadi"
+    ld_stats = {int(p.stem.split("_")[-1]): pickle.loads(p.read_bytes())
+                for p in statsD.glob("LD_stats_window_*.pkl")}
+    if not ld_stats:
+        logging.warning("rep %s: no LD pickles – skip aggregation", rep)
+        return
 
-    mom_ref = dadi_ref = None
-    if run_mom:
-        mom_cfg = {**cfg, "log_dir": str(mom_log)}
-        mom_ref = _moments.remote(sfs, mom_cfg, start_dict, params)
-    if run_dadi:
-        dadi_cfg = {**cfg, "log_dir": str(dadi_log)}
-        dadi_ref = _dadi.remote(sfs, dadi_cfg, start_dict, params)
+    mv = moments.LD.Parsing.bootstrap_data(ld_stats)
+    pickle.dump(mv, mean.open("wb"))
+    pickle.dump(moments.LD.Parsing.get_bootstrap_sets(ld_stats), boot.open("wb"))
 
-    mom_dicts = dadi_dicts = []
-    if mom_ref:
-        fits, lls = ray.get(mom_ref)
-        mom_dicts = _attach_ll(fits, lls)
-        (run_dir / "inferences/moments").mkdir(parents=True, exist_ok=True)
-        pickle.dump(mom_dicts, (run_dir / "inferences/moments/fit_params.pkl").open("wb"))
-    if dadi_ref:
-        fits, lls = ray.get(dadi_ref)
-        dadi_dicts = _attach_ll(fits, lls)
-        (run_dir / "inferences/dadi").mkdir(parents=True, exist_ok=True)
-        pickle.dump(dadi_dicts, (run_dir / "inferences/dadi/fit_params.pkl").open("wb"))
+    cfg_json = json.loads(cfg.read_text())
+    r_vec    = np.array([float(x) for x in r_bins.split(',')])
+    params   = pickle.loads(
+        (exp_root / "simulations" / str(rep) / "sampled_params.pkl").read_bytes())
+    _plot_comparison(cfg_json, params, mv, r_vec, root)
 
-    return mom_dicts, dadi_dicts, params
+    if cfg_json["demographic_model"] != "split_migration" or best.exists():
+        return
 
-# ── CLI driver ─────────────────────────────────────────────────────────
-def _bool(s: str) -> bool:               # allow =False,0,no
-    return s.lower() not in {"false", "0", "no"}
+    priors = cfg_json["priors"]; pm = {k:(lo+hi)/2 for k,(lo,hi) in priors.items()}
+    p0 = [pm["N1"]/pm["N0"], pm["N2"]/pm["N0"],
+          2*pm["m12"]*pm["N0"], 2*pm["m21"]*pm["N0"], pm["t_split"]/(2*pm["N0"]), pm["N0"]]
+
+    opt, ll = moments.LD.Inference.optimize_log_lbfgsb(
+        p0, [mv["means"], mv["varcovs"]],
+        [split_asym_mig_MomentsLD],
+        rs=r_vec, verbose=1)
+    best_phys = dict(zip(["N1","N2","m12","m21", "t_split", "N0"],
+                         moments.LD.Util.rescale_params(opt, ["nu","nu","m","m","T","Ne"])))
+    pickle.dump({"best_params": best_phys, "best_lls": ll}, best.open("wb"))
+    logging.info("rep %s: optimisation finished (LL=%.2f)", rep, ll)
+
+# ─── CLI / main ────────────────────────────────────────────────────────────
+def _parse_args():
+    p = argparse.ArgumentParser("windows ⇒ LD ⇒ PDF ⇒ optimisation; Ray‑parallel")
+    p.add_argument("-c","--config", required=True, type=Path)
+    p.add_argument("-e","--exp-root", required=True, type=Path)
+    p.add_argument("-r","--rep-index", type=int, nargs="+", default=[0],
+                   help="Replicate indices, e.g. -r 0 1 2")
+    p.add_argument("-n","--window-index", type=int, nargs="+", default=[0],
+                   help="Window indices, e.g. -n 0 1 2 …")
+    p.add_argument("--r-bins", required=True)
+    p.add_argument("--ray-address", default=None)
+    p.add_argument("--no-ray", action="store_true")
+    p.add_argument("-v","--verbose", action="count", default=0)
+    return p.parse_args()
 
 def main():
-    cli = argparse.ArgumentParser("Split-migration runner (Ray)")
-    cli.add_argument("--experiment_config", required=True, type=Path)
-    cli.add_argument("--num_draws", type=int)
-    cli.add_argument("--run_moments", type=_bool, default=True)
-    cli.add_argument("--run_dadi",    type=_bool, default=False)
-    args = cli.parse_args()
+    a = _parse_args()
+    logging.basicConfig(
+        level=logging.WARNING - 10*min(a.verbose,2),
+        format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 
-    cfg    = json.loads(args.experiment_config.read_text())
-    priors = cfg["priors"]
-    draws  = args.num_draws or cfg.get("num_draws", 1)
-    rng    = np.random.default_rng(cfg.get("seed"))
+    # ensure sampled_params for every replicate
+    for rep in a.rep_index:
+        _ensure_sampled_params(a.config, a.exp_root, rep)
 
-    runs_root = EXPERIMENTS / cfg["demographic_model"] / "runs"
-    runs_root.mkdir(parents=True, exist_ok=True)
+    # ---------- window & LD tasks -----------------------------------------
+    if a.no_ray:
+        for rep in a.rep_index:
+            for win in a.window_index:
+                _run_one_window_and_ld(a.config, a.exp_root, rep, win, a.r_bins)
+    else:
+        ray.init(address=a.ray_address, ignore_reinit_error=True)
+        tasks = [ray.remote(_run_one_window_and_ld).remote(
+                    a.config, a.exp_root, rep, win, a.r_bins)
+                 for rep in a.rep_index for win in a.window_index]
+        ray.get(tasks)
+        ray.shutdown()
 
-    futures = [_run_one.remote(i,
-                               _sample_priors(priors, rng),
-                               cfg, str(runs_root),
-                               args.run_moments, args.run_dadi)
-               for i in range(1, draws + 1)]
+    # ---------- aggregation & optimisation per replicate ------------------
+    for rep in a.rep_index:
+        _aggregate_and_optimise(a.config, a.exp_root, rep, a.r_bins)
 
-    all_true, all_mom, all_dadi = [], [], []
-    for mom, dadi, true_par in ray.get(futures):
-        if mom:  all_mom.extend(mom)
-        if dadi: all_dadi.extend(dadi)
-        all_true.extend([true_par] * max(len(mom), len(dadi), 1))
-
-    inf_dir = EXPERIMENTS / cfg["demographic_model"] / "inferences"
-    inf_dir.mkdir(parents=True, exist_ok=True)
-
-    if all_mom:
-        save_scatterplots(
-            all_true, all_mom,
-            [d["loglik"] for d in all_mom],
-            PARAM_NAMES,
-            inf_dir / "scatter_moments_vs_true.png",
-            label="moments",
-        )
-    if all_dadi:
-        save_scatterplots(
-            all_true, all_dadi,
-            [d["loglik"] for d in all_dadi],
-            PARAM_NAMES,
-            inf_dir / "scatter_dadi_vs_true.png",
-            label="dadi",
-        )
-
-if __name__ == "__main__" and os.getenv("RUNNING_RAY_WORKER") != "1":
+# ─── entry ────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
     main()

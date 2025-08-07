@@ -17,7 +17,7 @@ mkdir -p logs
 ##############################################################################
 # 1. single place to define the config file for **all** stages
 ##############################################################################
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
 export CFG_PATH        # every sbatch inherits this
 
 ##############################################################################

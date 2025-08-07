@@ -20,7 +20,7 @@ def split_asym_mig_MomentsLD(params, rho=None, theta=0.001, pop_ids=None):
     :param pop_ids: List of population IDs of length 1.
     :type pop_ids: lits of str, optional
     """
-    nu1, nu2, T, m12, m21 = params
+    nu1, nu2, m12, m21, T = params
 
     Y = snm(rho=rho, theta=theta)
     Y.integrate([nu1, nu2], T, rho=rho, theta=theta, m=[[0, m12], [m21, 0]])

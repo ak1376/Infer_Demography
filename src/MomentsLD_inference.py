@@ -89,7 +89,7 @@ def write_comparison_pdf(cfg: dict, sampled_params: dict, mv: dict,
             [r"$\pi_{2;0,0,0,0}$"],
         ]
 
-    elif cfg['demographic_model'] in ["split_isolation_model", "split_migration_model", "island_model"]:
+    elif cfg['demographic_model'] in ["split_isolation", "split_migration", "island"]:
         stats_to_plot = [
             ["DD_0_0"],
             ["DD_0_1"],
@@ -190,6 +190,21 @@ def run_moments_ld_optimization(
             p0[4] = Ne_fixed
         else:
             logging.info("Bottleneck optimisation without usable sampled_params – no fixed parameters.")
+
+    elif model == "split_migration":
+        from Moments_LD_theoretical import split_asym_mig_MomentsLD
+        demo_func = split_asym_mig_MomentsLD
+        p0 = [
+            pm["N1"] / pm["N0"],
+            pm["N2"] / pm["N0"],
+            2 * pm["m12"] * pm["N0"],
+            2 * pm["m21"] * pm["N0"],
+            pm["t_split"] / (2 * pm["N0"]),
+            pm["N0"],
+        ]
+        keys   = ["N1", "N2", "m12", "m21", "t_split", "N0"]
+        rtypes = ["nu", "nu", "m", "m", "T", "Ne"]
+
     else:
         logging.warning("Optimisation for model '%s' not implemented - writing placeholder", model)
         pickle.dump({"best_params": {}, "best_lls": float("nan")}, best_pkl.open("wb"))

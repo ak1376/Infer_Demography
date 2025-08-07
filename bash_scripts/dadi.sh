@@ -19,7 +19,7 @@ set -euo pipefail
 BATCH_SIZE=10
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"

@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_split_migration.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
