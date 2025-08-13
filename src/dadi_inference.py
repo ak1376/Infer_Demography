@@ -43,13 +43,24 @@ def diffusion_sfs_dadi(
     #     "t_bottleneck_end": params[4]
     # }
 
+    # p_dict = {
+    #     "N0": params[0], 
+    #     "N1": params[1],
+    #     "N2": params[2],
+    #     "m12": params[3],
+    #     "m21": params[4],
+    #     "t_split": params[5]
+    # }
+
+    # Drosophila three epoch model parameters
     p_dict = {
-        "N0": params[0], 
-        "N1": params[1],
-        "N2": params[2],
-        "m12": params[3],
-        "m21": params[4],
-        "t_split": params[5]
+        "N0": params[0],                    # Ancestral population size
+        "AFR": params[1],                   # Post expansion African population size  
+        "EUR_bottleneck": params[2],        # European bottleneck pop size
+        "EUR_recover": params[3],           # Modern European population size after recovery
+        "T_AFR_expansion": params[4],       # Expansion of population in Africa
+        "T_AFR_EUR_split": params[5],       # African-European Divergence
+        "T_EUR_expansion": params[6]        # European population expansion
     }
     graph  = demo_model(p_dict)
 

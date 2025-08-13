@@ -89,7 +89,7 @@ def write_comparison_pdf(cfg: dict, sampled_params: dict, mv: dict,
             [r"$\pi_{2;0,0,0,0}$"],
         ]
 
-    elif cfg['demographic_model'] in ["split_isolation", "split_migration", "island"]:
+    elif cfg['demographic_model'] in ["split_isolation", "split_migration", "drosophila_three_epoch"]:
         stats_to_plot = [
             ["DD_0_0"],
             ["DD_0_1"],
@@ -205,6 +205,25 @@ def run_moments_ld_optimization(
         keys   = ["N1", "N2", "m12", "m21", "t_split", "N0"]
         rtypes = ["nu", "nu", "m", "m", "T", "Ne"]
 
+    elif model == "drosophila_three_epoch":
+        from Moments_LD_theoretical import drosophila_three_epoch_MomentsLD as demo_func
+
+        p0 = [
+            pm["N0"] / pm["N0"],                 # nu_anc   == 1
+            pm["AFR"]          / pm["N0"],       # nu_afr
+            pm["EUR_bottleneck"]/ pm["N0"],      # nu_eur_bot
+            pm["EUR_recover"]   / pm["N0"],      # nu_eur_mod
+            pm["T_AFR_expansion"]   / (2*pm["N0"]),
+            pm["T_AFR_EUR_split"]   / (2*pm["N0"]),
+            pm["T_EUR_expansion"]   / (2*pm["N0"]),
+            2*pm.get("m_afreuro", 0)*pm["N0"],   # m12 (AFR←EUR); default 0
+            2*pm.get("m_euroafr", 0)*pm["N0"],   # m21 (EUR←AFR); default 0
+        ]
+        keys   = ["nu_anc", "nu_afr", "nu_eur_bot", "nu_eur_mod",
+                "T_afr_exp", "T_split", "T_eur_exp",
+                "m12", "m21", "N0"]
+        rtypes = ["nu", "nu", "nu", "nu", "T", "T", "T", "m", "m", "Ne"]
+    
     else:
         logging.warning("Optimisation for model '%s' not implemented - writing placeholder", model)
         pickle.dump({"best_params": {}, "best_lls": float("nan")}, best_pkl.open("wb"))

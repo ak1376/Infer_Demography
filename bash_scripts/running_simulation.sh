@@ -18,7 +18,8 @@ BATCH_SIZE=1
 TOTAL_TASKS=1000
 
 # the master script exports CFG_PATH; abort if it is not set
-: "${CFG_PATH:?CFG_PATH is not defined}"
+# : "${CFG_PATH:?CFG_PATH is not defined}"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 EXPERIMENT_CONFIG_FILE="$CFG_PATH"
 
 # Extract the values from the JSON config

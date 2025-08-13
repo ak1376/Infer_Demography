@@ -27,4 +27,76 @@ def split_asym_mig_MomentsLD(params, rho=None, theta=0.001, pop_ids=None):
     Y.pop_ids = pop_ids
     return Y
 
+def drosophila_three_epoch_MomentsLD(
+    params,
+    rho=None,
+    theta=0.001,
+    pop_ids=("AFR", "EUR"),
+):
+    """
+    Out-of-Africa three-epoch model for LD inference.
 
+    Parameters
+    ----------
+    params : sequence
+        (nu_afr, nu_eur_bot, nu_eur_mod,
+         T_afr_exp, T_split, T_eur_exp,
+         m12, m21, N0)
+
+        • all nus are ratios to N0  
+        • all times are already divided by 2·N0  
+        • m12 / m21 are 2·N0·m
+
+        The last element (N0) is *accepted* but not required inside the ODE
+        – it is kept so you can write the best-fit back to file un-scaled.
+    """
+    (nu_afr,
+     nu_eur_bot,
+     nu_eur_mod,
+     T_afr_exp,
+     T_split,
+     T_eur_exp,
+     m12,
+     m21,
+     N0) = params
+
+    # -------- 1  ancestral equilibrium (single pop, size ratio 1) ----------
+    nu_anc = 1.0
+    Y = Numerics.steady_state([nu_anc], rho=rho, theta=theta)
+    Y = LDstats(Y, num_pops=1)
+
+    # -------- 2  African expansion (still one pop) -------------------------
+    dur_afr_exp = T_afr_exp - T_split
+    if dur_afr_exp < 0:
+        raise ValueError("Require T_afr_exp ≥ T_split")
+    if dur_afr_exp > 0:
+        Y.integrate([nu_afr], dur_afr_exp, rho=rho, theta=theta)
+
+    # -------- 3  split AFR / EUR ------------------------------------------
+    Y = Y.split(0)
+
+    # -------- 4  European bottleneck epoch --------------------------------
+    dur_eur_bot = T_split - T_eur_exp
+    if dur_eur_bot < 0:
+        raise ValueError("Require T_split ≥ T_eur_exp")
+    if dur_eur_bot > 0:
+        Y.integrate(
+            [nu_afr, nu_eur_bot],
+            dur_eur_bot,
+            m=[[0, m12], [m21, 0]],
+            rho=rho,
+            theta=theta,
+        )
+
+    # -------- 5  modern epoch (EUR recovery) -------------------------------
+    if T_eur_exp > 0:
+        Y.integrate(
+            [nu_afr, nu_eur_mod],
+            T_eur_exp,
+            m=[[0, m12], [m21, 0]],
+            rho=rho,
+            theta=theta,
+        )
+
+    Y.pop_ids = list(pop_ids)
+    return Y
