@@ -17,7 +17,7 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG      = "config_files/experiment_config_split_migration.json"
 
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -132,56 +132,82 @@ rule simulate:
         touch "{output.done}"
         """
 
-
-
 ##############################################################################
-# RULE INFER_MOMENTS 
+# RULE infer_moments  – custom NLopt Poisson SFS optimisation (moments)
 ##############################################################################
 rule infer_moments:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"
-    output: 
-        f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
-    params: 
-        run_dir=lambda w: RUN_DIR(w.sid, w.opt), 
-        cfg    = EXP_CFG
-
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
+    output:
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
+    params:
+        run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
+        cfg      = EXP_CFG,
+        model_py = (
+            f"src.simulation:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "src.simulation:drosophila_three_epoch"
+        ),
+        maxeval  = 800,
+        rtol     = 1e-8,
+        fix      = ""     # e.g. '--fix N0=10000 --fix m12=0.0'
     threads: 8
-    shell:  
-        """
-        python "{INFER_SCRIPT}" \
-            --run-dir        "{params.run_dir}" \
-            --config-file    "{params.cfg}" \
-            --sfs            "{input.sfs}" \
-            --sampled-params "{input.params}" \
-            --rep-index      {wildcards.opt} \
-            --run-moments    True  --run-dadi False
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/moments_dadi_inference.py" \
+          --mode moments \
+          --sfs-file "{input.sfs}" \
+          --config "{params.cfg}" \
+          --model-py "src.simulation:split_migration_model" \
+          --outdir "{params.run_dir}/inferences" \
+          --maxeval {params.maxeval} \
+          --rtol {params.rtol} \
+          {params.fix}
+
+        cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
         """
 
 ##############################################################################
-# RULE infer_dadi – inference using dadi                                    #
-##############################################################################        
+# RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
+##############################################################################
 rule infer_dadi:
-    input:  
+    input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"
-    output: 
-        f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
-    params: 
-        run_dir=lambda w: RUN_DIR(w.sid, w.opt),
-        cfg    = EXP_CFG
-
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
+    output:
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
+    params:
+        run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
+        cfg      = EXP_CFG,
+        model_py = (
+            f"src.simulation:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "src.simulation:drosophila_three_epoch"
+        ),
+        maxeval  = 800,
+        rtol     = 1e-8,
+        fix      = "",     # e.g. '--fix N0=10000 --fix m12=0.0'
+        algo     = ""      # '--use-bobyqa' if you want derivative-free for dadi
     threads: 8
-    shell: 
-        """
-        python "{INFER_SCRIPT}" \
-            --run-dir        "{params.run_dir}" \
-            --config-file    "{params.cfg}" \
-            --sfs            "{input.sfs}" \
-            --sampled-params "{input.params}" \
-            --rep-index      {wildcards.opt} \
-            --run-moments    False --run-dadi True
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/moments_dadi_inference.py" \
+          --mode dadi \
+          --sfs-file "{input.sfs}" \
+          --config "{params.cfg}" \
+          --model-py "src.simulation:split_migration_model" \
+          --outdir "{params.run_dir}/inferences" \
+          --maxeval {params.maxeval} \
+          --rtol {params.rtol} \
+          {params.algo} \
+          {params.fix}
+
+        cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
         """
 
 ##############################################################################
