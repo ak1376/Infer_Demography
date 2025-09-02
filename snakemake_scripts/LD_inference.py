@@ -1,118 +1,66 @@
-#!/usr/bin/env python3
-"""Run a full moments-LD optimisation for **one** run_XXXX directory (modular, fault-tolerant)."""
+#!/usr/bin/env/snakemake_scripts/LD_inference.py
 
 from __future__ import annotations
-from pathlib import Path
-import sys
-
-# Add src/ directory to sys.path
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-sys.path.insert(0, str(SRC_DIR))
-
 import argparse
 import logging
-import pickle
+import sys
+from pathlib import Path
 
 import numpy as np
 
+# >>> make src importable <<<
+ROOT = Path(__file__).resolve().parents[1]   # project root
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+# project-local imports
 from MomentsLD_inference import (
-    load_sampled_params,
     load_config,
-    aggregate_ld_stats,
-    write_comparison_pdf,
-    run_moments_ld_optimization,
+    load_sampled_params,
+    aggregate_ld_statistics,
+    create_comparison_plot,
+    run_momentsld_inference,
+    DEFAULT_R_BINS,
 )
 
-
-def infer_r_bins(ld_dir: Path) -> np.ndarray:
-    """Extract r_bins as bin edges from one of the LD_stats .pkl files."""
-    try:
-        ld_files = sorted(ld_dir.glob("LD_stats_window_*.pkl"))
-        if not ld_files:
-            raise FileNotFoundError(f"No LD_stats_window_*.pkl files found in {ld_dir}")
-        with open(ld_files[0], "rb") as f:
-            ld_data = pickle.load(f)
-        bin_tuples = ld_data["bins"]  # list of (left, right) tuples
-        left_edge = bin_tuples[0][0]
-        right_edges = [right for _, right in bin_tuples]
-        r_bins = np.array([left_edge] + right_edges)
-        return r_bins
-    except Exception as e:
-        raise RuntimeError(f"Could not extract r_bins: {e}")
-
-
-
-# ─── Main ───────────────────────────────────────────────────────────────────
+def _parse_args():
+    p = argparse.ArgumentParser("Aggregate LD stats, make comparison PDF, run Moments-LD optimisation")
+    p.add_argument("--run-dir",      required=True, type=Path, help="experiments/<MODEL>/simulations/<sid>")
+    p.add_argument("--output-root",  required=True, type=Path, help="experiments/<MODEL>/inferences/sim_<sid>/MomentsLD")
+    p.add_argument("--config-file",  required=True, type=Path)
+    p.add_argument("--r-bins",       type=str, default=None,
+                   help="Comma-separated r-bin edges. If omitted, uses DEFAULT_R_BINS")
+    p.add_argument("-v","--verbose", action="count", default=0)
+    return p.parse_args()
 
 def main():
-    cli = argparse.ArgumentParser("moments‑LD optimise one run (modular)")
-    cli.add_argument("--run-dir", type=Path, required=True,
-                     help="existing experiments/.../run_XXXX folder")
-    cli.add_argument("--config-file", type=Path, required=True)
-    cli.add_argument("--output-root", type=Path, required=True)
-    args = cli.parse_args()
+    a = _parse_args()
+    logging.basicConfig(
+        level=logging.WARNING - 10*min(a.verbose,2),
+        format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    cfg = load_config(a.config_file)
+    sampled_params = load_sampled_params(a.run_dir)
 
-    try:
-        run_idx = int(args.run_dir.name.split("_")[-1])
-    except (IndexError, ValueError):
-        logging.error("Could not parse run index from directory name: %s", args.run_dir.name)
-        return
+    # r-bins to use for both comparison PDF and optimisation
+    if a.r_bins:
+        r_vec = np.array([float(x) for x in a.r_bins.split(",")], float)
+    else:
+        r_vec = DEFAULT_R_BINS
 
-    sim_dir = args.output_root
-    sim_dir.mkdir(parents=True, exist_ok=True)
+    # ensure output root exists
+    a.output_root.mkdir(parents=True, exist_ok=True)
 
-    try:
-        sampled_params = load_sampled_params(args.run_dir)
-    except FileNotFoundError:
-        logging.error("Missing sampled_params.pkl in %s", args.run_dir)
-        return
-    except Exception as e:
-        logging.exception("Failed to load sampled parameters: %s", e)
-        return
+    # 1) aggregate LD pickles → means/varcovs/bootstrap_sets
+    empirical_data = aggregate_ld_statistics(a.output_root)
 
-    try:
-        cfg = load_config(args.config_file)
-    except Exception as e:
-        logging.exception("Failed to load config: %s", e)
-        return
+    # 2) empirical vs theoretical PDF (skips if exists)
+    plot_file = a.output_root / "empirical_vs_theoretical_comparison.pdf"
+    create_comparison_plot(cfg, sampled_params, empirical_data, r_vec, plot_file)
 
-    try:
-        mv = aggregate_ld_stats(sim_dir)
-    except FileNotFoundError:
-        logging.error("Missing LD stats directory or files for %s", sim_dir)
-        return
-    except Exception as e:
-        logging.exception("Failed during LD aggregation: %s", e)
-        return
-
-    # Infer r_bins from LD_stats file
-    try:
-        ld_stats_dir = sim_dir / "LD_stats"
-        r_bins = infer_r_bins(ld_stats_dir)
-    except Exception as e:
-        logging.exception("Failed to extract r_bins: %s", e)
-        return
-
-    # Plot comparison PDF
-    try:
-        write_comparison_pdf(cfg, sampled_params, mv, r_bins, sim_dir)
-    except Exception as e:
-        logging.warning("Failed to generate comparison plot: %s", e)
-
-    try:
-        if cfg.get("demographic_model") == "bottleneck":
-            run_moments_ld_optimization(cfg, mv, sim_dir, r_bins,
-                                        sampled_params=sampled_params)
-        else:
-            run_moments_ld_optimization(cfg, mv, sim_dir, r_bins)
-    except Exception as e:
-        logging.warning("Optimization failed: %s", e)
-
-    print(f"✓ moments-LD finished for {sim_dir.relative_to(args.output_root.parent)}")
-
+    # 3) custom NLopt L-BFGS optimisation (skips if best_fit.pkl exists)
+    run_momentsld_inference(cfg, empirical_data, a.output_root, r_vec, sampled_params)
 
 if __name__ == "__main__":
     main()
