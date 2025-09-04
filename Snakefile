@@ -9,6 +9,15 @@ from snakemake.io import protected
 if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
     del sys.modules["bottleneck"]
 
+# ── additional fix for bottleneck version issues ──────────────────────────
+try:
+    import bottleneck
+    if not hasattr(bottleneck, '__version__'):
+        # Add a fake version to prevent pandas import errors
+        bottleneck.__version__ = "1.0.0"
+except ImportError:
+    pass
+
 configfile: "config_files/model_config.yaml"
 REG_TYPES = config["linear"]["types"]  # ["standard","ridge","lasso","elasticnet"]
 
@@ -150,8 +159,6 @@ rule infer_moments:
             if MODEL != "drosophila_three_epoch"
             else "src.simulation:drosophila_three_epoch"
         ),
-        maxeval  = 800,
-        rtol     = 1e-8,
         fix      = ""     # e.g. '--fix N0=10000 --fix m12=0.0'
     threads: 8
     shell:
@@ -164,8 +171,6 @@ rule infer_moments:
           --config "{params.cfg}" \
           --model-py "src.simulation:split_migration_model" \
           --outdir "{params.run_dir}/inferences" \
-          --maxeval {params.maxeval} \
-          --rtol {params.rtol} \
           {params.fix}
 
         cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
@@ -188,10 +193,7 @@ rule infer_dadi:
             if MODEL != "drosophila_three_epoch"
             else "src.simulation:drosophila_three_epoch"
         ),
-        maxeval  = 800,
-        rtol     = 1e-8,
         fix      = "",     # e.g. '--fix N0=10000 --fix m12=0.0'
-        algo     = ""      # '--use-bobyqa' if you want derivative-free for dadi
     threads: 8
     shell:
         r"""
@@ -203,9 +205,6 @@ rule infer_dadi:
           --config "{params.cfg}" \
           --model-py "src.simulation:split_migration_model" \
           --outdir "{params.run_dir}/inferences" \
-          --maxeval {params.maxeval} \
-          --rtol {params.rtol} \
-          {params.algo} \
           {params.fix}
 
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"

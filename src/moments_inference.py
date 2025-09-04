@@ -125,10 +125,19 @@ def fit_model(
     experiment_config: Dict,
     *,
     sampled_params: Dict | None = None,
+    fixed_params: Dict[str, float] | None = None,
 ) -> Tuple[List[np.ndarray], List[float]]:
     """
     Run a **single** moments optimisation and return the best parameter
     vector / log‑likelihood wrapped in 1‑element lists.
+    
+    Args:
+        sfs: Observed site frequency spectrum
+        start_dict: Starting parameter values
+        demo_model: Demographic model function  
+        experiment_config: Configuration dictionary
+        sampled_params: Legacy parameter for bottleneck model (kept for compatibility)
+        fixed_params: Dictionary of parameter names and values to fix during optimization
     """
     # ----- pull settings ------------------------------------------------
     priors = experiment_config["priors"]
@@ -150,9 +159,7 @@ def fit_model(
     upper_bounds = [priors[p][1] for p in param_names]
 
     # ----- single optimisation call ------------------------------------
-    import datetime, moments
-    from io import StringIO
-    from contextlib import redirect_stdout, redirect_stderr
+    import datetime
     from pathlib import Path
 
     log_dir  = Path(experiment_config.get("log_dir", ".")) / "moments"
@@ -162,35 +169,143 @@ def fit_model(
     # (optional) add a small perturbation; remove if you want deterministic starts
     seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
 
-    buf = StringIO()
-    with redirect_stdout(buf), redirect_stderr(buf):
-        xopt = moments.Inference.optimize_log_lbfgsb(
-            seed_vec,
-            sfs,
-            lambda p, n: _diffusion_sfs(
-                p, demo_model, param_names, sample_sizes, experiment_config
-            ),
-            multinom     = False,
-            verbose      = 1,
-            flush_delay  = 0.0,
-            maxiter      = 10_000,
-            full_output  = True,
-            lower_bound  = lower_bounds,
-            upper_bound  = upper_bounds,
-            fixed_params = [
-                sampled_params.get("N0"),
-                sampled_params.get("N_bottleneck"),
-                None, None, None,
-            ] if experiment_config['demographic_model'] == "bottleneck" else None,
+    # Handle fixed parameters ----------------------------------------------
+    import inference_utils
+    
+    fixed_params_list = None
+    if fixed_params:
+        # Use flexible parameter fixing
+        free_indices, fixed_indices, _ = inference_utils.build_fixed_param_mapper(
+            param_names, fixed_params
         )
+        
+        # Validate bounds for fixed parameters
+        inference_utils.validate_fixed_params_bounds(
+            fixed_params, param_names, lower_bounds, upper_bounds
+        )
+        
+        # Create fixed params list for moments
+        fixed_params_list = inference_utils.create_fixed_params_list_for_moments(
+            param_names, fixed_params
+        )
+        
+        print(f"  fixing parameters: {fixed_params}")
+        
+    elif experiment_config['demographic_model'] == "bottleneck" and sampled_params:
+        # Legacy bottleneck-specific fixing (kept for backwards compatibility)
+        fixed_params_list = [
+            sampled_params.get("N0"),
+            sampled_params.get("N_bottleneck"),
+            None, None, None,
+        ]
 
-    opt_params, ll_val = xopt[0], xopt[1]
+    # Custom NLopt optimization (based on original sfs_optimize_cli.py patterns)
+    import datetime
+    import nlopt
+    import numdifftools as nd
+    from pathlib import Path
+
+    log_dir  = Path(experiment_config.get("log_dir", ".")) / "moments"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "optim_single.txt"
+
+    # (optional) add a small perturbation; remove if you want deterministic starts
+    seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
+
+    # Convert to numpy arrays 
+    lb_full = np.array(lower_bounds, float)
+    ub_full = np.array(upper_bounds, float)
+    start_full = np.clip(seed_vec, lb_full, ub_full)
+    
+    # Prepare fixed parameters
+    fixed_by_name = fixed_params if fixed_params else {}
+    
+    # Build parameter packing for fixed parameters
+    fixed_idx = [i for i, n in enumerate(param_names) if n in fixed_by_name]
+    free_idx = [i for i, n in enumerate(param_names) if n not in fixed_by_name]
+    
+    # Initialize full parameter vector with fixed values
+    x_full0 = start_full.copy()
+    for i in fixed_idx:
+        x_full0[i] = float(fixed_by_name[param_names[i]])
+    
+    # Validate fixed parameter bounds
+    for i in fixed_idx:
+        v = x_full0[i]
+        if not (lb_full[i] <= v <= ub_full[i]):
+            raise ValueError(f"Fixed value {param_names[i]}={v} outside bounds [{lb_full[i]}, {ub_full[i]}].")
+    
+    print(f"  fixing parameters: {fixed_by_name}")
+    
+    # If all parameters are fixed, just evaluate and return
+    if len(free_idx) == 0:
+        opt_params = x_full0
+        expected = _diffusion_sfs(opt_params, demo_model, param_names, sample_sizes, experiment_config)
+        ll_val = float(np.sum(sfs * np.log(np.maximum(expected, 1e-300)) - expected))
+    else:
+        # Prepare free parameter optimization
+        lb_free = np.array([lb_full[i] for i in free_idx], float)
+        ub_free = np.array([ub_full[i] for i in free_idx], float)
+        x0_free = np.array([x_full0[i] for i in free_idx], float)
+        
+        def pack_free_to_full(x_free):
+            x_full = x_full0.copy()
+            for j, i in enumerate(free_idx):
+                x_full[i] = float(x_free[j])
+            return x_full
+        
+        def obj_free_log10(xlog10_free):
+            """Objective function in log10 space for free parameters"""
+            x_free = 10.0 ** np.asarray(xlog10_free, float)
+            x_full = pack_free_to_full(x_free)
+            try:
+                expected = _diffusion_sfs(x_full, demo_model, param_names, sample_sizes, experiment_config)
+                expected = np.maximum(expected, 1e-300)
+                ll = float(np.sum(sfs * np.log(expected) - expected))
+                return ll
+            except Exception as e:
+                print(f"Error in objective: {e}")
+                return -np.inf
+        
+        # Finite difference gradient
+        grad_fn = nd.Gradient(obj_free_log10, step=1e-4)
+        
+        def nlopt_objective(xlog10_free, grad):
+            ll = obj_free_log10(xlog10_free)
+            if grad.size > 0:
+                grad[:] = grad_fn(xlog10_free)
+            print(f"[LL={ll:.6g}] log10_free={np.array2string(np.asarray(xlog10_free), precision=4)}")
+            return ll
+        
+        # Set up NLopt optimizer
+        opt = nlopt.opt(nlopt.LD_LBFGS, len(free_idx))
+        opt.set_lower_bounds(np.log10(lb_free))
+        opt.set_upper_bounds(np.log10(ub_free))
+        opt.set_max_objective(nlopt_objective)
+        opt.set_ftol_rel(1e-8)
+        opt.set_maxeval(10000)
+        
+        try:
+            x_free_hat_log10 = opt.optimize(np.log10(x0_free))
+            ll_val = opt.last_optimum_value()
+            status = opt.last_optimize_result()
+        except Exception as e:
+            print(f"NLopt optimization failed: {e}")
+            x_free_hat_log10 = np.log10(x0_free)
+            ll_val = obj_free_log10(x_free_hat_log10)
+            status = nlopt.FAILURE
+        
+        # Convert back to full parameter space
+        x_free_hat = 10.0 ** x_free_hat_log10
+        opt_params = pack_free_to_full(x_free_hat)
 
     # write short optimiser log
     log_file.write_text(
-        "# moments single optimisation\n"
-        f"# finished: {datetime.datetime.now().isoformat(timespec='seconds')}\n\n"
-        + buf.getvalue()
+        "# moments custom NLopt optimisation\n"
+        f"# finished: {datetime.datetime.now().isoformat(timespec='seconds')}\n"
+        f"# status: {status}\n"
+        f"# best_ll: {ll_val}\n"
+        f"# opt_params: {opt_params}\n"
     )
 
     # ----- wrap & return ------------------------------------------------
