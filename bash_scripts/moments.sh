@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=moments_infer
-#SBATCH --array=0-99
+#SBATCH --array=0-9999
 #SBATCH --output=logs/moments_%A_%a.out
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=8:00:00
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1   # number of (sim,opt) pairs per array element
+BATCH_SIZE=10   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------

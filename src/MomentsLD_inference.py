@@ -21,7 +21,7 @@ import nlopt
 import numdifftools as nd
 
 # Default settings
-DEFAULT_R_BINS = np.concatenate(([0.0], np.logspace(-6, -3, 16)))
+DEFAULT_R_BINS = np.array([0, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3])
 JITTER = 1e-12  # numerical stability for matrix inversion
 CONVERGENCE_TOL = 1e-8
 

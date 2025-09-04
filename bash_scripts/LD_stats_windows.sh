@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ld_stats
-#SBATCH --array=0-999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=18:00:00
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1     # number of (sim,window) jobs per array task
+BATCH_SIZE=10     # number of (sim,window) jobs per array task
 # ----------------------------------------------------------------------------
 
 # -------- config & constants -----------------------------------------------

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=win_sim
-#SBATCH --array=0-999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
 #SBATCH --time=12:00:00
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-BATCH_SIZE=1
+BATCH_SIZE=10
 
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"

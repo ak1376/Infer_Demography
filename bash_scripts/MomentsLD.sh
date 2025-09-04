@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-99                # <— full range, no %MAX_CONCURRENT
+#SBATCH --array=0-999                # <— full range, no %MAX_CONCURRENT
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=5:00:00

@@ -17,7 +17,7 @@ mkdir -p logs
 ##############################################################################
 # 1. single place to define the config file for **all** stages
 ##############################################################################
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
 export CFG_PATH        # every sbatch inherits this
 
 ##############################################################################
@@ -54,15 +54,20 @@ echo "simulate_windows.sh    → $win_id"
 ld_id=$(submit --dependency=afterok:$win_id bash_scripts/LD_stats_windows.sh)
 echo "LD_stats_windows.sh    → $ld_id"
 
-# 4.4 MomentsLD optimisation depends on LD‑stats
-momLD_id=$(submit --dependency=afterok:$ld_id bash_scripts/MomentsLD.sh)
-echo "MomentsLD.sh           → $momLD_id"
+# 4.4 Set concurrent job limits based on cluster capacity
+# Cluster allows MaxArraySize=12001, no user-specific limits found
+# Aggressive approach: use ~75% of cluster array capacity
+export MAX_CONCURRENT=3000  # Per method limit - much more aggressive utilization
 
-# 4.5 moments & dadi each depend only on simulations
-mom_id=$(submit --dependency=afterok:$sim_id bash_scripts/moments.sh)
+# Launch optimizations simultaneously after dependencies are met
+momLD_id=$(submit --dependency=afterok:$ld_id bash_scripts/MomentsLD.sh)
+echo "MomentsLD.sh           → $momLD_id (depends on LD-stats)"
+
+# 4.5 moments and dadi run simultaneously after simulations
+mom_id=$(submit --dependency=afterok:$sim_id bash_scripts/moments.sh) 
 dadi_id=$(submit --dependency=afterok:$sim_id bash_scripts/dadi.sh)
-echo "moments.sh             → $mom_id"
-echo "dadi.sh                → $dadi_id"
+echo "moments.sh             → $mom_id (depends on simulations)"
+echo "dadi.sh                → $dadi_id (depends on simulations - parallel with moments)"
 
 # 4.6 aggregate moments+dadi after both finish
 agg_id=$(submit --dependency=afterok:$mom_id:$dadi_id bash_scripts/aggregate_moments_dadi.sh)
