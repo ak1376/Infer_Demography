@@ -21,5 +21,9 @@
     "dadi_analysis": true, 
     "moments_analysis": true,
     "moments_ld_analysis": true, 
-    "training_percentage": 0.8
+    "training_percentage": 0.8,
+    "fixed_parameters": {
+        "N0": "sampled",
+        "N_bottleneck": "sampled"
+    }
 }

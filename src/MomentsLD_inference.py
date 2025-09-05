@@ -343,7 +343,7 @@ def handle_fixed_parameters(config, sampled_params, param_names):
         List where each element is either None (free parameter) or a float (fixed value)
     """
     fixed_values = [None] * len(param_names)
-    fixed_config = config.get("ld_fixed", {})
+    fixed_config = config.get("fixed_parameters", {})
     
     for i, param_name in enumerate(param_names):
         if param_name not in fixed_config:
