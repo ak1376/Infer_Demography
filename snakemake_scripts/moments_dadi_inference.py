@@ -33,10 +33,6 @@ def _parse_args():
                    help="Parent output directory. For --mode both, writes into outdir/{dadi,moments}")
     p.add_argument("--ground-truth", type=Path,
                    help="Pickle or JSON file with ground truth simulation parameters")
-    p.add_argument("--fix-params", action="append", default=[],
-                   help="Parameter names to fix at ground truth values, e.g. --fix-params N0 (repeatable)")
-    p.add_argument("--fix", action="append", default=[],
-                   help="Fix params by name with explicit values, e.g. --fix N0=10000 (repeatable)")
     p.add_argument("-v", "--verbose", action="count", default=1)
     return p.parse_args()
 
@@ -78,45 +74,56 @@ def load_ground_truth(gt_path: Path) -> Dict[str, float]:
         raise ValueError(f"Ground truth data must be a dictionary, got {type(gt_data)}")
 
 
-def parse_explicit_fixed(items: List[str]) -> Dict[str, float]:
-    """Parse --fix name=value arguments."""
-    out = {}
-    for it in items or []:
-        if "=" not in it:
-            raise ValueError(f"--fix requires name=value (got {it!r})")
-        k, v = it.split("=", 1)
-        out[k.strip()] = float(v.strip())
-    return out
+def handle_fixed_parameters(config, sampled_params, param_names):
+    """
+    Parse configuration to determine which parameters should be fixed.
+    Same logic as MomentsLD.
+    
+    Args:
+        config: Configuration dictionary
+        sampled_params: Dictionary of sampled parameter values (optional)
+        param_names: List of all parameter names
+        
+    Returns:
+        Dictionary mapping parameter names to fixed values (or None if not fixed)
+    """
+    fixed_params = {}
+    fixed_config = config.get("fixed_parameters", {})
+    
+    for param_name in param_names:
+        if param_name not in fixed_config:
+            continue
+            
+        fixed_spec = fixed_config[param_name]
+        
+        if isinstance(fixed_spec, (int, float)):
+            fixed_params[param_name] = float(fixed_spec)
+        elif isinstance(fixed_spec, str) and fixed_spec.lower() in ["sampled", "true"]:
+            if sampled_params is None or param_name not in sampled_params:
+                raise ValueError(f"Cannot fix {param_name} to sampled value: not available")
+            fixed_params[param_name] = float(sampled_params[param_name])
+        else:
+            raise ValueError(f"Invalid fixed parameter specification for {param_name}: {fixed_spec}")
+    
+    return fixed_params
 
 
-def combine_fixed_params(
-    explicit_fixed: List[str], 
-    fix_param_names: List[str], 
-    ground_truth_path: Path | None
-) -> Dict[str, float]:
-    """Combine explicitly fixed parameters with ground-truth fixed parameters."""
-    fixed_by_name = {}
-    
-    # First, add explicitly fixed parameters (--fix name=value)
-    explicit_dict = parse_explicit_fixed(explicit_fixed)
-    fixed_by_name.update(explicit_dict)
-    
-    # Then, add ground truth parameters for specified parameter names
-    if ground_truth_path and fix_param_names:
-        gt_params = load_ground_truth(ground_truth_path)
-        for param_name in fix_param_names:
-            param_name = param_name.strip()
-            if param_name in gt_params:
-                if param_name in fixed_by_name:
-                    print(f"[WARN] Parameter {param_name} specified in both --fix and --fix-params. "
-                          f"Using explicit value {fixed_by_name[param_name]} instead of ground truth {gt_params[param_name]}")
-                else:
-                    fixed_by_name[param_name] = float(gt_params[param_name])
-                    print(f"[INFO] Fixing {param_name} = {gt_params[param_name]} (from ground truth)")
-            else:
-                print(f"[WARN] Parameter {param_name} not found in ground truth file")
-    
-    return fixed_by_name
+def create_start_dict_with_fixed(config, fixed_params):
+    """Create starting parameters dictionary with fixed params"""
+    start_dict = {}
+    for param, prior in config["priors"].items():
+        if param in fixed_params:
+            start_dict[param] = fixed_params[param]
+        else:
+            # Random start from uniform prior
+            start_dict[param] = np.random.uniform(prior[0], prior[1])
+    return start_dict
+
+
+def load_ground_truth(ground_truth_path):
+    """Load ground truth parameters"""
+    with open(ground_truth_path, 'rb') as f:
+        return pickle.load(f)
 
 
 def create_start_dict_with_fixed(config: Dict, fixed_params: Dict[str, float]) -> Dict[str, float]:
@@ -207,6 +214,14 @@ def main():
     config = json.loads(args.config.read_text())
     sfs = load_sfs(args.sfs_file)
     
+    # Load ground truth parameters if available
+    sampled_params = None
+    if args.ground_truth:
+        try:
+            sampled_params = load_ground_truth(args.ground_truth)
+        except Exception as e:
+            print(f"[WARN] Could not load ground truth: {e}")
+    
     # Load demographic model function
     if ":" in args.model_py:
         mod_name, func_name = args.model_py.split(":")
@@ -229,8 +244,9 @@ def main():
     else:
         raise ValueError("--model-py must be in format 'module:function'")
     
-    # Handle parameter fixing
-    fixed_params = combine_fixed_params(args.fix, args.fix_params, args.ground_truth)
+    # Handle parameter fixing (same as MomentsLD)
+    param_names = list(config["priors"].keys())
+    fixed_params = handle_fixed_parameters(config, sampled_params, param_names)
     
     # Create starting parameter dictionary
     start_dict = create_start_dict_with_fixed(config, fixed_params)

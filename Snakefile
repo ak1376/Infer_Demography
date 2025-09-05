@@ -26,7 +26,7 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_split_migration.json"
+EXP_CFG      = "config_files/experiment_config_bottleneck.json"
 
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -169,7 +169,8 @@ rule infer_moments:
           --mode moments \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
-          --model-py "src.simulation:split_migration_model" \
+          --model-py "{params.model_py}" \
+          --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
           {params.fix}
 
@@ -203,7 +204,8 @@ rule infer_dadi:
           --mode dadi \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
-          --model-py "src.simulation:split_migration_model" \
+          --model-py "{params.model_py}" \
+          --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
           {params.fix}
 

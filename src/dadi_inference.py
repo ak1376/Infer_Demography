@@ -36,22 +36,22 @@ def diffusion_sfs_dadi(
     #     "t_split": params[4]
     # }
 
-    # p_dict = {
-    #     "N0": params[0],
-    #     "N_bottleneck": params[1],
-    #     "N_recover": params[2],
-    #     "t_bottleneck_start": params[3],
-    #     "t_bottleneck_end": params[4]
-    # }
-
     p_dict = {
-        "N0": params[0], 
-        "N1": params[1],
-        "N2": params[2],
-        "m12": params[3],
-        "m21": params[4],
-        "t_split": params[5]
+        "N0": params[0],
+        "N_bottleneck": params[1],
+        "N_recover": params[2],
+        "t_bottleneck_start": params[3],
+        "t_bottleneck_end": params[4]
     }
+
+    # p_dict = {
+    #     "N0": params[0], 
+    #     "N1": params[1],
+    #     "N2": params[2],
+    #     "m12": params[3],
+    #     "m21": params[4],
+    #     "t_split": params[5]
+    # }
 
     # Drosophila three epoch model parameters
     # p_dict = {
