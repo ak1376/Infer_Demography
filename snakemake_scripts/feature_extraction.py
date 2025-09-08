@@ -365,11 +365,18 @@ def main(
     for sid in range(n_sims):
         inf_pickle   = infer_basedir / f"sim_{sid}/all_inferences.pkl"
         truth_pickle = sim_basedir   / f"{sid}/sampled_params.pkl"
-        if not inf_pickle.exists() or not truth_pickle.exists():
+
+        # must have truth to supervise; if missing, skip this sim
+        if not truth_pickle.exists():
             continue
 
-        data  = pickle.load(inf_pickle.open("rb"))
         truth = pickle.load(truth_pickle.open("rb"))
+
+        # inferences are optional: if missing, treat as empty dict
+        if inf_pickle.exists():
+            data = pickle.load(inf_pickle.open("rb"))
+        else:
+            data = {}  # no inferences for this sid; features will be NaN
 
         row = {}
         for tool in ("moments", "dadi", "momentsLD"):
@@ -380,11 +387,10 @@ def main(
                     for k, v in pdict.items():
                         if v is None or (isinstance(v, float) and np.isnan(v)):
                             continue
-                        # momentsLD has single (no rep suffix); others have _rep_i
                         col = f"{tool}_{k}" if tool.lower() == "momentsld" else f"{tool}_{k}_rep_{rep_idx}"
                         row[col] = float(v)
 
-        feature_rows.append(row)
+        feature_rows.append(row)   # possibly empty dict → NaNs in DF
         target_rows.append(truth)
         index.append(sid)
 

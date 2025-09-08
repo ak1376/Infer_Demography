@@ -26,7 +26,7 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_bottleneck.json"
+EXP_CFG      = "config_files/experiment_config_split_migration.json"
 
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -355,10 +355,10 @@ rule combine_results:
 rule combine_features:
     input:
         cfg    = EXP_CFG,
-        infs   = expand(
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
-            sid=SIM_IDS
-        ),
+        infs   = lambda wc: [
+            p for p in [f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl" for sid in SIM_IDS]
+            if os.path.exists(p)
+        ],
         truths = expand(
             f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
             sid=SIM_IDS
