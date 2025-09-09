@@ -223,6 +223,9 @@ def fit_model(
                 grad_fn = nd.Gradient(obj_for_grad, step=1e-4)
                 gradient[:] = grad_fn(free_params_log10)
             
+            # Print real-time progress (same as moments)
+            print(f"[LL={ll:.6g}] log10_free={np.array2string(np.asarray(free_params_log10), precision=4)}")
+            
             return ll
         except Exception as e:
             print(f"Error in objective: {e}")
