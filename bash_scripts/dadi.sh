@@ -3,7 +3,7 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
-#SBATCH --time=8:00:00
+#SBATCH --time=5:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=4G
 #SBATCH --partition=kern,preempt,kerngpu
@@ -22,8 +22,8 @@ BATCH_SIZE=10
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-# Prefer CFG_PATH if exported; otherwise default to a specific file.
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json}"
+# Prefer CFG_PATH if exported; otherwise default to split_migration config.
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json}"
 
 # Export so the Snakefile picks it up (Snakefile should read os.environ['EXP_CFG'])
 export EXP_CFG="$CFG"
@@ -65,6 +65,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   snakemake \
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
+    --forcerun infer_dadi \
     --rerun-incomplete \
     --nolock \
     -j "$SLURM_CPUS_PER_TASK" \
