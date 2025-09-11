@@ -2,9 +2,9 @@
 #SBATCH --job-name=combine_inf
 #SBATCH --output=logs/combine_%A_%a.out
 #SBATCH --error=logs/combine_%A_%a.err
-#SBATCH --time=03:00:00
+#SBATCH --time=06:00:00
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=1G
+#SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue

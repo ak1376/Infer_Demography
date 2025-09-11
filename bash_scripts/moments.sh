@@ -20,7 +20,7 @@ BATCH_SIZE=10   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
@@ -81,6 +81,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
+    --forcerun infer_moments \
     --nolock \
     --latency-wait 300 \
     -j "$SLURM_CPUS_PER_TASK" \

@@ -23,6 +23,11 @@
       "T_AFR_expansion" : [50000, 200000],   
       "T_AFR_EUR_split" : [10000,  49000],   
       "T_EUR_expansion" : [   500,   9000]    
-    }
+    }, 
+    "fixed_parameters": {
+        "N0": "sampled",
+        "T_AFR_EUR_split": "sampled",
+        "AFR": "sampled"
+      }
   }
   

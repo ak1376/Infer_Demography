@@ -26,7 +26,7 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_split_migration.json"
+EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -359,10 +359,10 @@ rule combine_features:
             p for p in [f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl" for sid in SIM_IDS]
             if os.path.exists(p)
         ],
-        truths = expand(
-            f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-            sid=SIM_IDS
-        )
+        truths = lambda wc: [
+            f"{SIM_BASEDIR}/{sid}/sampled_params.pkl" for sid in SIM_IDS
+            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl")
+        ]
     output:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",

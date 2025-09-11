@@ -35,6 +35,7 @@ snakemake \
   --cores "$SLURM_CPUS_PER_TASK" \
   --nolock --rerun-incomplete \
   --allowed-rules combine_features make_color_scheme \
+  --forcerun combine_features make_color_scheme \
   -- \
   "${DATA_TARGETS[@]}" \
   "${COLOR_TARGETS[@]}"
