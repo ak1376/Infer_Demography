@@ -19,7 +19,7 @@ TOTAL_TASKS=1000
 
 # the master script exports CFG_PATH; abort if it is not set
 # : "${CFG_PATH:?CFG_PATH is not defined}"
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 EXPERIMENT_CONFIG_FILE="$CFG_PATH"
 
 # Extract the values from the JSON config
@@ -69,6 +69,11 @@ EXP_ROOT="/projects/kernlab/akapoor/Infer_Demography/experiments/${DEMOGRAPHIC_M
 # Run Snakemake rule for each task in the batch
 for TASK_ID in $(seq $BATCH_START $BATCH_END); do
     PAD_ID=$(printf "$TASK_ID")   # 0 → 00, 1 → 01 …
+
+    # Unlock any stale locks before running
+    snakemake --unlock \
+      --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
+      --directory /projects/kernlab/akapoor/Infer_Demography
 
     snakemake -j "$SLURM_CPUS_PER_TASK" \
       --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
