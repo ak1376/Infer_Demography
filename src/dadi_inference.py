@@ -54,15 +54,16 @@ def diffusion_sfs_dadi(
     # }
 
     # Drosophila three epoch model parameters
-    # p_dict = {
-    #     "N0": params[0],                    # Ancestral population size
-    #     "AFR": params[1],                   # Post expansion African population size  
-    #     "EUR_bottleneck": params[2],        # European bottleneck pop size
-    #     "EUR_recover": params[3],           # Modern European population size after recovery
-    #     "T_AFR_expansion": params[4],       # Expansion of population in Africa
-    #     "T_AFR_EUR_split": params[5],       # African-European Divergence
-    #     "T_EUR_expansion": params[6]        # European population expansion
-    # }
+    p_dict = {
+        "N0": params[0],                    # Ancestral population size
+        "AFR": params[1],                   # Post expansion African population size  
+        "EUR_bottleneck": params[2],        # European bottleneck pop size
+        "EUR_recover": params[3],           # Modern European population size after recovery
+        "T_AFR_expansion": params[4],       # Expansion of population in Africa
+        "T_AFR_EUR_split": params[5],       # African-European Divergence
+        "T_EUR_expansion": params[6]        # European population expansion
+    }
+    
     graph  = demo_model(p_dict)
 
     haploid_sizes = [2 * n for n in sample_sizes.values()]
