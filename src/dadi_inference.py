@@ -54,15 +54,15 @@ def diffusion_sfs_dadi(
     # }
 
     # Drosophila three epoch model parameters
-    p_dict = {
-        "N0": params[0],                    # Ancestral population size
-        "AFR": params[1],                   # Post expansion African population size  
-        "EUR_bottleneck": params[2],        # European bottleneck pop size
-        "EUR_recover": params[3],           # Modern European population size after recovery
-        "T_AFR_expansion": params[4],       # Expansion of population in Africa
-        "T_AFR_EUR_split": params[5],       # African-European Divergence
-        "T_EUR_expansion": params[6]        # European population expansion
-    }
+    # p_dict = {
+    #     "N0": params[0],                    # Ancestral population size
+    #     "AFR": params[1],                   # Post expansion African population size  
+    #     "EUR_bottleneck": params[2],        # European bottleneck pop size
+    #     "EUR_recover": params[3],           # Modern European population size after recovery
+    #     "T_AFR_expansion": params[4],       # Expansion of population in Africa
+    #     "T_AFR_EUR_split": params[5],       # African-European Divergence
+    #     "T_EUR_expansion": params[6]        # European population expansion
+    # }
     
     graph  = demo_model(p_dict)
 
@@ -233,7 +233,7 @@ def fit_model(
             return -np.inf
     
     # Set up and run NLopt optimization
-    opt = nlopt.opt(nlopt.LD_LBFGS, len(free_start))
+    opt = nlopt.opt(nlopt.LN_COBYLA, len(free_start))
     opt.set_lower_bounds(free_lower)
     opt.set_upper_bounds(free_upper) 
     opt.set_max_objective(objective_function)
