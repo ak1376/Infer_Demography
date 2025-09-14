@@ -5,7 +5,7 @@
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
+#SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -81,8 +81,8 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
-    --forcerun infer_moments
     --nolock \
+    --forcerun infer_moments \ 
     --latency-wait 300 \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" \
