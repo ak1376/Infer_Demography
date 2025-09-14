@@ -5,7 +5,7 @@
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=4G
+#SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -20,7 +20,7 @@ BATCH_SIZE=10   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
@@ -81,6 +81,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
+    --forcerun infer_moments
     --nolock \
     --latency-wait 300 \
     -j "$SLURM_CPUS_PER_TASK" \
