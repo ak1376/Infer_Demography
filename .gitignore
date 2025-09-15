@@ -4,3 +4,9 @@ __pycache__/
 drosophila_*/
 split_*/
 bottleneck/
+.snakemake/
+benchmarks/
+Snakefile.simple
+experiments/
+OOA/
+real_data_analysis/
