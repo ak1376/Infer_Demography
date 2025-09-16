@@ -593,6 +593,51 @@ rule xgboost:
         """
 
 ##############################################################################
+# RULE dadi_fit_real_data                                                    #
+##############################################################################
+
+import json
+CFG = json.loads(Path("config_files/experiment_config_split_migration.json").read_text())
+MODEL = CFG["demographic_model"]
+REPS = range(CFG["num_optimizations"])
+
+rule real_data_sfs:
+    input:
+        vcf = "OOA/1KG.YRI.CEU.biallelic.synonymous.snps.withanc.strict.subset.vcf",
+        popfile = "OOA/1KG.YRI.CEU.popfile.txt",
+        config = "config_files/experiment_config_split_migration.json"
+    output:
+        sfs = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/sfs.pkl"
+    shell:
+        r"""
+        python snakemake_scripts/real_data_sfs.py \
+            --input-vcf {input.vcf} \
+            --popfile {input.popfile} \
+            --config {input.config} \
+            --output-sfs {output.sfs}
+        """
+
+rule dadi_fit_real_data:
+    input:
+        sfs = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/sfs.pkl",
+        config = "config_files/experiment_config_split_migration.json"
+    output:
+        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi/fit_params.pkl"
+    params:
+        outdir = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi",
+        model_py = "src.simulation:split_migration_model"
+    shell:
+        r"""
+        python snakemake_scripts/moments_dadi_inference.py \
+            --mode dadi \
+            --sfs-file {input.sfs} \
+            --config {input.config} \
+            --model-py {params.model_py} \
+            --outdir {params.outdir}
+        """
+
+
+##############################################################################
 # Wildcard Constraints                                                      #
 ##############################################################################
 wildcard_constraints:
