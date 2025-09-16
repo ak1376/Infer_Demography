@@ -184,7 +184,10 @@ def prepare_data_for_comparison(theoretical_ld, empirical_data, normalization=0)
         return
 
     demo_mod = importlib.import_module("simulation")
-    demo_func = getattr(demo_mod, cfg["demographic_model"] + "_model")
+    if config["demographic_model"] == "drosophila_three_epoch":
+        demo_function = getattr(demo_module, "drosophila_three_epoch")
+    else:
+        demo_function = getattr(demo_module, config["demographic_model"] + "_model")
     graph = demo_func(sampled_params)
 
     # pops to compare come from the config’s num_samples keys
@@ -522,7 +525,10 @@ def create_comparison_plot(config, sampled_params, empirical_data, r_bins, outpu
     try:
         # Load demographic model
         demo_module = importlib.import_module("simulation")
-        demo_function = getattr(demo_module, config["demographic_model"] + "_model")
+        if config["demographic_model"] == "drosophila_three_epoch":
+            demo_function = getattr(demo_module, "drosophila_three_epoch")
+        else:
+            demo_function = getattr(demo_module, config["demographic_model"] + "_model")
         
         # Get populations to sample
         populations = list(config["num_samples"].keys())
@@ -617,8 +623,11 @@ def run_momentsld_inference(config, empirical_data, results_dir, r_bins, sampled
     
     # Load demographic model function
     demo_module = importlib.import_module("simulation")
-    demo_function = getattr(demo_module, config["demographic_model"] + "_model")
-    
+    if config["demographic_model"] == "drosophila_three_epoch":
+        demo_function = getattr(demo_module, "drosophila_three_epoch")
+    else:
+        demo_function = getattr(demo_module, config["demographic_model"] + "_model")
+        
     # Extract parameter setup from configuration
     priors = config["priors"]
     param_names = list(priors.keys())

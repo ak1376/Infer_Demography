@@ -61,17 +61,34 @@ BATCH_END=$((   (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 
 echo "Array $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
 
+# Debug: check for invalid loop range
+if [[ $BATCH_START -gt $BATCH_END ]]; then
+  echo "DEBUG: No work for array task $SLURM_ARRAY_TASK_ID (start=$BATCH_START > end=$BATCH_END)"
+  exit 0
+fi
+
 # -------- loop over (sim,opt) pairs ----------------------------------------
 for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   SID=$(( IDX / NUM_OPTIMS ))
   OPT=$(( IDX % NUM_OPTIMS ))
 
   TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/moments/fit_params.pkl"
-  echo "moments optimisation: SID=$SID  OPT=$OPT  →  $TARGET"
 
-  # ensure inputs from simulation are visible (optional)
+  echo "DEBUG: moments optimisation: IDX=$IDX SID=$SID OPT=$OPT → $TARGET"
+  echo "DEBUG: MODEL=$MODEL, TARGET length=${#TARGET}"
+  if [[ -z "$TARGET" ]]; then
+    echo "ERROR: TARGET is empty for IDX=$IDX, SID=$SID, OPT=$OPT"
+    exit 1
+  fi
+
   SFS="experiments/${MODEL}/simulations/${SID}/SFS.pkl"
   PAR="experiments/${MODEL}/simulations/${SID}/sampled_params.pkl"
+  # Debug: check if input files exist
+  if [[ ! -s "$ROOT/$SFS" || ! -s "$ROOT/$PAR" ]]; then
+    echo "ERROR: Required input files missing for IDX=$IDX, SID=$SID, OPT=$OPT"
+    echo "Missing: $ROOT/$SFS or $ROOT/$PAR"
+    exit 1
+  fi
   if ! wait_for 600 "$ROOT/$SFS" "$ROOT/$PAR"; then
     echo "Timeout waiting for inputs: $SFS $PAR" >&2
     exit 1
@@ -82,7 +99,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --directory "$ROOT" \
     --rerun-incomplete \
     --nolock \
-    --forcerun infer_moments \ 
+    --forcerun infer_moments \
     --latency-wait 300 \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" \
