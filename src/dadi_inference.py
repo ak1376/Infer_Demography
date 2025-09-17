@@ -28,13 +28,13 @@ def diffusion_sfs_dadi(
     sequence_length: int,
     pts: list[int],
 ) -> dadi.Spectrum:
-    p_dict = {
-        "N0": params[0],
-        "N1": params[1],
-        "N2": params[2],
-        "m": params[3],
-        "t_split": params[4]
-    }
+    # p_dict = {
+    #     "N0": params[0],
+    #     "N1": params[1],
+    #     "N2": params[2],
+    #     "m": params[3],
+    #     "t_split": params[4]
+    # }
 
     # p_dict = {
     #     "N0": params[0],
@@ -44,14 +44,14 @@ def diffusion_sfs_dadi(
     #     "t_bottleneck_end": params[4]
     # }
 
-    # p_dict = {
-    #     "N0": params[0], 
-    #     "N1": params[1],
-    #     "N2": params[2],
-    #     "m12": params[3],
-    #     "m21": params[4],
-    #     "t_split": params[5]
-    # }
+    p_dict = {
+        "N0": params[0], 
+        "N1": params[1],
+        "N2": params[2],
+        "m12": params[3],
+        "m21": params[4],
+        "t_split": params[5]
+    }
 
     # Drosophila three epoch model parameters
     # p_dict = {
@@ -66,7 +66,9 @@ def diffusion_sfs_dadi(
     
     graph  = demo_model(p_dict)
 
+    # print(f' Sample Sizes: {sample_sizes}')
     haploid_sizes = [2 * n for n in sample_sizes.values()]
+    # print(f' Haploid Sizes: {haploid_sizes}')
     sampled_demes = list(sample_sizes.keys())
 
     fs = dadi.Spectrum.from_demes(
@@ -233,7 +235,8 @@ def fit_model(
             return -np.inf
     
     # Set up and run NLopt optimization
-    opt = nlopt.opt(nlopt.LN_COBYLA, len(free_start))
+    # opt = nlopt.opt(nlopt.LN_COBYLA, len(free_start))
+    opt = nlopt.opt(nlopt.LD_LBFGS, len(free_start))
     opt.set_lower_bounds(free_lower)
     opt.set_upper_bounds(free_upper) 
     opt.set_max_objective(objective_function)

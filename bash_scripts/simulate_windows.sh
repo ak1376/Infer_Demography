@@ -47,6 +47,11 @@ for IDX in $(seq "$START" "$END"); do
     SID=$(( IDX / NUM_WINDOWS ))
     WIN=$(( IDX % NUM_WINDOWS ))
 
+    # Unlock any stale locks before running
+    snakemake --unlock \
+      --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
+      --directory /projects/kernlab/akapoor/Infer_Demography
+
     # Guard: only attempt windows when simulation is finished
     SIM_DIR="$ROOT/experiments/$MODEL/simulations/$SID"
     if [[ ! -f "$SIM_DIR/.done" ]] || [[ ! -f "$SIM_DIR/sampled_params.pkl" ]]; then

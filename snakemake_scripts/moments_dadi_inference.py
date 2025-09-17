@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt
 # Add src to path so we can import our inference modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import dadi_inference
-import moments_inference
+import src.dadi_inference as dadi_inference
+import src.moments_inference as moments_inference
 
 
 def _parse_args():

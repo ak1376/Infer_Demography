@@ -26,7 +26,7 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG      = "config_files/experiment_config_split_migration.json"
 
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -622,18 +622,22 @@ rule dadi_fit_real_data:
         sfs = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/sfs.pkl",
         config = "config_files/experiment_config_split_migration.json"
     output:
-        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi/fit_params.pkl"
+        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi/best_fit.pkl"
+    log:
+        f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi/debug.log"
     params:
         outdir = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi",
         model_py = "src.simulation:split_migration_model"
     shell:
         r"""
+        PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/moments_dadi_inference.py \
             --mode dadi \
             --sfs-file {input.sfs} \
             --config {input.config} \
             --model-py {params.model_py} \
-            --outdir {params.outdir}
+            --outdir {params.outdir} \
+        &> {log}
         """
 
 

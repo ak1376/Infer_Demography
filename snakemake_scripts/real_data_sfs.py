@@ -39,14 +39,19 @@ def main():
                 continue
             pop_list.append(fields[1])
     pop_counter = Counter(pop_list)
-    sample_sizes = [pop_counter[pop] for pop in pop_names]
+    sample_sizes = [2 * pop_counter[pop] + 1 for pop in pop_names]  # haploid copies
+    print(f'Sample Sizes (haploid) for populations {pop_names}: {sample_sizes}')
     # Construct SFS from VCF
     dd = dadi.Misc.make_data_dict_vcf(str(args.input_vcf), str(args.popfile))
     sfs = dadi.Spectrum.from_data_dict(dd, pop_names, sample_sizes)
     # Save SFS as pickle
+    # TODO: TEMPORARILY SET POP_IDS TO MATCH EXPECTED
+    sfs.pop_ids = ['N1', 'N2']
     with open(args.output_sfs, "wb") as f:
         pickle.dump(sfs, f)
+    print(sfs)
     print(f"Saved SFS to {args.output_sfs}")
+
 
 if __name__ == "__main__":
     main()
