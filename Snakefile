@@ -4,6 +4,7 @@
 import json, math, sys
 from pathlib import Path
 from snakemake.io import protected
+import os
 
 # ── guard against shadow‑import of the Bottleneck C library ────────────────
 if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
@@ -20,6 +21,8 @@ except ImportError:
 
 configfile: "config_files/model_config.yaml"
 REG_TYPES = config["linear"]["types"]  # ["standard","ridge","lasso","elasticnet"]
+FIM_ENGINES = ["moments"]   # extend later if you add momentsLD etc.
+
 
 # ── external scripts -------------------------------------------------------
 SIM_SCRIPT   = "snakemake_scripts/simulation.py"
@@ -74,6 +77,16 @@ rule all:
             f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
             sid=SIM_IDS
         ),
+
+        # Fisher info artefacts (lambda style)
+        lambda wc: [
+            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"
+            for sid in SIM_IDS for engine in FIM_ENGINES
+        ],
+        lambda wc: [
+            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.summary.json"
+            for sid in SIM_IDS for engine in FIM_ENGINES
+        ],
 
         # ── modeling datasets (after outlier removal, split, normalization) ─
         f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
@@ -327,6 +340,34 @@ rule optimize_momentsld:
         """
 
 ##############################################################################
+# RULE compute_fim – observed FIM at best-LL params for {engine}
+##############################################################################
+rule compute_fim:
+    input:
+        fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
+        sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
+    output:
+        fim  = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+        summ = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json"
+    params:
+        script = "snakemake_scripts/compute_fim.py",
+        cfg    = EXP_CFG
+    threads: 2
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python {params.script} \
+            --engine {wildcards.engine} \
+            --fit-pkl {input.fit} \
+            --sfs {input.sfs} \
+            --config {params.cfg} \
+            --fim-npy {output.fim} \
+            --summary-json {output.summ}
+        """
+
+
+
+##############################################################################
 # RULE combine_results – merge dadi / moments / moments‑LD fits per sim
 ##############################################################################
 rule combine_results:
@@ -362,6 +403,15 @@ rule combine_features:
         truths = lambda wc: [
             f"{SIM_BASEDIR}/{sid}/sampled_params.pkl" for sid in SIM_IDS
             if os.path.exists(f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl")
+        ],
+        # ensure FIMs exist first (both engines, for each sim) — lambda style
+        fim_npys = lambda wc: [
+            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"
+            for sid in SIM_IDS for engine in FIM_ENGINES
+        ],
+        fim_summ = lambda wc: [
+            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.summary.json"
+            for sid in SIM_IDS for engine in FIM_ENGINES
         ]
     output:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
@@ -391,7 +441,6 @@ rule combine_features:
         test -f "{output.nval_y}"      && \
         test -f "{output.scatter_png}"
         """
-
 
 ##############################################################################
 # RULE make_color_scheme – build color_shades.pkl & main_colors.pkl
@@ -591,52 +640,7 @@ rule xgboost:
         test -f "{output.plot}"  && \
         test -f "{output.fi}"
         """
-
-##############################################################################
-# RULE dadi_fit_real_data                                                    #
-##############################################################################
-
-import json
-CFG = json.loads(Path("config_files/experiment_config_split_migration.json").read_text())
-MODEL = CFG["demographic_model"]
-REPS = range(CFG["num_optimizations"])
-
-rule real_data_sfs:
-    input:
-        vcf = "OOA/1KG.YRI.CEU.biallelic.synonymous.snps.withanc.strict.subset.vcf",
-        popfile = "OOA/1KG.YRI.CEU.popfile.txt",
-        config = "config_files/experiment_config_split_migration.json"
-    output:
-        sfs = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/sfs.pkl"
-    shell:
-        r"""
-        python snakemake_scripts/real_data_sfs.py \
-            --input-vcf {input.vcf} \
-            --popfile {input.popfile} \
-            --config {input.config} \
-            --output-sfs {output.sfs}
-        """
-
-rule dadi_fit_real_data:
-    input:
-        sfs = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/sfs.pkl",
-        config = "config_files/experiment_config_split_migration.json"
-    output:
-        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi/fit_params.pkl"
-    params:
-        outdir = f"experiments/{MODEL}/real_data_analysis/runs/run_{{rep}}/inferences/dadi",
-        model_py = "src.simulation:split_migration_model"
-    shell:
-        r"""
-        python snakemake_scripts/moments_dadi_inference.py \
-            --mode dadi \
-            --sfs-file {input.sfs} \
-            --config {input.config} \
-            --model-py {params.model_py} \
-            --outdir {params.outdir}
-        """
-
-
+        
 ##############################################################################
 # Wildcard Constraints                                                      #
 ##############################################################################
