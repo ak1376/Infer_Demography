@@ -11,25 +11,28 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 
-# Usage:
-#   ENGINE=dadi   sbatch jobs/compute_fim_array.sh
+# Usage examples:
 #   ENGINE=moments sbatch jobs/compute_fim_array.sh
+#   ENGINE=dadi    sbatch jobs/compute_fim_array.sh
 #   ENGINE=both    sbatch jobs/compute_fim_array.sh
 #
-# If you run the script directly (without --array), it will auto-resubmit
-# itself with the correct array size [0 .. num_draws-1] from the config.
+# Pass extra snakemake flags via SNAKEMAKE_OPTS, e.g.:
+#   ENGINE=moments SNAKEMAKE_OPTS="--keep-going -p" sbatch jobs/compute_fim_array.sh
 
 set -euo pipefail
+
+mkdir -p logs
 
 # ---------------- user/config paths ----------------
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 CFG="$ROOT/config_files/experiment_config_drosophila_three_epoch.json"
 SNAKEFILE="$ROOT/Snakefile"
 
-# Which engine(s) to compute? dadi | moments | both
-ENGINE="${ENGINE:-dadi}"
+# Which engine(s) to compute? moments | dadi | both
+ENGINE="${ENGINE:-moments}"          # default now matches your Snakefile’s FIM_ENGINES
+SNAKEMAKE_OPTS="${SNAKEMAKE_OPTS:-}" # optional extra flags
 
-# Optional: activate your env here
+# Optional: activate your env
 # source ~/miniforge3/etc/profile.d/conda.sh
 # conda activate snakemake-env
 
@@ -47,20 +50,43 @@ fi
 sid="$SLURM_ARRAY_TASK_ID"
 echo "Compute FIM for sim_$sid (model=$MODEL, engine=$ENGINE)"
 
-# Build targets per engine
-build_targets() {
-  local sid="$1"
-  local eng="$2"
+# Helper: path to the *fit* that compute_fim needs (used for existence check)
+fit_path() {
+  local sid="$1" eng="$2"
+  echo "experiments/${MODEL}/inferences/sim_${sid}/${eng}/fit_params.pkl"
+}
+
+# Helper: FIM target produced by compute_fim
+fim_target() {
+  local sid="$1" eng="$2"
   echo "experiments/${MODEL}/inferences/sim_${sid}/fim/${eng}.fim.npy"
 }
 
+# Build target list, but **only include engines whose fit exists** to avoid triggering infer rules
 declare -a TARGETS=()
+
+maybe_add() {
+  local eng="$1"
+  local fit="$(fit_path "$sid" "$eng")"
+  if [[ -f "$ROOT/$fit" ]]; then
+    TARGETS+=("$(fim_target "$sid" "$eng")")
+  else
+    echo "SKIP sim_$sid engine=$eng (missing fit: $fit)"
+  fi
+}
+
 case "$ENGINE" in
-  dadi)    TARGETS+=("$(build_targets "$sid" "dadi")") ;;
-  moments) TARGETS+=("$(build_targets "$sid" "moments")") ;;
-  both)    TARGETS+=("$(build_targets "$sid" "dadi")" "$(build_targets "$sid" "moments")") ;;
-  *) echo "ERROR: ENGINE must be dadi|moments|both (got '$ENGINE')" >&2; exit 2 ;;
+  moments) maybe_add "moments" ;;
+  dadi)    maybe_add "dadi" ;;
+  both)    maybe_add "moments"; maybe_add "dadi" ;;
+  *) echo "ERROR: ENGINE must be moments|dadi|both (got '$ENGINE')" >&2; exit 2 ;;
 esac
+
+# If nothing to do for this sid, exit cleanly
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+  echo "No FIM targets for sim_$sid — nothing to run."
+  exit 0
+fi
 
 # --------------- run snakemake ---------------------
 snakemake -j "${SLURM_CPUS_PER_TASK:-2}" \
@@ -68,4 +94,5 @@ snakemake -j "${SLURM_CPUS_PER_TASK:-2}" \
   --directory "$ROOT" \
   --rerun-incomplete \
   --nolock \
+  ${SNAKEMAKE_OPTS} \
   "${TARGETS[@]}"

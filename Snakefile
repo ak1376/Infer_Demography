@@ -83,10 +83,6 @@ rule all:
             f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"
             for sid in SIM_IDS for engine in FIM_ENGINES
         ],
-        lambda wc: [
-            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.summary.json"
-            for sid in SIM_IDS for engine in FIM_ENGINES
-        ],
 
         # ── modeling datasets (after outlier removal, split, normalization) ─
         f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
@@ -225,39 +221,48 @@ rule infer_dadi:
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
         """
 
-##############################################################################
-# RULE aggregate_opts – keep the TOP_K best fits per simulation             #
-##############################################################################
-rule aggregate_opts:
+# ── MOMENTS ONLY ───────────────────────────────────────────────────────────
+rule aggregate_opts_moments:
     input:
-        mom  = lambda w: [opt_pkl(w.sid, o, "moments") for o in range(NUM_OPTIMS)],
-        dadi = lambda w: [opt_pkl(w.sid, o, "dadi")    for o in range(NUM_OPTIMS)]
+        mom = lambda w: [opt_pkl(w.sid, o, "moments") for o in range(NUM_OPTIMS)]
     output:
-        mom  = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
+        mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+    run:
+        import pickle, numpy as np, pathlib
+        def _as_list(x): 
+            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+        params, lls = [], []
+        for pkl in input.mom:
+            d = pickle.load(open(pkl, "rb"))
+            params.extend(_as_list(d["best_params"]))
+            lls.extend(_as_list(d["best_ll"]))
+        keep = np.argsort(lls)[::-1][:TOP_K]
+        best = {"best_params": [params[i] for i in keep],
+                "best_ll":      [lls[i]    for i in keep]}
+        pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
+        pickle.dump(best, open(output.mom, "wb"))
+
+# ── DADI ONLY ──────────────────────────────────────────────────────────────
+rule aggregate_opts_dadi:
+    input:
+        dadi = lambda w: [opt_pkl(w.sid, o, "dadi") for o in range(NUM_OPTIMS)]
+    output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-
-        def _as_list(x):
-            """Return *x* as a list (wrap scalars)."""
+        def _as_list(x): 
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+        params, lls = [], []
+        for pkl in input.dadi:
+            d = pickle.load(open(pkl, "rb"))
+            params.extend(_as_list(d["best_params"]))
+            lls.extend(_as_list(d["best_ll"]))
+        keep = np.argsort(lls)[::-1][:TOP_K]
+        best = {"best_params": [params[i] for i in keep],
+                "best_ll":      [lls[i]    for i in keep]}
+        pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
+        pickle.dump(best, open(output.dadi, "wb"))
 
-        def merge_keep_best(in_files, out_file):
-            params, lls = [], []
-            for pkl in in_files:
-                d = pickle.load(open(pkl, "rb"))
-                params.extend(_as_list(d["best_params"]))
-                lls.extend(_as_list(d["best_ll"]))
-
-            keep = np.argsort(lls)[::-1][:TOP_K]            # top‑K by LL
-            best = {"best_params": [params[i] for i in keep],
-                    "best_ll"   : [lls[i]    for i in keep]}
-
-            pathlib.Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-            pickle.dump(best, open(out_file, "wb"))
-
-        merge_keep_best(input.mom,  output.mom)
-        merge_keep_best(input.dadi, output.dadi)
 
 ##############################################################################
 # RULE simulate_window – one VCF window
@@ -368,27 +373,68 @@ rule compute_fim:
 
 
 ##############################################################################
-# RULE combine_results – merge dadi / moments / moments‑LD fits per sim
+# RULE combine_results – merge dadi / moments / moments-LD fits per sim
+# + attach flattened upper-triangular FIM vectors for any existing engines
 ##############################################################################
 rule combine_results:
     input:
-        dadi      = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
-        moments   = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
-        momentsLD = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl"
+        dadi = lambda w: (
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl"
+            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl") else []
+        ),
+        moments = lambda w: (
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl"
+            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl") else []
+        ),
+        momentsLD = lambda w: (
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl"
+            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl") else []
+        ),
+        # include whichever FIMs actually exist for this sim
+        fims = lambda w: [
+            p for eng in FIM_ENGINES
+            for p in [f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"]
+            if os.path.exists(p)
+        ]
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
-        import pickle, pathlib
+        import pickle, pathlib, numpy as np, re, os
+
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
 
-        summary = {
-            "moments"  : pickle.load(open(input.moments,   "rb")),
-            "dadi"     : pickle.load(open(input.dadi,      "rb")),
-            "momentsLD": pickle.load(open(input.momentsLD, "rb")),
-        }
+        # base inferences (only those that exist)
+        summary = {}
+        if input.moments:
+            summary["moments"] = pickle.load(open(input.moments, "rb"))
+        if input.dadi:
+            summary["dadi"] = pickle.load(open(input.dadi, "rb"))
+        if input.momentsLD:
+            summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
+
+        # attach FIMs (upper-triangular, including diagonal) as flat lists
+        if input.fims:
+            fim_payload = {}
+            for fim_path in input.fims:
+                # infer engine from ".../fim/<engine>.fim.npy"
+                eng = re.sub(r".*?/fim/([^.]+)\.fim\.npy$", r"\1", fim_path)
+                F = np.load(fim_path)
+                n = int(F.shape[0])
+                iu = np.triu_indices(n)                # upper incl. diagonal
+                tri_flat = F[iu].astype(float).tolist()
+
+                fim_payload[eng] = {
+                    "shape": [n, n],
+                    "tri_flat": tri_flat,
+                    "indices": "upper_including_diagonal",
+                    "order": "row-major"
+                }
+            summary["FIM"] = fim_payload
+
         pickle.dump(summary, open(output.combo, "wb"))
         print(f"✓ combined → {output.combo}")
+
 
 ##############################################################################
 # RULE combine_features – build datasets (outlier-filtered, split, normalized)
@@ -405,13 +451,13 @@ rule combine_features:
             if os.path.exists(f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl")
         ],
         # ensure FIMs exist first (both engines, for each sim) — lambda style
+        # Only include FIMs that actually exist; do NOT require all sims
         fim_npys = lambda wc: [
-            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"
-            for sid in SIM_IDS for engine in FIM_ENGINES
-        ],
-        fim_summ = lambda wc: [
-            f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.summary.json"
-            for sid in SIM_IDS for engine in FIM_ENGINES
+            p
+            for sid in SIM_IDS
+            for engine in FIM_ENGINES
+            for p in [f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"]
+            if os.path.exists(p)
         ]
     output:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
