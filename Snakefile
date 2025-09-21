@@ -29,15 +29,21 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG      = "config_files/experiment_config_bottleneck.json"
 
+# ── experiment metadata ----------------------------------------------------
 # ── experiment metadata ----------------------------------------------------
 CFG           = json.loads(Path(EXP_CFG).read_text())
 MODEL         = CFG["demographic_model"]
 NUM_DRAWS     = CFG["num_draws"]          # number of independent sims
 NUM_OPTIMS    = CFG.get("num_optimizations", 3)
 TOP_K         = CFG.get("top_k", 2)
-NUM_WINDOWS   = 100                       # LD windows per simulation
+NUM_WINDOWS   = 100
+
+# NEW: FIM toggle + engines
+USE_FIM      = bool(CFG.get("use_FIM", False))
+FIM_ENGINES  = CFG.get("fim_engines", ["moments"]) if USE_FIM else []
+
 
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 
@@ -78,11 +84,11 @@ rule all:
             sid=SIM_IDS
         ),
 
-        # Fisher info artefacts (lambda style)
-        lambda wc: [
+        # Fisher info artefacts (only if enabled)
+        ([
             f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"
             for sid in SIM_IDS for engine in FIM_ENGINES
-        ],
+         ] if USE_FIM else []),
 
         # ── modeling datasets (after outlier removal, split, normalization) ─
         f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
@@ -347,29 +353,29 @@ rule optimize_momentsld:
 ##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}
 ##############################################################################
-rule compute_fim:
-    input:
-        fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
-        sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
-    output:
-        fim  = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-        summ = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json"
-    params:
-        script = "snakemake_scripts/compute_fim.py",
-        cfg    = EXP_CFG
-    threads: 2
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python {params.script} \
-            --engine {wildcards.engine} \
-            --fit-pkl {input.fit} \
-            --sfs {input.sfs} \
-            --config {params.cfg} \
-            --fim-npy {output.fim} \
-            --summary-json {output.summ}
-        """
-
+if USE_FIM:
+    rule compute_fim:
+        input:
+            fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
+            sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
+        output:
+            fim  = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+            summ = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json"
+        params:
+            script = "snakemake_scripts/compute_fim.py",
+            cfg    = EXP_CFG
+        threads: 2
+        shell:
+            r"""
+            PYTHONPATH={workflow.basedir} \
+            python {params.script} \
+                --engine {wildcards.engine} \
+                --fit-pkl {input.fit} \
+                --sfs {input.sfs} \
+                --config {params.cfg} \
+                --fim-npy {output.fim} \
+                --summary-json {output.summ}
+            """
 
 
 ##############################################################################
@@ -378,54 +384,34 @@ rule compute_fim:
 ##############################################################################
 rule combine_results:
     input:
-        dadi = lambda w: (
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl"
-            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl") else []
-        ),
-        moments = lambda w: (
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl"
-            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl") else []
-        ),
-        momentsLD = lambda w: (
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl"
-            if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl") else []
-        ),
-        # include whichever FIMs actually exist for this sim
-        fims = lambda w: [
-            p for eng in FIM_ENGINES
-            for p in [f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"]
-            if os.path.exists(p)
-        ]
+        cfg = EXP_CFG,
+        dadi     = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
+        moments  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
+        momentsLD = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl",
+        fims = lambda w: ([f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"
+                           for eng in FIM_ENGINES] if USE_FIM else [])
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
-        import pickle, pathlib, numpy as np, re, os
+        import pickle, pathlib, numpy as np, re
 
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
 
-        # base inferences (only those that exist)
         summary = {}
-        if input.moments:
-            summary["moments"] = pickle.load(open(input.moments, "rb"))
-        if input.dadi:
-            summary["dadi"] = pickle.load(open(input.dadi, "rb"))
-        if input.momentsLD:
-            summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
+        summary["moments"]   = pickle.load(open(input.moments, "rb"))
+        summary["dadi"]      = pickle.load(open(input.dadi, "rb"))
+        summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
 
-        # attach FIMs (upper-triangular, including diagonal) as flat lists
-        if input.fims:
+        if USE_FIM and input.fims:
             fim_payload = {}
             for fim_path in input.fims:
-                # infer engine from ".../fim/<engine>.fim.npy"
                 eng = re.sub(r".*?/fim/([^.]+)\.fim\.npy$", r"\1", fim_path)
                 F = np.load(fim_path)
-                n = int(F.shape[0])
-                iu = np.triu_indices(n)                # upper incl. diagonal
+                iu = np.triu_indices(F.shape[0])  # upper incl. diag
                 tri_flat = F[iu].astype(float).tolist()
-
                 fim_payload[eng] = {
-                    "shape": [n, n],
+                    "shape": [int(F.shape[0]), int(F.shape[1])],
                     "tri_flat": tri_flat,
                     "indices": "upper_including_diagonal",
                     "order": "row-major"
@@ -450,15 +436,14 @@ rule combine_features:
             f"{SIM_BASEDIR}/{sid}/sampled_params.pkl" for sid in SIM_IDS
             if os.path.exists(f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl")
         ],
-        # ensure FIMs exist first (both engines, for each sim) — lambda style
-        # Only include FIMs that actually exist; do NOT require all sims
-        fim_npys = lambda wc: [
+        # Only gate on FIM files if FIM is enabled
+        fim_npys = lambda wc: ([
             p
             for sid in SIM_IDS
             for engine in FIM_ENGINES
             for p in [f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"]
             if os.path.exists(p)
-        ]
+        ] if USE_FIM else [])
     output:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",

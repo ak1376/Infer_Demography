@@ -25,5 +25,7 @@
     "fixed_parameters": {
         "N0": "sampled",
         "N_bottleneck": "sampled"
-    }
+    }, 
+    "use_FIM": true,
+    "fim_engines": ["moments"]
 }

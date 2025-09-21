@@ -436,10 +436,7 @@ def main(
         if tri is not None:
             for k, v in enumerate(tri):
                 row[f"FIM_element_{k}"] = float(v)
-            row["FIM_num_elements"] = int(len(tri))
-        else:
-            # still create the marker; actual FIM_element_* columns will be NaN for this row
-            row["FIM_num_elements"] = np.nan
+        # Remove FIM_num_elements from processing
 
         feature_rows.append(row)
         target_rows.append(truth)
