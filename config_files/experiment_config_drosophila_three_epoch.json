@@ -25,7 +25,6 @@
       "T_EUR_expansion" : [   500,   9000]    
     }, 
     "fixed_parameters": {
-        "N0": "sampled",
         "T_AFR_expansion": "sampled"
       }
   }
