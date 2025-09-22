@@ -426,7 +426,6 @@ def main(
                         row[col] = float(v)
 
         # ---- attach FIM elements if present in all_inferences.pkl
-        # data["FIM"][engine] = {"shape":[p,p], "tri_flat":[...], "indices":"upper_including_diagonal"}
         tri = None
         if isinstance(data.get("FIM"), dict) and data["FIM"]:
             engines = list(data["FIM"].keys())
@@ -436,7 +435,34 @@ def main(
         if tri is not None:
             for k, v in enumerate(tri):
                 row[f"FIM_element_{k}"] = float(v)
-        # Remove FIM_num_elements from processing
+
+        # ==== NEW: attach SFS residuals as features (if enabled) ===========
+        def _norm_resid_engines(val):
+            if isinstance(val, str):
+                v = val.lower()
+                return ["moments", "dadi"] if v in ("both", "all") else [v]
+            if isinstance(val, (list, tuple, set)):
+                keep = [e for e in val if e in {"moments", "dadi"}]
+                return keep or ["moments"]
+            return ["moments"]
+
+        use_resid = bool(cfg.get("use_residuals", False))
+        resid_engs = _norm_resid_engines(cfg.get("residual_engines", "moments"))
+
+        if use_resid and isinstance(data.get("SFS_residuals"), dict):
+            res_block = data["SFS_residuals"]
+            for eng in resid_engs:
+                payload = res_block.get(eng)
+                if not isinstance(payload, dict):
+                    continue
+                flat = payload.get("flat")
+                if flat is None:
+                    continue
+                # one column per flattened element (row-major order)
+                for k, v in enumerate(flat):
+                    row[f"SFSres_{eng}_{k}"] = float(v)
+        # ===================================================================
+
 
         feature_rows.append(row)
         target_rows.append(truth)

@@ -29,7 +29,8 @@ SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
-EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
+RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
+EXP_CFG      = "config_files/experiment_config_split_isolation.json"
 
 # ── experiment metadata ----------------------------------------------------
 # ── experiment metadata ----------------------------------------------------
@@ -44,6 +45,26 @@ NUM_WINDOWS   = 100
 USE_FIM      = bool(CFG.get("use_FIM", False))
 FIM_ENGINES  = CFG.get("fim_engines", ["moments"]) if USE_FIM else []
 
+# Residuals toggle + engines
+
+# --- residuals toggle & engines ---------------------------------------------
+def _normalize_residual_engines(val):
+    # accepts "moments", "dadi", "both", or a list
+    if isinstance(val, str):
+        v = val.lower()
+        if v == "both":
+            return ["moments", "dadi"]
+        return [v]
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    return ["moments"]  # default
+
+USE_RESIDUALS   = bool(CFG.get("use_residuals", False))
+RESIDUAL_ENGINES = _normalize_residual_engines(CFG.get("residual_engines", "moments"))
+# sanity: filter to supported engines
+RESIDUAL_ENGINES = [e for e in RESIDUAL_ENGINES if e in {"moments", "dadi"}]
+
+RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
 
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 
@@ -90,6 +111,11 @@ rule all:
             for sid in SIM_IDS for engine in FIM_ENGINES
          ] if USE_FIM else []),
 
+        # ── SFS residuals (only if enabled) ─────────────────────────────────
+        ([
+        f"experiments/{MODEL}/inferences/sim_{sid}/sfs_residuals/{eng}/residuals_flat.npy"
+        for sid in SIM_IDS for eng in RESIDUAL_ENGINES
+        ] if USE_RESIDUALS else []),
         # ── modeling datasets (after outlier removal, split, normalization) ─
         f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
@@ -377,6 +403,48 @@ if USE_FIM:
                 --summary-json {output.summ}
             """
 
+##############################################################################
+# RULE sfs_residuals – residuals in *inferences* (engine ∈ {moments,dadi})
+##############################################################################
+if USE_RESIDUALS:
+    rule sfs_residuals:
+        input:
+            gt_params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+            agg_fit   = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl"
+        output:
+            res_arr   = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals.npy",
+            res_flat  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
+            meta_json = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
+            hist_png  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_histogram.png"
+        params:
+            cfg      = EXP_CFG,
+            model_py = (
+                f"src.simulation:{MODEL}_model"
+                if MODEL != "drosophila_three_epoch"
+                else "src.simulation:drosophila_three_epoch"
+            ),
+            inf_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}",
+            # write directly into engine-specific dir under *inferences*
+            out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}"
+        threads: 1
+        shell:
+            r"""
+            set -euo pipefail
+            PYTHONPATH={workflow.basedir} \
+            python "{RESID_SCRIPT}" \
+              --mode {wildcards.engine} \
+              --config "{params.cfg}" \
+              --model-py "{params.model_py}" \
+              --ground-truth "{input.gt_params}" \
+              --inference-dir "{params.inf_dir}" \
+              --outdir "{params.out_dir}"
+
+            # ensure outputs exist
+            test -f "{output.res_arr}"   && \
+            test -f "{output.res_flat}"  && \
+            test -f "{output.meta_json}" && \
+            test -f "{output.hist_png}"
+            """
 
 ##############################################################################
 # RULE combine_results – merge dadi / moments / moments-LD fits per sim
@@ -385,15 +453,24 @@ if USE_FIM:
 rule combine_results:
     input:
         cfg = EXP_CFG,
-        dadi     = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
-        moments  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
+        dadi      = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
+        moments   = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
         momentsLD = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl",
         fims = lambda w: ([f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"
-                           for eng in FIM_ENGINES] if USE_FIM else [])
+                           for eng in FIM_ENGINES] if USE_FIM else []),
+        # RESIDUALS: now live under inferences/sim_{sid}/sfs_residuals/{engine}/
+        resids = lambda w: ([
+            p
+            for eng in RESIDUAL_ENGINES
+            for p in [
+                f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/residuals_flat.npy",
+                f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/residuals.npy",
+            ]
+        ] if USE_RESIDUALS else [])
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
-        import pickle, pathlib, numpy as np, re
+        import pickle, pathlib, numpy as np, re, os
 
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
@@ -418,9 +495,28 @@ rule combine_results:
                 }
             summary["FIM"] = fim_payload
 
+        # Attach residual SFS (engine -> flat vector + shape)
+        if USE_RESIDUALS and input.resids:
+            resid_payload = {}
+            flat_paths = [p for p in input.resids if p.endswith("residuals_flat.npy")]
+            for flat_path in flat_paths:
+                m = re.search(r"/sfs_residuals/([^/]+)/residuals_flat\.npy$", flat_path)
+                if not m:
+                    continue
+                eng = m.group(1)
+                base = os.path.dirname(flat_path)
+                flat = np.load(flat_path)
+                arr_path = os.path.join(base, "residuals.npy")
+                arr = np.load(arr_path) if os.path.exists(arr_path) else None
+                resid_payload[eng] = {
+                    "shape": ([int(arr.shape[0]), int(arr.shape[1])] if arr is not None else None),
+                    "flat": flat.astype(float).tolist(),
+                    "order": "row-major"
+                }
+            summary["SFS_residuals"] = resid_payload
+
         pickle.dump(summary, open(output.combo, "wb"))
         print(f"✓ combined → {output.combo}")
-
 
 ##############################################################################
 # RULE combine_features – build datasets (outlier-filtered, split, normalized)
@@ -428,6 +524,7 @@ rule combine_results:
 rule combine_features:
     input:
         cfg    = EXP_CFG,
+        # only include sims whose combined pickle already exists
         infs   = lambda wc: [
             p for p in [f"experiments/{MODEL}/inferences/sim_{sid}/all_inferences.pkl" for sid in SIM_IDS]
             if os.path.exists(p)
@@ -443,7 +540,15 @@ rule combine_features:
             for engine in FIM_ENGINES
             for p in [f"experiments/{MODEL}/inferences/sim_{sid}/fim/{engine}.fim.npy"]
             if os.path.exists(p)
-        ] if USE_FIM else [])
+        ] if USE_FIM else []),
+        # Only gate on SFS residuals if enabled
+        resid_npys = lambda wc: ([
+            p
+            for sid in SIM_IDS
+            for engine in RESIDUAL_ENGINES
+            for p in [f"experiments/{MODEL}/inferences/sim_{sid}/sfs_residuals/{engine}/residuals_flat.npy"]
+            if os.path.exists(p)
+        ] if USE_RESIDUALS else [])
     output:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
@@ -676,4 +781,5 @@ rule xgboost:
 # Wildcard Constraints                                                      #
 ##############################################################################
 wildcard_constraints:
-    opt = "|".join(str(i) for i in range(NUM_OPTIMS))
+    opt    = "|".join(str(i) for i in range(NUM_OPTIMS)),
+    engine = "moments|dadi"

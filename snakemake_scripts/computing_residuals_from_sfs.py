@@ -224,22 +224,28 @@ def main():
     mu = cfg["mutation_rate"]
     L = cfg["genome_length"]
 
+    # ── Main (fragment) ───────────────────────────────────────────────────────
     modes = ["dadi", "moments"] if args.mode == "both" else [args.mode]
+
     for mode in modes:
+        # If user asked for both → write under outdir/<mode>;
+        # else write directly to args.outdir (which already includes the engine).
+        mode_outdir = (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
+        mode_outdir.mkdir(parents=True, exist_ok=True)
+
         method_dir = args.inference_dir / mode
         best_params_dict, best_ll = load_best_params_from_inference(method_dir, param_names)
         full_best = {p: best_params_dict.get(p, gt_dict[p]) for p in param_names}
         best_vec = [float(full_best[p]) for p in param_names]
 
-        # Build fitted and expected SFS using the same engine for shape consistency
         if mode == "dadi":
             pts = cfg.get("pts", None)
             if pts is None:
                 raise KeyError("Config must provide 'pts' for dadi.")
-            fitted = expected_sfs_dadi(best_vec, param_names, sample_sizes, demo_func, mu, L, pts)
+            fitted  = expected_sfs_dadi(best_vec, param_names, sample_sizes, demo_func, mu, L, pts)
             expected = expected_sfs_dadi(gt_vec,   param_names, sample_sizes, demo_func, mu, L, pts)
         else:
-            fitted = expected_sfs_moments(best_vec, param_names, sample_sizes, demo_func, mu, L)
+            fitted  = expected_sfs_moments(best_vec, param_names, sample_sizes, demo_func, mu, L)
             expected = expected_sfs_moments(gt_vec,   param_names, sample_sizes, demo_func, mu, L)
 
         print(f"[{mode}] Expected SFS sum: {np.sum(expected)}, Fitted SFS sum: {np.sum(fitted)}")
@@ -247,35 +253,26 @@ def main():
         residuals = compute_residuals(expected, fitted)
         residuals_flat = residuals.ravel()
 
-        # define engine-specific output dir *before* plotting
-        outdir = args.outdir / mode
-        outdir.mkdir(parents=True, exist_ok=True)
-
-        # Plot a histogram of residuals into the engine folder
+        import matplotlib.pyplot as plt
         plt.figure(figsize=(8,6))
-        plt.hist(residuals_flat, bins=50, color='blue', alpha=0.7)
-        plt.title(f'Residuals Histogram ({mode})')
-        plt.xlabel('Residual Value')
-        plt.ylabel('Frequency')
-        hist_path = outdir / "residuals_histogram.png"
-        plt.savefig(hist_path)
+        plt.hist(residuals_flat, bins=50, alpha=0.7)
+        plt.title(f"Residuals Histogram ({mode})")
+        plt.xlabel("Residual Value"); plt.ylabel("Frequency")
+        plt.savefig(mode_outdir / "residuals_histogram.png")
         plt.close()
 
-        # Save arrays + metadata
-        save_np(outdir / "residuals.npy", residuals)
-        save_np(outdir / "residuals_flat.npy", residuals_flat)
-        save_json_obj(outdir / "meta.json", {
+        save_np(mode_outdir / "residuals.npy", residuals)
+        save_np(mode_outdir / "residuals_flat.npy", residuals_flat)
+        save_json_obj(mode_outdir / "meta.json", {
             "mode": mode,
             "shape": list(residuals.shape),
             "param_order": param_names,
             "best_params": full_best,
             "best_ll": best_ll,
-            "notes": "Residuals = Expected(GT) − Fitted(best-LL params loaded from inference). Arrays saved as .npy.",
+            "notes": "Residuals = Expected(GT) − Fitted(best-LL params).",
         })
-        with open(outdir / "residuals.pkl", "wb") as f:
-            pickle.dump({"residuals": residuals, "residuals_flat": residuals_flat}, f)
 
-        print(f"[{mode}] done. residuals → {outdir}")
+        print(f"[{mode}] wrote → {mode_outdir}")
 
 if __name__ == "__main__":
     main()

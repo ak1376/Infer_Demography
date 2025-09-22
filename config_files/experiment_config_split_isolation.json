@@ -16,6 +16,8 @@
     "m": [1e-8, 1e-4],
     "t_split": [500, 20000]
   }, 
-  "use_FIM": true,
-  "fim_engines": ["moments"]
+  "use_FIM": false,
+  "fim_engines": ["moments"], 
+  "use_residuals": true,
+  "residual_engines": "moments"
 }
