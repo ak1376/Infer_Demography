@@ -59,7 +59,6 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
     snakemake --snakefile "$SNAKEFILE" \
               --directory "$ROOT" \
               --rerun-incomplete \
-              --forcerun optimize_momentsld \
               --nolock \
               -j "$SLURM_CPUS_PER_TASK" \
               "$TARGET" \
