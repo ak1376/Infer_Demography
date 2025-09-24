@@ -65,17 +65,6 @@ def expected_sfs_moments(
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text())
 
-def load_gt_params(path: Path) -> Dict[str, float]:
-    if not path.exists():
-        raise FileNotFoundError(f"Ground-truth file not found: {path}")
-    try:
-        with path.open("rb") as f:
-            obj = pickle.load(f)
-    except Exception:
-        obj = load_json(path)
-    if not isinstance(obj, dict):
-        raise ValueError(f"Ground-truth must be dict of param_name->value, got {type(obj)}")
-    return {k: float(v) for k, v in obj.items()}
 
 def save_np(path: Path, arr: np.ndarray):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,12 +141,12 @@ def load_best_params_from_inference(method_dir: Path, param_names: List[str]) ->
     )
 
 # ── Residuals ────────────────────────────────────────────────────────────────
-def compute_residuals(exp_sfs, fit_sfs) -> np.ndarray:
-    E = np.asarray(exp_sfs)
+def compute_residuals(fit_sfs, obs_sfs) -> np.ndarray:
     F = np.asarray(fit_sfs)
-    if E.shape != F.shape:
-        raise ValueError(f"SFS shape mismatch: expected {E.shape} vs fitted {F.shape}")
-    return E - F
+    obs = np.asarray(obs_sfs)
+    if obs.shape != F.shape:
+        raise ValueError(f"SFS shape mismatch: expected {obs.shape} vs fitted {F.shape}")
+    return obs - F
 
 # ── Model loader ─────────────────────────────────────────────────────────────
 def load_model_callable(model_spec: str):
@@ -199,8 +188,8 @@ def parse_args():
                     help="JSON config with 'priors', 'sample_sizes' (diploid), 'mutation_rate', 'genome_length' and for dadi also 'pts'.")
     ap.add_argument("--model-py", type=str, required=True,
                     help="module:function returning demes.Graph given a param dict")
-    ap.add_argument("--ground-truth", type=Path, required=True,
-                    help="Pickle/JSON dict of param_name->value")
+    ap.add_argument("--observed-sfs", type=Path, required=True,
+                    help="Pickle file with observed SFS from the simulation folder (SFS.pkl)")
     ap.add_argument("--inference-dir", type=Path, required=True,
                     help="Directory that contains subdirs 'dadi' and/or 'moments' with saved fit_params.pkl/best_fit.pkl")
     ap.add_argument("--outdir", type=Path, required=True,
@@ -214,53 +203,82 @@ def main():
     demo_func = load_model_callable(args.model_py)
 
     param_names: List[str] = list(cfg["priors"].keys())
-    gt_dict = load_gt_params(args.ground_truth)
-    missing = [p for p in param_names if p not in gt_dict]
-    if missing:
-        raise ValueError(f"Ground-truth file missing parameters: {missing}")
-    gt_vec = [float(gt_dict[p]) for p in param_names]
+    priors = cfg["priors"]
 
     sample_sizes = get_sample_sizes(cfg)       # diploid counts
     mu = cfg["mutation_rate"]
     L = cfg["genome_length"]
 
-    # ── Main (fragment) ───────────────────────────────────────────────────────
+    # Load observed SFS (pickled). Accept ndarray, dadi.Spectrum, or dict with common keys.
+    with open(args.observed_sfs, "rb") as f:
+        obs_obj = pickle.load(f)
+    if isinstance(obs_obj, dict):
+        observed = None
+        for k in ("sfs", "SFS", "fs", "spectrum", "array", "arr"):
+            if k in obs_obj:
+                observed = np.asarray(obs_obj[k])
+                break
+        if observed is None:
+            # last-ditch: try to coerce dict itself (e.g., Spectrum-like)
+            observed = np.asarray(obs_obj)
+    else:
+        # ndarray, list-like, or dadi.Spectrum
+        observed = np.asarray(obs_obj)
+
     modes = ["dadi", "moments"] if args.mode == "both" else [args.mode]
 
     for mode in modes:
-        # If user asked for both → write under outdir/<mode>;
-        # else write directly to args.outdir (which already includes the engine).
+        # If "both" → write under outdir/<mode>; else write directly to outdir
         mode_outdir = (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
         mode_outdir.mkdir(parents=True, exist_ok=True)
 
+        # Load best-fit params for this engine
         method_dir = args.inference_dir / mode
         best_params_dict, best_ll = load_best_params_from_inference(method_dir, param_names)
-        full_best = {p: best_params_dict.get(p, gt_dict[p]) for p in param_names}
-        best_vec = [float(full_best[p]) for p in param_names]
 
+        # Fill any missing params from the prior midpoint to preserve order/shape
+        def prior_mid(p: str) -> float:
+            lo, hi = priors[p]
+            return (float(lo) + float(hi)) / 2.0
+
+        full_best = {p: float(best_params_dict[p]) if p in best_params_dict else prior_mid(p)
+                     for p in param_names}
+        best_vec = [full_best[p] for p in param_names]
+
+        # Build optimized (best-fit) theoretical SFS
         if mode == "dadi":
             pts = cfg.get("pts", None)
             if pts is None:
                 raise KeyError("Config must provide 'pts' for dadi.")
-            fitted  = expected_sfs_dadi(best_vec, param_names, sample_sizes, demo_func, mu, L, pts)
-            expected = expected_sfs_dadi(gt_vec,   param_names, sample_sizes, demo_func, mu, L, pts)
+            fitted = expected_sfs_dadi(best_vec, param_names, sample_sizes, demo_func, mu, L, pts)
         else:
-            fitted  = expected_sfs_moments(best_vec, param_names, sample_sizes, demo_func, mu, L)
-            expected = expected_sfs_moments(gt_vec,   param_names, sample_sizes, demo_func, mu, L)
+            fitted = expected_sfs_moments(best_vec, param_names, sample_sizes, demo_func, mu, L)
 
-        print(f"[{mode}] Expected SFS sum: {np.sum(expected)}, Fitted SFS sum: {np.sum(fitted)}")
+        # Validate shape match
+        if np.asarray(observed).shape != np.asarray(fitted).shape:
+            raise ValueError(
+                f"Observed SFS shape {np.asarray(observed).shape} does not match optimized SFS shape {np.asarray(fitted).shape}. "
+                "Check folding, sample sizes (haploid vs diploid), and for dadi the pts grid."
+            )
 
-        residuals = compute_residuals(expected, fitted)
+        # Residuals = fitted − observed.
+        # Your compute_residuals returns (obs − F), so call with (observed, fitted).
+        residuals = compute_residuals(observed, fitted)   # => fitted - observed
         residuals_flat = residuals.ravel()
 
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(8,6))
+        print(f"[{mode}] Fitted(sum)={float(np.sum(fitted)):.6g}  "
+              f"Observed(sum)={float(np.sum(observed)):.6g}  "
+              f"Residual(sum)={float(np.sum(residuals)):.6g}")
+
+        # QC plot
+        plt.figure(figsize=(8, 6))
         plt.hist(residuals_flat, bins=50, alpha=0.7)
         plt.title(f"Residuals Histogram ({mode})")
         plt.xlabel("Residual Value"); plt.ylabel("Frequency")
         plt.savefig(mode_outdir / "residuals_histogram.png")
         plt.close()
 
+        # Save outputs
         save_np(mode_outdir / "residuals.npy", residuals)
         save_np(mode_outdir / "residuals_flat.npy", residuals_flat)
         save_json_obj(mode_outdir / "meta.json", {
@@ -269,10 +287,12 @@ def main():
             "param_order": param_names,
             "best_params": full_best,
             "best_ll": best_ll,
-            "notes": "Residuals = Expected(GT) − Fitted(best-LL params).",
+            "notes": "Residuals = Optimized(theoretical @ best-LL params) − Observed SFS.",
+            "observed_source": str(args.observed_sfs),
         })
 
         print(f"[{mode}] wrote → {mode_outdir}")
+
 
 if __name__ == "__main__":
     main()
