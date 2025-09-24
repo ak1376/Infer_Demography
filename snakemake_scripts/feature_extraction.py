@@ -4,15 +4,14 @@ Build modeling datasets, compute metrics, and plot estimates vs truth.
 
 Pipeline:
   1) Load inferred params (features) & true params (targets)
-  2) (Optional, if present) Attach FIM upper-triangle as flat columns:
-       FIM_element_0, FIM_element_1, ..., FIM_num_elements
-     (preferred engine: 'moments'; otherwise first available)
-  3) Drop rows with extreme outliers (outside prior bounds AND |z|>zmax)
-  4) Train/validation split
-  5) Normalize by prior μ,σ
-  6) Write DataFrames under <out-root>/datasets/
-  7) Scatter grid of estimated vs truth
-  8) Per-tool JSON metrics (normalized MSE) and bar plots (mean±SEM)
+  2) Optionally attach FIM upper-triangle columns (if use_fim_features=True)
+  3) Optionally attach SFS residual columns (if use_residuals=True)
+  4) Drop rows with extreme outliers (outside prior bounds AND |z|>zmax)
+  5) Train/validation split
+  6) Normalize by prior μ,σ
+  7) Write DataFrames under <out-root>/datasets/
+  8) Scatter grid of estimated vs truth
+  9) Per-tool JSON metrics (normalized MSE) and bar plots (mean±SEM)
 
 Outputs in datasets/:
   features_df.pkl
@@ -35,15 +34,13 @@ Additionally (not tracked by Snakemake unless added):
 from __future__ import annotations
 from pathlib import Path
 import argparse, json, pickle, re
-from typing import Dict, Any, List, Tuple, Optional
-from collections import OrderedDict
-
+from typing import Dict, Any, List, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 
-# =============================== core helpers ==============================
+# =============================== core helpers ===============================
 
 def param_dicts(tool: str, blob: dict) -> list[dict]:
     """Return a list of {param: value} dicts (1 per replicate) from all_inferences.pkl."""
@@ -86,7 +83,79 @@ def normalise_df(df: pd.DataFrame, mu: dict[str, float], sigma: dict[str, float]
     return out
 
 
-# ============================== plotting ===================================
+def _tool_param_columns(features_df: pd.DataFrame, tool: str, param: str) -> list[str]:
+    """All columns for a given tool/param (supports replicate suffix)."""
+    pat = re.compile(rf"^{re.escape(tool)}_{re.escape(param)}(?:_rep_\d+)?$")
+    return [c for c in features_df.columns if pat.match(c)]
+
+
+def per_sim_mse_array(
+    features_df: pd.DataFrame,
+    targets_df:  pd.DataFrame,
+    idx:         np.ndarray,
+    *,
+    tool: str,
+    param: str,
+    sigma: dict[str, float],
+    normalized: bool = True,
+) -> np.ndarray:
+    """
+    Per-simulation MSE for one tool/param:
+      1) average all replicate columns for this tool/param
+      2) squared error vs truth (optionally normalized by prior σ)
+    """
+    cols = _tool_param_columns(features_df, tool, param)
+    if not cols or param not in targets_df.columns:
+        return np.array([], dtype=float)
+
+    out_vals: list[float] = []
+    for sid in idx:
+        if sid not in features_df.index or sid not in targets_df.index:
+            continue
+        vals = []
+        for col in cols:
+            if col in features_df.columns:
+                v = features_df.at[sid, col]
+                if pd.notna(v):
+                    vals.append(float(v))
+        if not vals:
+            continue
+        pred = float(np.mean(vals))
+        tru  = float(targets_df.at[sid, param])
+        if normalized:
+            s = sigma.get(param, 0.0)
+            if s <= 0:
+                continue
+            se = ((pred - tru) / s) ** 2
+        else:
+            se = (pred - tru) ** 2
+        out_vals.append(se)
+
+    return np.asarray(out_vals, dtype=float)
+
+
+def infer_common_params(features_df: pd.DataFrame, targets_df: pd.DataFrame, tools: tuple[str, ...]) -> list[str]:
+    """Parameters present for all tools AND in targets."""
+    common: set[str] = set(targets_df.columns)
+    for tool in tools:
+        has = {c.split("_", 1)[1].split("_rep_", 1)[0]
+               for c in features_df.columns if c.startswith(f"{tool}_")}
+        common &= has
+    return sorted(common)
+
+
+def _norm_resid_engines(val) -> list[str]:
+    """Normalize residual engine selector from config."""
+    if isinstance(val, str):
+        v = val.lower()
+        return ["moments", "dadi"] if v in ("both", "all") else [v]
+    if isinstance(val, (list, tuple, set)):
+        keep = [e for e in val if e in {"moments", "dadi"}]
+        return keep or ["moments"]
+    return ["moments"]
+
+
+# ================================= plotting =================================
 
 def plot_mse_bars_with_sem(
     features_df: pd.DataFrame,
@@ -99,60 +168,11 @@ def plot_mse_bars_with_sem(
     normalized: bool,
     out_path: Path | str,
     title: str,
-):
-    """
-    Grouped bars: per-parameter (x) with one bar per tool (mean of per-sim MSE),
-    error bars = SEM across simulations.
-    """
+) -> None:
+    """Grouped bars: per-parameter (x) with one bar per tool (mean MSE), SEM as error bars."""
     means = {p: [] for p in params}
     sems  = {p: [] for p in params}
 
-    # helper reused from above
-    def _tool_param_columns(features_df: pd.DataFrame, tool: str, param: str) -> list[str]:
-        import re as _re
-        pat = _re.compile(rf"^{_re.escape(tool)}_{_re.escape(param)}(?:_rep_\d+)?$")
-        return [c for c in features_df.columns if pat.match(c)]
-
-    def per_sim_mse_array(
-        features_df: pd.DataFrame,
-        targets_df:  pd.DataFrame,
-        idx:         np.ndarray,
-        *,
-        tool: str,
-        param: str,
-        sigma: dict[str, float],
-        normalized: bool = True,
-    ) -> np.ndarray:
-        cols = _tool_param_columns(features_df, tool, param)
-        if not cols or param not in targets_df.columns:
-            return np.array([], dtype=float)
-
-        out_vals = []
-        for sid in idx:
-            if sid not in features_df.index or sid not in targets_df.index:
-                continue
-            vals = []
-            for col in cols:
-                if col in features_df.columns:
-                    v = features_df.at[sid, col]
-                    if pd.notna(v):
-                        vals.append(float(v))
-            if not vals:
-                continue
-            pred = float(np.mean(vals))
-            tru  = float(targets_df.at[sid, param])
-            if normalized:
-                s = sigma.get(param, 0.0)
-                if s <= 0:
-                    continue
-                se = ((pred - tru) / s) ** 2
-            else:
-                se = (pred - tru) ** 2
-            out_vals.append(se)
-
-        return np.asarray(out_vals, dtype=float)
-
-    # compute means & SEMs
     for p in params:
         for tool in tools:
             arr = per_sim_mse_array(features_df, targets_df, idx,
@@ -196,7 +216,8 @@ def plot_estimates_vs_truth_grid_multi_rep(
     figsize_per_panel: tuple[float, float] = (3.2, 3.0),
     out_path: Path | str = "features_scatterplot.png",
     colorize_reps_tools: set[str] | tuple[str, ...] = ("momentsLD",),
-):
+) -> None:
+    """Scatter panels: true vs estimated per tool × parameter."""
     # infer parameter list if not provided
     if params is None:
         common: set[str] = set(targets_df.columns)
@@ -276,58 +297,7 @@ def plot_estimates_vs_truth_grid_multi_rep(
     plt.close(fig)
 
 
-# ============================== metrics ====================================
-
-def _tool_param_columns(features_df: pd.DataFrame, tool: str, param: str) -> list[str]:
-    """All columns for a given tool/param (supports replicate suffix)."""
-    pat = re.compile(rf"^{re.escape(tool)}_{re.escape(param)}(?:_rep_\d+)?$")
-    return [c for c in features_df.columns if pat.match(c)]
-
-
-def per_sim_mse_array(
-    features_df: pd.DataFrame,
-    targets_df:  pd.DataFrame,
-    idx:         np.ndarray,
-    *,
-    tool: str,
-    param: str,
-    sigma: dict[str, float],
-    normalized: bool = True,
-) -> np.ndarray:
-    """
-    Per-simulation MSE for one tool/param:
-      1) average all replicate columns for this tool/param
-      2) squared error vs truth (optionally normalized by prior σ)
-    """
-    cols = _tool_param_columns(features_df, tool, param)
-    if not cols or param not in targets_df.columns:
-        return np.array([], dtype=float)
-
-    out_vals = []
-    for sid in idx:
-        if sid not in features_df.index or sid not in targets_df.index:
-            continue
-        vals = []
-        for col in cols:
-            if col in features_df.columns:
-                v = features_df.at[sid, col]
-                if pd.notna(v):
-                    vals.append(float(v))
-        if not vals:
-            continue
-        pred = float(np.mean(vals))
-        tru  = float(targets_df.at[sid, param])
-        if normalized:
-            s = sigma.get(param, 0.0)
-            if s <= 0:
-                continue
-            se = ((pred - tru) / s) ** 2
-        else:
-            se = (pred - tru) ** 2
-        out_vals.append(se)
-
-    return np.asarray(out_vals, dtype=float)
-
+# ================================= metrics ==================================
 
 def compute_split_metrics_for_tool(
     features_df: pd.DataFrame,
@@ -364,17 +334,7 @@ def compute_split_metrics_for_tool(
     }
 
 
-def infer_common_params(features_df: pd.DataFrame, targets_df: pd.DataFrame, tools: tuple[str, ...]) -> list[str]:
-    """Parameters present for all tools AND in targets."""
-    common: set[str] = set(targets_df.columns)
-    for tool in tools:
-        has = {c.split("_", 1)[1].split("_rep_", 1)[0]
-               for c in features_df.columns if c.startswith(f"{tool}_")}
-        common &= has
-    return sorted(common)
-
-
-# ================================= main ====================================
+# ================================= main =====================================
 
 def main(
     cfg_path: Path,
@@ -392,19 +352,25 @@ def main(
     seed       = int(cfg.get("seed", 42))
     rng        = np.random.default_rng(seed)
 
+    # Feature toggles (compute is always done by Snakemake; these control usage here)
+    use_fim_features = bool(cfg.get("use_fim_features", False))
+    use_resid        = bool(cfg.get("use_residuals", False))
+    resid_engs       = _norm_resid_engines(cfg.get("residual_engines", "moments"))
+
     priors     = cfg["priors"]
     mu, sigma  = prior_stats(priors)
 
     sim_basedir   = Path(f"experiments/{model}/simulations")
     infer_basedir = Path(f"experiments/{model}/inferences")
 
-    feature_rows, target_rows, index = [], [], []
+    feature_rows: list[dict[str, float]] = []
+    target_rows:  list[dict[str, float]] = []
+    index:        list[int]              = []
 
     # ---------- load all sims ----------------------------------------------
     for sid in range(n_sims):
         inf_pickle   = infer_basedir / f"sim_{sid}/all_inferences.pkl"
         truth_pickle = sim_basedir   / f"{sid}/sampled_params.pkl"
-
         if not truth_pickle.exists():
             continue  # must have truth
 
@@ -425,30 +391,16 @@ def main(
                         col = f"{tool}_{k}" if tool.lower() == "momentsld" else f"{tool}_{k}_rep_{rep_idx}"
                         row[col] = float(v)
 
-        # ---- attach FIM elements if present in all_inferences.pkl
-        tri = None
-        if isinstance(data.get("FIM"), dict) and data["FIM"]:
+        # ---- attach FIM elements (optional usage)
+        if use_fim_features and isinstance(data.get("FIM"), dict) and data["FIM"]:
             engines = list(data["FIM"].keys())
             eng_pick = "moments" if "moments" in engines else engines[0]
             tri = data["FIM"].get(eng_pick, {}).get("tri_flat", None)
+            if tri is not None:
+                for k, v in enumerate(tri):
+                    row[f"FIM_element_{k}"] = float(v)
 
-        if tri is not None:
-            for k, v in enumerate(tri):
-                row[f"FIM_element_{k}"] = float(v)
-
-        # ==== NEW: attach SFS residuals as features (if enabled) ===========
-        def _norm_resid_engines(val):
-            if isinstance(val, str):
-                v = val.lower()
-                return ["moments", "dadi"] if v in ("both", "all") else [v]
-            if isinstance(val, (list, tuple, set)):
-                keep = [e for e in val if e in {"moments", "dadi"}]
-                return keep or ["moments"]
-            return ["moments"]
-
-        use_resid = bool(cfg.get("use_residuals", False))
-        resid_engs = _norm_resid_engines(cfg.get("residual_engines", "moments"))
-
+        # ---- attach SFS residuals (optional usage)
         if use_resid and isinstance(data.get("SFS_residuals"), dict):
             res_block = data["SFS_residuals"]
             for eng in resid_engs:
@@ -458,11 +410,8 @@ def main(
                 flat = payload.get("flat")
                 if flat is None:
                     continue
-                # one column per flattened element (row-major order)
-                for k, v in enumerate(flat):
+                for k, v in enumerate(flat):  # row-major order
                     row[f"SFSres_{eng}_{k}"] = float(v)
-        # ===================================================================
-
 
         feature_rows.append(row)
         target_rows.append(truth)
@@ -471,8 +420,8 @@ def main(
     feat_df = pd.DataFrame(feature_rows, index=index).sort_index(axis=1)
     targ_df = pd.DataFrame(target_rows,  index=index).sort_index(axis=1)
 
-    # ---------- outlier removal BEFORE split -------------------------------
-    outlier_records = []
+    # ---------- outlier removal BEFORE split --------------------------------
+    outlier_records: list[dict[str, float]] = []
 
     def _parse_tool_rep(col: str) -> tuple[str, int | None]:
         tool = col.split("_", 1)[0]
@@ -484,7 +433,7 @@ def main(
     for col in feat_df.columns:
         k = base_param(col)
         if k not in priors:
-            continue
+            continue  # skip non-demographic columns (FIM, residuals, etc.)
         lo, hi = map(float, priors[k])
         mu_k, sg_k = float(mu[k]), float(sigma[k])
         s = feat_df[col].astype(float)
@@ -634,7 +583,7 @@ def main(
     # ---------- JSON metrics logging (normalized MSE, per tool) ------------
     tools = ("dadi", "moments", "momentsLD")
     common_params = infer_common_params(feat_df, targ_df, tools)
-    metrics_all = {}
+    metrics_all: dict[str, dict] = {}
 
     for tool in tools:
         metrics = compute_split_metrics_for_tool(
@@ -676,7 +625,7 @@ def main(
     print(f"✓ outlier preview: {preview_path}")
 
 
-# ================================= CLI =====================================
+# ================================= CLI ======================================
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
