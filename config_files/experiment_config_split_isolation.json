@@ -1,23 +1,31 @@
 {
-  "genome_length": 1e6,
-  "mutation_rate": 1.5e-08,
-  "recombination_rate": 1.5e-08,
+  "genome_length": 1000000,
+  "mutation_rate": 1.5e-8,
+  "recombination_rate": 1.5e-8,
   "demographic_model": "split_isolation",
-  "log_dir": "bottleneck/inferences/moments/logs",
-  "num_samples": { "N1": 10, "N2": 10 },
+  "num_samples": { "YRI": 10, "CEU": 10 },
   "seed": 42,
   "num_optimizations": 1,
   "top_k": 1,
   "num_draws": 10,
+
   "priors": {
-    "N0": [100, 30000],
-    "N1": [100, 30000],
-    "N2": [100, 30000],
-    "m": [1e-8, 1e-4],
-    "t_split": [500, 20000]
-  }, 
-  "use_fim_features": false,
-  "fim_engines": ["moments"], 
-  "use_residuals": false,
-  "residual_engines": "moments"
+    "N_anc":      [100, 30000],
+    "N_YRI":      [100, 30000],
+    "N_CEU":      [100, 30000],
+    "m_YRI_CEU":  [1e-8, 1e-4],
+    "T_split":    [500, 20000]
+  },
+
+  "selection": {
+    "enabled": true,
+    "engine": "stdpopsim",
+    "species": "HomSap",
+    "demography_id": "OutOfAfrica_3G09",
+    "dfe_id": "Gamma_K17",
+    "exon_bp": 200,
+    "tile_bp": 5000,
+    "slim_scaling": 10.0,
+    "slim_burn_in": 5.0
+  }
 }
