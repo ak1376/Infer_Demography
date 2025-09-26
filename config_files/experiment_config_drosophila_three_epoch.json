@@ -26,6 +26,11 @@
     }, 
     "fixed_parameters": {
         "T_AFR_expansion": "sampled"
-      }
+      }, 
+    
+    "use_FIM": false,
+    "fim_engines": ["moments"],
+    "use_residuals": false,
+    "residual_engines": "moments"
   }
   

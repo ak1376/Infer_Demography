@@ -72,7 +72,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   SID=$(( IDX / NUM_OPTIMS ))
   OPT=$(( IDX % NUM_OPTIMS ))
 
-  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/moments/fit_params.pkl"
+  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/moments/status.json"
 
   echo "DEBUG: moments optimisation: IDX=$IDX SID=$SID OPT=$OPT → $TARGET"
   echo "DEBUG: MODEL=$MODEL, TARGET length=${#TARGET}"
@@ -99,7 +99,6 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --directory "$ROOT" \
     --rerun-incomplete \
     --nolock \
-    --forcerun infer_moments \
     --latency-wait 300 \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" \

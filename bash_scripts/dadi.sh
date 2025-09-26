@@ -59,14 +59,13 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   SID=$(( IDX / NUM_OPTIMS ))
   OPT=$(( IDX % NUM_OPTIMS ))
 
-  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/fit_params.pkl"
+  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/status.json"
   echo "dadi optimisation: SID=$SID  OPT=$OPT  →  $TARGET"
 
   snakemake \
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
-    --forcerun infer_dadi \
     --nolock \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" || { echo "Snakemake failed for SID=$SID OPT=$OPT"; exit 1; }

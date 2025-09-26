@@ -17,7 +17,7 @@ mkdir -p logs
 ##############################################################################
 # 1) Single place to define the config file for **all** stages
 ##############################################################################
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 export CFG_PATH  # every sbatch inherits this
 
 ##############################################################################

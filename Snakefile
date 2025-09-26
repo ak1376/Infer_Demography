@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_isolation.json"
+EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -76,6 +76,20 @@ LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"  # use {{s
 
 opt_pkl   = lambda sid, opt, tool: f"{RUN_DIR(sid, opt)}/inferences/{tool}/fit_params.pkl"
 final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/fit_params.pkl"
+
+import os, json, pathlib
+
+def ensure_dir(p):
+    pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True)
+
+def exists(p):
+    return os.path.exists(p)
+
+def dump_json(obj, path):
+    ensure_dir(path)
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=2)
+
 
 ##############################################################################
 # RULE all – final targets the workflow must create                          #
@@ -178,14 +192,14 @@ rule simulate:
         """
 
 ##############################################################################
-# RULE infer_moments  – custom NLopt Poisson SFS optimisation (moments)
+# RULE infer_moments – always write status.json; fit_params.pkl only on success
 ##############################################################################
 rule infer_moments:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
+        status = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/status.json"
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -194,33 +208,44 @@ rule infer_moments:
             if MODEL != "drosophila_three_epoch"
             else "src.simulation:drosophila_three_epoch"
         ),
-        fix      = ""     # e.g. '--fix N0=10000 --fix m12=0.0'
+        fix      = ""
     threads: 8
     shell:
         r"""
         set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
-          --mode moments \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --ground-truth "{input.params}" \
-          --outdir "{params.run_dir}/inferences" \
-          {params.fix}
+        mkdir -p "{params.run_dir}/inferences"
 
-        cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
+        # Run and capture exit code
+        set +e
+        PYTHONPATH={workflow.basedir} python "snakemake_scripts/moments_dadi_inference.py" \
+            --mode moments \
+            --sfs-file "{input.sfs}" \
+            --config "{params.cfg}" \
+            --model-py "{params.model_py}" \
+            --ground-truth "{input.params}" \
+            --outdir "{params.run_dir}/inferences" \
+            {params.fix}
+        rc=$?
+        set -e
+
+        if [ $rc -eq 0 ] && [ -f "{params.run_dir}/inferences/moments/best_fit.pkl" ]; then
+            mkdir -p "{params.run_dir}/inferences/moments"
+            cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{params.run_dir}/inferences/moments/fit_params.pkl"
+            python -c 'import json,pathlib; p="{output.status}"; pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True); open(p,"w").write(json.dumps(dict(status="ok", reason=None)))'
+        else
+            python -c 'import json,pathlib; p="{output.status}"; pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True); open(p,"w").write(json.dumps(dict(status="failed", reason="optimize_error_or_missing_output")))'
+        fi
         """
 
 ##############################################################################
-# RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
+# RULE infer_dadi – always write status.json; fit_params.pkl only on success
 ##############################################################################
 rule infer_dadi:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
+        status = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/status.json"
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -229,66 +254,122 @@ rule infer_dadi:
             if MODEL != "drosophila_three_epoch"
             else "src.simulation:drosophila_three_epoch"
         ),
-        fix      = "",     # e.g. '--fix N0=10000 --fix m12=0.0'
+        fix      = ""
     threads: 8
     shell:
         r"""
         set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
-          --mode dadi \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --ground-truth "{input.params}" \
-          --outdir "{params.run_dir}/inferences" \
-          {params.fix}
+        mkdir -p "{params.run_dir}/inferences"
 
-        cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
+        set +e
+        PYTHONPATH={workflow.basedir} python "snakemake_scripts/moments_dadi_inference.py" \
+            --mode dadi \
+            --sfs-file "{input.sfs}" \
+            --config "{params.cfg}" \
+            --model-py "{params.model_py}" \
+            --ground-truth "{input.params}" \
+            --outdir "{params.run_dir}/inferences" \
+            {params.fix}
+        rc=$?
+        set -e
+
+        if [ $rc -eq 0 ] && [ -f "{params.run_dir}/inferences/dadi/best_fit.pkl" ]; then
+            mkdir -p "{params.run_dir}/inferences/dadi"
+            cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{params.run_dir}/inferences/dadi/fit_params.pkl"
+            python -c 'import json,pathlib; p="{output.status}"; pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True); open(p,"w").write(json.dumps(dict(status="ok", reason=None)))'
+        else
+            python -c 'import json,pathlib; p="{output.status}"; pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True); open(p,"w").write(json.dumps(dict(status="failed", reason="optimize_error_or_missing_output")))'
+        fi
         """
 
 # ── MOMENTS ONLY ───────────────────────────────────────────────────────────
 rule aggregate_opts_moments:
     input:
-        mom = lambda w: [opt_pkl(w.sid, o, "moments") for o in range(NUM_OPTIMS)]
+        statuses = lambda w: [f"{RUN_DIR(w.sid, o)}/inferences/moments/status.json" for o in range(NUM_OPTIMS)]
     output:
-        mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+        mom    = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
+        status = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/aggregate.status"
     run:
-        import pickle, numpy as np, pathlib
-        def _as_list(x): 
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-        params, lls = [], []
-        for pkl in input.mom:
-            d = pickle.load(open(pkl, "rb"))
-            params.extend(_as_list(d["best_params"]))
-            lls.extend(_as_list(d["best_ll"]))
-        keep = np.argsort(lls)[::-1][:TOP_K]
-        best = {"best_params": [params[i] for i in keep],
-                "best_ll":      [lls[i]    for i in keep]}
+        import pickle, numpy as np, pathlib, json, os
+        sid = wildcards.sid
+        # collect existing pkls from all opts
+        pkls = [opt_pkl(sid, o, "moments") for o in range(NUM_OPTIMS)]
+        pkls = [p for p in pkls if os.path.exists(p)]
+
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.mom, "wb"))
+        pathlib.Path(output.status).parent.mkdir(parents=True, exist_ok=True)
+
+        if not pkls:
+            # No successes: write an empty aggregate payload but still mark status
+            with open(output.mom, "wb") as f:
+                pickle.dump({"best_params": [], "best_ll": []}, f)
+            with open(output.status, "w") as f:
+                json.dump({"n_success": 0}, f)
+        else:
+            def _as_list(x):
+                return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+            params, lls = [], []
+            for p in pkls:
+                d = pickle.load(open(p, "rb"))
+                params.extend(_as_list(d.get("best_params", [])))
+                lls.extend(_as_list(d.get("best_ll", [])))
+            if len(lls) == 0:
+                keep_params, keep_lls = [], []
+                n_success = 0
+            else:
+                keep = np.argsort(lls)[::-1][:TOP_K]
+                keep_params = [params[i] for i in keep]
+                keep_lls    = [lls[i]    for i in keep]
+                n_success   = len(pkls)
+
+            with open(output.mom, "wb") as f:
+                pickle.dump({"best_params": keep_params, "best_ll": keep_lls}, f)
+            with open(output.status, "w") as f:
+                json.dump({"n_success": int(n_success)}, f)
 
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
 rule aggregate_opts_dadi:
     input:
-        dadi = lambda w: [opt_pkl(w.sid, o, "dadi") for o in range(NUM_OPTIMS)]
+        statuses = lambda w: [f"{RUN_DIR(w.sid, o)}/inferences/dadi/status.json" for o in range(NUM_OPTIMS)]
     output:
-        dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
+        dadi   = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
+        status = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/aggregate.status"
     run:
-        import pickle, numpy as np, pathlib
-        def _as_list(x): 
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-        params, lls = [], []
-        for pkl in input.dadi:
-            d = pickle.load(open(pkl, "rb"))
-            params.extend(_as_list(d["best_params"]))
-            lls.extend(_as_list(d["best_ll"]))
-        keep = np.argsort(lls)[::-1][:TOP_K]
-        best = {"best_params": [params[i] for i in keep],
-                "best_ll":      [lls[i]    for i in keep]}
-        pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.dadi, "wb"))
+        import pickle, numpy as np, pathlib, json, os
+        sid = wildcards.sid
+        pkls = [opt_pkl(sid, o, "dadi") for o in range(NUM_OPTIMS)]
+        pkls = [p for p in pkls if os.path.exists(p)]
 
+        pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(output.status).parent.mkdir(parents=True, exist_ok=True)
+
+        if not pkls:
+            with open(output.dadi, "wb") as f:
+                pickle.dump({"best_params": [], "best_ll": []}, f)
+            with open(output.status, "w") as f:
+                json.dump({"n_success": 0}, f)
+        else:
+            def _as_list(x):
+                import numpy as np
+                return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+            params, lls = [], []
+            for p in pkls:
+                d = pickle.load(open(p, "rb"))
+                params.extend(_as_list(d.get("best_params", [])))
+                lls.extend(_as_list(d.get("best_ll", [])))
+            if len(lls) == 0:
+                keep_params, keep_lls = [], []
+                n_success = 0
+            else:
+                keep = np.argsort(lls)[::-1][:TOP_K]
+                keep_params = [params[i] for i in keep]
+                keep_lls    = [lls[i]    for i in keep]
+                n_success   = len(pkls)
+
+            with open(output.dadi, "wb") as f:
+                pickle.dump({"best_params": keep_params, "best_ll": keep_lls}, f)
+            with open(output.status, "w") as f:
+                json.dump({"n_success": int(n_success)}, f)
 
 ##############################################################################
 # RULE simulate_window – one VCF window
@@ -371,39 +452,60 @@ rule optimize_momentsld:
         """
 
 ##############################################################################
-# RULE compute_fim – observed FIM at best-LL params for {engine}             #
+# RULE compute_fim – produce placeholder if no valid fit
 ##############################################################################
 rule compute_fim:
     input:
-        fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
-        sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
+        agg_status = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/aggregate.status",
+        sfs        = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
     output:
         fim  = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
         summ = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json"
     params:
-        script = "snakemake_scripts/compute_fim.py",
-        cfg    = EXP_CFG
+        fit_pkl = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
+        script  = "snakemake_scripts/compute_fim.py",
+        cfg     = EXP_CFG
     threads: 2
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python {params.script} \
-            --engine {wildcards.engine} \
-            --fit-pkl {input.fit} \
-            --sfs {input.sfs} \
-            --config {params.cfg} \
-            --fim-npy {output.fim} \
-            --summary-json {output.summ}
-        """
+    run:
+        import json, numpy as np, os, pathlib, pickle
+        pathlib.Path(output.fim).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(output.summ).parent.mkdir(parents=True, exist_ok=True)
+
+        ok = os.path.exists(params.fit_pkl)
+        best_params_ok = False
+        if ok:
+            try:
+                d = pickle.load(open(params.fit_pkl, "rb"))
+                best_params_ok = bool(d.get("best_params"))
+            except Exception:
+                best_params_ok = False
+
+        if not (ok and best_params_ok):
+            # write minimal placeholder (0x0 FIM) and a summary noting skip
+            np.save(output.fim, np.zeros((0,0), dtype=float))
+            with open(output.summ, "w") as f:
+                json.dump({"skipped": True, "reason": "no_valid_fit"}, f, indent=2)
+        else:
+            # run the real FIM computation
+            shell("""
+                PYTHONPATH={workflow.basedir} \
+                python {params.script} \
+                    --engine {wildcards.engine} \
+                    --fit-pkl {params.fit_pkl} \
+                    --sfs {input.sfs} \
+                    --config {params.cfg} \
+                    --fim-npy {output.fim} \
+                    --summary-json {output.summ}
+            """)
 
 
 ##############################################################################
-# RULE sfs_residuals – optimized (best-fit) SFS − observed SFS               #
+# RULE sfs_residuals – produce placeholder if no valid fit
 ##############################################################################
 rule sfs_residuals:
     input:
-        obs_sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        agg_fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl"
+        obs_sfs   = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        agg_status = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/aggregate.status"
     output:
         res_arr   = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals.npy",
         res_flat  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
@@ -417,90 +519,139 @@ rule sfs_residuals:
             else "src.simulation:drosophila_three_epoch"
         ),
         inf_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}",
-        out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}"
+        out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}",
+        fit_pkl  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl"
     threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "{RESID_SCRIPT}" \
-          --mode {wildcards.engine} \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --observed-sfs "{input.obs_sfs}" \
-          --inference-dir "{params.inf_dir}" \
-          --outdir "{params.out_dir}"
+    run:
+        import json, os, numpy as np, pathlib, pickle
+        pathlib.Path(params.out_dir).mkdir(parents=True, exist_ok=True)
 
-        # ensure outputs exist
-        test -f "{output.res_arr}"   && \
-        test -f "{output.res_flat}"  && \
-        test -f "{output.meta_json}" && \
-        test -f "{output.hist_png}"
-        """
+        ok = os.path.exists(params.fit_pkl)
+        best_params_ok = False
+        if ok:
+            try:
+                d = pickle.load(open(params.fit_pkl, "rb"))
+                best_params_ok = bool(d.get("best_params"))
+            except Exception:
+                best_params_ok = False
+
+        if not (ok and best_params_ok):
+            # write placeholders so downstream can proceed
+            np.save(output.res_arr, np.array([], dtype=float))
+            np.save(output.res_flat, np.array([], dtype=float))
+            with open(output.meta_json, "w") as f:
+                json.dump({"skipped": True, "reason": "no_valid_fit"}, f, indent=2)
+            # create an empty histogram image
+            shell("python - <<'PY'\nimport matplotlib.pyplot as plt\nplt.figure(); plt.title('No residuals (no valid fit)'); plt.savefig('{hist}');\nPY".format(hist=output.hist_png))
+        else:
+            shell(r"""
+                set -euo pipefail
+                PYTHONPATH={workflow.basedir} \
+                python "{RESID_SCRIPT}" \
+                  --mode {wildcards.engine} \
+                  --config "{params.cfg}" \
+                  --model-py "{params.model_py}" \
+                  --observed-sfs "{input.obs_sfs}" \
+                  --inference-dir "{params.inf_dir}" \
+                  --outdir "{params.out_dir}"
+                test -f "{output.res_arr}"   && \
+                test -f "{output.res_flat}"  && \
+                test -f "{output.meta_json}" && \
+                test -f "{output.hist_png}"
+            """)
 
 ##############################################################################
-# RULE combine_results – merge dadi / moments / moments-LD fits per sim      #
-# + attach flattened upper-triangular FIM and residual SFS payloads          #
+# RULE combine_results – faster: arrays (no tolist), float32, mmap, hi proto
 ##############################################################################
 rule combine_results:
     input:
-        cfg       = EXP_CFG,
-        dadi      = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
-        moments   = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
-        momentsLD = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl",
-        fims      = lambda w: [f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy" for eng in FIM_ENGINES],
-        resids    = lambda w: [
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/residuals_flat.npy"
-            for eng in RESIDUAL_ENGINES
-        ]
+        cfg        = EXP_CFG,
+        mom_status = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/aggregate.status",
+        dadi_status= lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/aggregate.status",
+        momentsLD  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl"
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
-        import pickle, pathlib, numpy as np, re, os, json
-        outdir = pathlib.Path(output.combo).parent
-        outdir.mkdir(parents=True, exist_ok=True)
+        import pickle, pathlib, numpy as np, os, json
+        sid = wildcards.sid
+        pathlib.Path(output.combo).parent.mkdir(parents=True, exist_ok=True)
 
         summary = {}
-        summary["moments"]   = pickle.load(open(input.moments, "rb"))
-        summary["dadi"]      = pickle.load(open(input.dadi, "rb"))
-        summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
 
-        # FIM upper-triangles
+        # moments
+        mom_pkl = f"experiments/{MODEL}/inferences/sim_{sid}/moments/fit_params.pkl"
+        if os.path.exists(mom_pkl):
+            try:
+                summary["moments"] = pickle.load(open(mom_pkl, "rb"))
+            except Exception:
+                summary["moments"] = {"best_params": [], "best_ll": []}
+
+        # dadi
+        dadi_pkl = f"experiments/{MODEL}/inferences/sim_{sid}/dadi/fit_params.pkl"
+        if os.path.exists(dadi_pkl):
+            try:
+                summary["dadi"] = pickle.load(open(dadi_pkl, "rb"))
+            except Exception:
+                summary["dadi"] = {"best_params": [], "best_ll": []}
+
+        # momentsLD (try; tolerate failure)
+        try:
+            summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
+        except Exception:
+            summary["momentsLD"] = {}
+
+        # FIM payloads (keep arrays; no tolist)
+        fim_dir = f"experiments/{MODEL}/inferences/sim_{sid}/fim"
         fim_payload = {}
-        for fim_path in input.fims:
-            eng = re.sub(r".*?/fim/([^.]+)\.fim\.npy$", r"\1", fim_path)
-            F = np.load(fim_path)
-            iu = np.triu_indices(F.shape[0])
-            fim_payload[eng] = {
-                "shape": [int(F.shape[0]), int(F.shape[1])],
-                "tri_flat": F[iu].astype(float).tolist(),
-                "indices": "upper_including_diagonal",
-                "order": "row-major",
-            }
+        if os.path.isdir(fim_dir):
+            for name in os.listdir(fim_dir):
+                if not name.endswith(".fim.npy"):
+                    continue
+                eng = name.split(".fim.npy")[0]
+                F = np.load(os.path.join(fim_dir, name), mmap_mode="r", allow_pickle=False)
+                if F.size:
+                    iu = np.triu_indices(F.shape[0])
+                    tri_flat = F[iu].astype(np.float32, copy=False)
+                    shp = [int(F.shape[0]), int(F.shape[1])]
+                else:
+                    tri_flat = np.empty((0,), dtype=np.float32)
+                    shp = [0, 0]
+                fim_payload[eng] = {
+                    "shape": shp,
+                    "tri_flat": tri_flat,              # ndarray (float32), NOT list
+                    "indices": "upper_including_diagonal",
+                    "order": "row-major",
+                }
         if fim_payload:
             summary["FIM"] = fim_payload
 
-        # Residual SFS payloads (engine -> flat + shape if available)
+        # Residuals payloads (keep arrays; no tolist)
+        resid_root = f"experiments/{MODEL}/inferences/sim_{sid}/sfs_residuals"
         resid_payload = {}
-        for flat_path in input.resids:
-            m = re.search(r"/sfs_residuals/([^/]+)/residuals_flat\.npy$", flat_path)
-            if not m:   # skip unexpected
-                continue
-            eng = m.group(1)
-            base = os.path.dirname(flat_path)
-            flat = np.load(flat_path)
-            arr_path = os.path.join(base, "residuals.npy")
-            arr = np.load(arr_path) if os.path.exists(arr_path) else None
-            resid_payload[eng] = {
-                "shape": (list(arr.shape) if arr is not None else None),
-                "flat": flat.astype(float).tolist(),
-                "order": "row-major",
-            }
+        if os.path.isdir(resid_root):
+            for eng in os.listdir(resid_root):
+                base = os.path.join(resid_root, eng)
+                flat_path = os.path.join(base, "residuals_flat.npy")
+                arr_path  = os.path.join(base, "residuals.npy")
+                if os.path.exists(flat_path):
+                    flat = np.load(flat_path, mmap_mode="r", allow_pickle=False).astype(np.float32, copy=False)
+                    if os.path.exists(arr_path):
+                        arr = np.load(arr_path, mmap_mode="r", allow_pickle=False)
+                        shape = list(arr.shape)
+                    else:
+                        shape = [0] if flat.size == 0 else [int(flat.size)]
+                    resid_payload[eng] = {
+                        "shape": shape,
+                        "flat": flat,                    # ndarray (float32), NOT list
+                        "order": "row-major",
+                    }
         if resid_payload:
             summary["SFS_residuals"] = resid_payload
 
-        pickle.dump(summary, open(output.combo, "wb"))
+        with open(output.combo, "wb") as f:
+            pickle.dump(summary, f, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"✓ combined → {output.combo}")
+
 
 ##############################################################################
 # RULE combine_features – build datasets (filter, split, normalize)          #
