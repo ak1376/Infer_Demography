@@ -21,7 +21,7 @@
     "enabled": true,
     "engine": "stdpopsim",
     "species": "HomSap",
-    "demography_id": "OutOfAfrica_3G09",
+    "use_custom_model": true, 
     "dfe_id": "Gamma_K17",
     "exon_bp": 200,
     "tile_bp": 5000,
