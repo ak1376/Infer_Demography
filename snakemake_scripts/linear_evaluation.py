@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 from sklearn.model_selection import GridSearchCV
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
+from sklearn.pipeline import make_pipeline
+from sklearn.impute import SimpleImputer
 import yaml
 import pandas as pd
 
@@ -30,14 +32,14 @@ def _load_array(path):
         obj = pickle.load(open(p, "rb"))
         # Common cases:
         if isinstance(obj, pd.DataFrame):
-            return obj.to_numpy()
+            return obj  # KEEP DataFrame to preserve cols
         if isinstance(obj, pd.Series):
-            return obj.to_numpy().reshape(-1, 1)
+            return obj.to_frame()  # 2D
         if isinstance(obj, dict) and "features" in obj:
-            return np.asarray(obj["features"])
+            return pd.DataFrame(np.asarray(obj["features"]))
         if isinstance(obj, dict) and "targets" in obj:
             return np.asarray(obj["targets"])
-        return np.asarray(obj)
+        return obj
     else:
         raise ValueError(f"Unsupported extension for {path} (use .npy or .pkl).")
 
@@ -80,6 +82,54 @@ def _organize_results(data_dict, train_preds, val_preds, model):
         out["validation"]["predictions"] = val_preds
         out["validation"]["targets"]     = np.asarray(data_dict["validation"]["targets"])
     return out
+
+
+# ---------- feature sanitation (Option A) ----------
+
+def _to_dataframe(X):
+    if X is None:
+        return None
+    if isinstance(X, pd.DataFrame):
+        return X.copy()
+    if isinstance(X, pd.Series):
+        return X.to_frame()
+    arr = np.asarray(X)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    # anonymous columns if none
+    return pd.DataFrame(arr)
+
+def _sanitize_and_align(X_train_df: pd.DataFrame | None,
+                        X_val_df:   pd.DataFrame | None) -> tuple[pd.DataFrame | None, pd.DataFrame | None, list[str]]:
+    """Replace ±Inf→NaN, align columns, drop columns that are all-NaN in both splits."""
+    if X_train_df is not None:
+        X_train_df = X_train_df.replace([np.inf, -np.inf], np.nan)
+    if X_val_df is not None:
+        X_val_df = X_val_df.replace([np.inf, -np.inf], np.nan)
+
+    # Align on intersection of columns if both provided
+    if X_train_df is not None and X_val_df is not None:
+        common_cols = X_train_df.columns.intersection(X_val_df.columns)
+        X_train_df = X_train_df[common_cols]
+        X_val_df   = X_val_df[common_cols]
+
+        all_nan_both = X_train_df.isna().all(0) & X_val_df.isna().all(0)
+        dropped_cols = list(common_cols[all_nan_both])
+        keep_cols    = list(common_cols[~all_nan_both])
+        X_train_df   = X_train_df[keep_cols]
+        X_val_df     = X_val_df[keep_cols]
+        return X_train_df, X_val_df, dropped_cols
+
+    # Only one split present
+    one = X_train_df if X_train_df is not None else X_val_df
+    all_nan = one.isna().all(0)
+    dropped_cols = list(one.columns[all_nan])
+    keep_cols    = list(one.columns[~all_nan])
+    if X_train_df is not None:
+        X_train_df = X_train_df[keep_cols]
+    if X_val_df is not None:
+        X_val_df = X_val_df[keep_cols]
+    return X_train_df, X_val_df, dropped_cols
 
 
 # ---------- main ----------
@@ -133,42 +183,74 @@ def linear_evaluation(
     if (X_val is None) ^ (y_val is None):
         raise ValueError("If you give X_val_path, also give y_val_path (and vice versa).")
 
-    # optional grid search
-    if regression_type in ["ridge", "lasso", "elasticnet"] and do_grid_search and X_train is not None:
-        if regression_type == "ridge":
-            base = Ridge()
-            grid = {"alpha": [0.1, 1.0, 10.0, 100.0]}
-        elif regression_type == "lasso":
-            base = Lasso(max_iter=10000)
-            grid = {"alpha": [0.1, 1.0, 10.0, 100.0]}
-        else:  # elasticnet
-            base = ElasticNet(max_iter=10000)
-            grid = {"alpha": [0.1, 1.0, 10.0, 100.0], "l1_ratio": [0.1, 0.5, 0.9]}
-        gs = GridSearchCV(base, grid, scoring="neg_mean_squared_error", cv=5)
-        gs.fit(X_train, y_train)
-        print(f"[INFO] Best params: {gs.best_params_}")
-        alpha    = gs.best_params_.get("alpha", alpha)
-        l1_ratio = gs.best_params_.get("l1_ratio", l1_ratio)
+    # ---- Option A: sanitize, align, drop all-NaN cols, then impute in-pipeline
+    Xtr_df = _to_dataframe(X_train)
+    Xva_df = _to_dataframe(X_val)
+    Xtr_df, Xva_df, dropped = _sanitize_and_align(Xtr_df, Xva_df)
 
-    # fit + predict
-    model = _pick_model(regression_type, alpha, l1_ratio)
-    train_preds, val_preds = _fit_and_predict(model, X_train, y_train, X_val, y_val)
+    if dropped:
+        drop_log = model_directory / "dropped_feature_columns.txt"
+        drop_log.write_text("\n".join(map(str, dropped)) + "\n")
+        print(f"[INFO] Dropped {len(dropped)} all-NaN feature columns. Logged to {drop_log}")
+
+    # Convert features to numpy; remaining sporadic NaNs will be imputed by the pipeline.
+    X_train_np = None if Xtr_df is None else Xtr_df.to_numpy()
+    X_val_np   = None if Xva_df is None else Xva_df.to_numpy()
+
+    # Targets → numpy (ensure 2D for multi-output)
+    def _to_targets(y):
+        if y is None: return None
+        if isinstance(y, (pd.Series, pd.DataFrame)):
+            arr = y.to_numpy()
+        else:
+            arr = np.asarray(y)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        return arr
+    y_train_np = _to_targets(y_train)
+    y_val_np   = _to_targets(y_val)
+
+    # optional grid search (tune the PIPELINE)
+    model = None
+    if regression_type in ["ridge", "lasso", "elasticnet"] and do_grid_search and X_train_np is not None:
+        if regression_type == "ridge":
+            pipe = make_pipeline(SimpleImputer(strategy="median"), Ridge())
+            grid = {"ridge__alpha": [0.1, 1.0, 10.0, 100.0]}
+        elif regression_type == "lasso":
+            pipe = make_pipeline(SimpleImputer(strategy="median"), Lasso(max_iter=10000))
+            grid = {"lasso__alpha": [0.1, 1.0, 10.0, 100.0]}
+        else:  # elasticnet
+            pipe = make_pipeline(SimpleImputer(strategy="median"), ElasticNet(max_iter=10000))
+            grid = {
+                "elasticnet__alpha":   [0.1, 1.0, 10.0, 100.0],
+                "elasticnet__l1_ratio": [0.1, 0.5, 0.9],
+            }
+        gs = GridSearchCV(pipe, grid, scoring="neg_mean_squared_error", cv=5)
+        gs.fit(X_train_np, y_train_np)
+        print(f"[INFO] Best params: {gs.best_params_}")
+        model = gs.best_estimator_
+
+    # fit + predict (pipeline with imputer if no grid search or for 'standard')
+    if model is None:
+        base_model = _pick_model(regression_type, alpha, l1_ratio)
+        model = make_pipeline(SimpleImputer(strategy="median"), base_model)
+
+    train_preds, val_preds = _fit_and_predict(model, X_train_np, y_train_np, X_val_np, y_val_np)
 
     # package data for downstream
     features_and_targets = {}
-    if X_train is not None:
-        features_and_targets["training"] = {"features": X_train, "targets": y_train}
-    if X_val is not None:
-        features_and_targets["validation"] = {"features": X_val, "targets": y_val}
+    if X_train_np is not None:
+        features_and_targets["training"] = {"features": X_train_np, "targets": y_train_np}
+    if X_val_np is not None:
+        features_and_targets["validation"] = {"features": X_val_np, "targets": y_val_np}
 
     linear_obj = _organize_results(features_and_targets, train_preds, val_preds, model)
     linear_obj["param_names"] = list(exp_cfg["priors"].keys()) if "priors" in exp_cfg else []
 
     # errors
-    # --- MSEs (overall + per-parameter) ----------------------------------------
     param_names = linear_obj["param_names"]
     rrmse = {"training": None, "validation": None,
-            "training_mse": {}, "validation_mse": {}}
+             "training_mse": {}, "validation_mse": {}}
 
     def _fill_rrmse(y_true, y_pred, split_key):
         if y_true is None or y_pred is None:
@@ -179,8 +261,8 @@ def linear_evaluation(
         for i, name in enumerate(param_names):
             rrmse[f"{split_key}_mse"][name] = float(np.mean((yt[:, i] - yp[:, i]) ** 2))
 
-    _fill_rrmse(y_train, train_preds, "training")
-    _fill_rrmse(y_val,   val_preds,   "validation")
+    _fill_rrmse(y_train_np, train_preds, "training")
+    _fill_rrmse(y_val_np,   val_preds,   "validation")
 
     # save artifacts
     with open(model_directory / f"linear_mdl_obj_{regression_type}.pkl", "wb") as f:

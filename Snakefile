@@ -561,71 +561,92 @@ rule sfs_residuals:
             """)
 
 ##############################################################################
-# RULE combine_results – faster: arrays (no tolist), float32, mmap, hi proto
+# RULE combine_results – robust: no memmap in pickle, optional momentsLD
 ##############################################################################
 rule combine_results:
     input:
         cfg        = EXP_CFG,
         mom_status = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/aggregate.status",
         dadi_status= lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/aggregate.status",
-        momentsLD  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl"
+        # NOTE: momentsLD removed from inputs to keep this rule optional wrt that file
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
-        import pickle, pathlib, numpy as np, os, json
+        import os, json, pickle, pathlib
+        import numpy as np
+
         sid = wildcards.sid
         pathlib.Path(output.combo).parent.mkdir(parents=True, exist_ok=True)
+
+        def safe_load_pickle(path, default):
+            if not os.path.exists(path):
+                return default
+            try:
+                with open(path, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                return default
 
         summary = {}
 
         # moments
         mom_pkl = f"experiments/{MODEL}/inferences/sim_{sid}/moments/fit_params.pkl"
-        if os.path.exists(mom_pkl):
-            try:
-                summary["moments"] = pickle.load(open(mom_pkl, "rb"))
-            except Exception:
-                summary["moments"] = {"best_params": [], "best_ll": []}
+        summary["moments"] = safe_load_pickle(
+            mom_pkl, {"best_params": np.array([], dtype=np.float32), "best_ll": np.array([], dtype=np.float32)}
+        )
 
         # dadi
         dadi_pkl = f"experiments/{MODEL}/inferences/sim_{sid}/dadi/fit_params.pkl"
-        if os.path.exists(dadi_pkl):
-            try:
-                summary["dadi"] = pickle.load(open(dadi_pkl, "rb"))
-            except Exception:
-                summary["dadi"] = {"best_params": [], "best_ll": []}
+        summary["dadi"] = safe_load_pickle(
+            dadi_pkl, {"best_params": np.array([], dtype=np.float32), "best_ll": np.array([], dtype=np.float32)}
+        )
 
-        # momentsLD (try; tolerate failure)
-        try:
-            summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
-        except Exception:
+        # momentsLD (optional)
+        mld_pkl = f"experiments/{MODEL}/inferences/sim_{sid}/MomentsLD/best_fit.pkl"
+        if os.path.exists(mld_pkl):
+            summary["momentsLD"] = safe_load_pickle(mld_pkl, {})
+        else:
             summary["momentsLD"] = {}
 
-        # FIM payloads (keep arrays; no tolist)
+        # -------- FIM payloads (force ndarrays; pack upper-triangle) --------
         fim_dir = f"experiments/{MODEL}/inferences/sim_{sid}/fim"
         fim_payload = {}
+        fim_nan_total = 0
         if os.path.isdir(fim_dir):
             for name in os.listdir(fim_dir):
                 if not name.endswith(".fim.npy"):
                     continue
-                eng = name.split(".fim.npy")[0]
-                F = np.load(os.path.join(fim_dir, name), mmap_mode="r", allow_pickle=False)
-                if F.size:
+                eng = name[:-8]  # strip ".fim.npy"
+                path = os.path.join(fim_dir, name)
+
+                try:
+                    # default np.load returns a regular ndarray (not a memmap)
+                    F = np.load(path, allow_pickle=False)
+                    if F.ndim != 2 or F.shape[0] != F.shape[1]:
+                        # skip corrupt/non-square matrices
+                        continue
+
+                    # stats *before* packing, to help you debug NaNs
+                    n_nan = int(np.isnan(F).sum())
+                    fim_nan_total += n_nan
+
                     iu = np.triu_indices(F.shape[0])
-                    tri_flat = F[iu].astype(np.float32, copy=False)
-                    shp = [int(F.shape[0]), int(F.shape[1])]
-                else:
-                    tri_flat = np.empty((0,), dtype=np.float32)
-                    shp = [0, 0]
-                fim_payload[eng] = {
-                    "shape": shp,
-                    "tri_flat": tri_flat,              # ndarray (float32), NOT list
-                    "indices": "upper_including_diagonal",
-                    "order": "row-major",
-                }
+                    tri_flat = np.asarray(F[iu], dtype=np.float32)  # real ndarray copy, no memmap
+
+                    fim_payload[eng] = {
+                        "shape": [int(F.shape[0]), int(F.shape[1])],
+                        "tri_flat": tri_flat,  # ndarray(float32)
+                        "indices": "upper_including_diagonal",
+                        "order": "row-major",
+                    }
+                except Exception:
+                    # if that engine's FIM is unreadable/corrupt, skip it
+                    continue
+
         if fim_payload:
             summary["FIM"] = fim_payload
 
-        # Residuals payloads (keep arrays; no tolist)
+        # -------- Residuals payloads (force ndarrays; keep flat) --------
         resid_root = f"experiments/{MODEL}/inferences/sim_{sid}/sfs_residuals"
         resid_payload = {}
         if os.path.isdir(resid_root):
@@ -634,22 +655,38 @@ rule combine_results:
                 flat_path = os.path.join(base, "residuals_flat.npy")
                 arr_path  = os.path.join(base, "residuals.npy")
                 if os.path.exists(flat_path):
-                    flat = np.load(flat_path, mmap_mode="r", allow_pickle=False).astype(np.float32, copy=False)
-                    if os.path.exists(arr_path):
-                        arr = np.load(arr_path, mmap_mode="r", allow_pickle=False)
-                        shape = list(arr.shape)
-                    else:
-                        shape = [0] if flat.size == 0 else [int(flat.size)]
-                    resid_payload[eng] = {
-                        "shape": shape,
-                        "flat": flat,                    # ndarray (float32), NOT list
-                        "order": "row-major",
-                    }
+                    try:
+                        flat = np.load(flat_path, allow_pickle=False)
+                        flat = np.asarray(flat, dtype=np.float32)  # ensure ndarray (not memmap)
+
+                        if os.path.exists(arr_path):
+                            arr = np.load(arr_path, allow_pickle=False)
+                            shape = list(arr.shape)
+                        else:
+                            shape = [0] if flat.size == 0 else [int(flat.size)]
+
+                        resid_payload[eng] = {
+                            "shape": shape,
+                            "flat": flat,  # ndarray(float32)
+                            "order": "row-major",
+                        }
+                    except Exception:
+                        # skip bad residuals for this engine
+                        continue
+
         if resid_payload:
             summary["SFS_residuals"] = resid_payload
 
+        # write combined pickle (arrays are real ndarrays; safe to unpickle anywhere)
         with open(output.combo, "wb") as f:
             pickle.dump(summary, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # light log to STDOUT to help you spot NaNs and counts
+        print(json.dumps({
+            "sim": int(sid),
+            "fim_engines": len(summary.get("FIM", {})),
+            "fim_total_nan": fim_nan_total
+        }))
         print(f"✓ combined → {output.combo}")
 
 

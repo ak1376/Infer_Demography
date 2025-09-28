@@ -27,7 +27,7 @@ mkdir -p logs
 
 # ---------------- user/config paths ----------------
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
-CFG="${CFG:-$ROOT/config_files/experiment_config_split_isolation.json}"
+CFG="${CFG:-$ROOT/config_files/experiment_config_drosophila_three_epoch.json}"
 SNAKEFILE="${SNAKEFILE:-$ROOT/Snakefile}"
 
 ENGINE="${ENGINE:-moments}"          # moments | dadi | both

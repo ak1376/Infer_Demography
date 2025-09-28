@@ -28,9 +28,9 @@
         "T_AFR_expansion": "sampled"
       }, 
     
-    "use_FIM": false,
+    "use_FIM": true,
     "fim_engines": ["moments"],
-    "use_residuals": false,
+    "use_residuals": true,
     "residual_engines": "moments"
   }
   

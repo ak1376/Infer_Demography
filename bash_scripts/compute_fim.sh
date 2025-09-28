@@ -25,7 +25,7 @@ mkdir -p logs
 
 # ---------------- user/config paths ----------------
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
-CFG="$ROOT/config_files/experiment_config_bottleneck.json"
+CFG="$ROOT/config_files/experiment_config_drosophila_three_epoch.json"
 SNAKEFILE="$ROOT/Snakefile"
 
 # Which engine(s) to compute? moments | dadi | both
