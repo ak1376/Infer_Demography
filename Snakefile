@@ -93,9 +93,9 @@ rule all:
         # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # # LD artifacts
-        # expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
-        # expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
-        # expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
+        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
 
         # # FIM (always computed)
         # expand(

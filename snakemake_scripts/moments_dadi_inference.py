@@ -250,12 +250,15 @@ def compute_likelihood_profile(mode: str, param_values: np.ndarray, param_idx: i
                     for i, n in enumerate(sfs.shape):
                         sample_sizes[f"pop{i}"] = (n - 1) // 2
                 
-                expected = moments_inference._diffusion_sfs(
-                    test_params,
-                    demo_func,
-                    param_names,
-                    sample_sizes,
-                    config
+                expected = dadi_inference.diffusion_sfs_dadi(
+                    params_vec=test_params,
+                    param_names=param_names,
+                    sample_sizes=sample_sizes,        # OrderedDict pop -> diploid n
+                    demo_model=demo_func,             # callable dict -> demes.Graph
+                    mutation_rate=float(config["mutation_rate"]),
+                    sequence_length=float(config["genome_length"]),
+                    pts=[50, 60, 70],
+                    config=config,
                 )
             
             if hasattr(sfs, 'folded') and sfs.folded:
