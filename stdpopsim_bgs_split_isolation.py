@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# stdpopsim_bgs_split_isolation.py
 # Split isolation + tiled BGS via stdpopsim/SLiM.
-# Coverage control/sweeps, Poisson moments fit (unchanged), skip-existing, and error plots.
+# Coverage sweeps with Ray parallelism (via subprocess workers), Poisson moments fit (unchanged),
+# skip-existing, range/grid coverages, cores/thread controls, and error plots.
 
 from __future__ import annotations
-import argparse, json, csv, warnings
+import argparse, json, csv, warnings, os, sys, subprocess, tempfile
 from pathlib import Path
 from typing import List, Dict, Tuple, OrderedDict as _OD
 
@@ -17,6 +17,16 @@ import demes
 import nlopt
 import numdifftools as nd
 import matplotlib.pyplot as plt
+
+# Optional deps
+try:
+    import ray  # type: ignore
+except Exception:
+    ray = None
+try:
+    from tqdm import tqdm  # type: ignore
+except Exception:
+    tqdm = None
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.simplefilter("ignore", msprime.TimeUnitsMismatchWarning)
@@ -39,21 +49,27 @@ def create_SFS(ts: tskit.TreeSequence) -> moments.Spectrum:
     sfs.pop_ids = pop_ids
     return sfs
 
-# ────────────────────────── split-isolation (engine) ─────────────────────────
-class SplitIsolationModel(sps.DemographicModel):
-    def __init__(self, N0: float, N1: float, N2: float, T: float, m: float):
-        dem = msprime.Demography()
-        dem.add_population(name="YRI", initial_size=float(N1))
-        dem.add_population(name="CEU", initial_size=float(N2))
-        dem.add_population(name="ANC", initial_size=float(N0))
-        m = float(m)
-        dem.set_migration_rate("YRI", "CEU", m)
-        dem.set_migration_rate("CEU", "YRI", m)
-        dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
-        super().__init__(id="split_isolation",
-            description="ANC → (YRI, CEU) at T; symmetric migration m.",
-            long_description="Custom msprime demography: split isolation with symmetric migration.",
-            model=dem, generation_time=1)
+# ────────────────────────── split-isolation (local factory; Ray-safe) ───────
+def _build_split_isolation_model(N0: float, N1: float, N2: float, T: float, m: float) -> sps.DemographicModel:
+    dem = msprime.Demography()
+    dem.add_population(name="YRI", initial_size=float(N1))
+    dem.add_population(name="CEU", initial_size=float(N2))
+    dem.add_population(name="ANC", initial_size=float(N0))
+    m = float(m)
+    dem.set_migration_rate("YRI", "CEU", m)
+    dem.set_migration_rate("CEU", "YRI", m)
+    dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
+
+    class _LocalSplitIsolationModel(sps.DemographicModel):
+        def __init__(self):
+            super().__init__(
+                id="split_isolation",
+                description="ANC → (YRI, CEU) at T; symmetric migration m.",
+                long_description="Custom msprime demography: split isolation with symmetric migration.",
+                model=dem,
+                generation_time=1,
+            )
+    return _LocalSplitIsolationModel()
 
 # ────────────────────────── demes graph (for moments) ────────────────────────
 def split_isolation_graph(params: Dict[str, float]) -> demes.Graph:
@@ -75,7 +91,6 @@ def split_isolation_graph(params: Dict[str, float]) -> demes.Graph:
 
 # ────────────────────────── BGS tiling (coverage-aware, non-overlap) ────────
 def _sanitize_nonoverlap(intervals: np.ndarray, L: int) -> np.ndarray:
-    """Sort and drop any overlapping or out-of-bounds intervals."""
     if intervals.size == 0:
         return intervals
     iv = intervals[np.argsort(intervals[:, 0])]
@@ -87,7 +102,6 @@ def _sanitize_nonoverlap(intervals: np.ndarray, L: int) -> np.ndarray:
         if e <= s:
             continue
         if s < prev_end:
-            # overlap → drop this one
             continue
         out.append((s, e))
         prev_end = e
@@ -96,8 +110,8 @@ def _sanitize_nonoverlap(intervals: np.ndarray, L: int) -> np.ndarray:
 def build_tiling_intervals(L: int, exon_bp: int, tile_bp: int, jitter_bp: int = 0) -> np.ndarray:
     starts = np.arange(0, max(0, L - exon_bp + 1), tile_bp, dtype=int)
     if jitter_bp > 0 and len(starts) > 0:
-        # keep jitter modest to avoid systematic overlaps
-        jitter = np.random.randint(-jitter_bp, jitter_bp + 1, size=len(starts))
+        rng = np.random.default_rng()
+        jitter = rng.integers(-jitter_bp, jitter_bp + 1, size=len(starts))
         starts = np.clip(starts + jitter, 0, max(0, L - exon_bp))
     ends = np.minimum(starts + exon_bp, L).astype(int)
     iv = np.column_stack([starts, ends])
@@ -108,7 +122,6 @@ def intervals_from_coverage(L: int, exon_bp: int, coverage: float, jitter_bp: in
         return np.empty((0, 2), dtype=int)
     if coverage >= 1.0:
         return np.array([[0, int(L)]], dtype=int)
-    # tile_bp ≥ exon_bp when 0<coverage≤1
     tile_bp = max(exon_bp, int(round(exon_bp / float(max(coverage, 1e-12)))))
     return build_tiling_intervals(int(L), int(exon_bp), tile_bp, jitter_bp=jitter_bp)
 
@@ -223,44 +236,74 @@ def fit_moments(sfs: moments.Spectrum, config: Dict,
 
 # ────────────────────────── CLI ──────────────────────────
 def parse_args():
-    p = argparse.ArgumentParser(description="Split isolation + tiled BGS via stdpopsim (SLiM). Poisson moments fit. Coverage sweeps with skip-existing and plots.")
+    p = argparse.ArgumentParser(description="Split isolation + tiled BGS via stdpopsim (SLiM). Poisson moments fit. Ray (subprocess) sweep + plots.")
+
     # Demography
     p.add_argument("--N-anc", type=float, required=True)
     p.add_argument("--N1", type=float, required=True)
     p.add_argument("--N2", type=float, required=True)
     p.add_argument("--t-split", type=float, required=True)
     p.add_argument("--m", type=float, default=0.0)
+
     # Samples
     p.add_argument("--samples", default="YRI:20,CEU:20")
+
     # Species/DFE for contig
     p.add_argument("--species", default="HomSap")
     p.add_argument("--dfe", default="Gamma_K17")
+
     # Genome/rates
     p.add_argument("--length", type=int, default=200_000)
     p.add_argument("--mu", type=float, default=1e-8)
     p.add_argument("--r", type=float, default=1e-8)
+
     # BGS tiling (classic)
     p.add_argument("--exon-bp", type=int, default=200)
     p.add_argument("--tile-bp", type=int, default=5000)
+
     # Coverage controls
-    p.add_argument("--coverage", type=float, default=None)
-    p.add_argument("--coverage-grid", type=str, default="")
+    p.add_argument("--coverage", type=float, default=None,
+                   help="Single coverage in [0,1], overrides tile-bp mode.")
+    p.add_argument("--coverage-grid", type=str, default="",
+                   help="Comma list (e.g. 0,0.01,0.02,...). Merged with any range-generated values.")
+    p.add_argument("--coverage-min", type=float, default=None)
+    p.add_argument("--coverage-max", type=float, default=None)
+    p.add_argument("--coverage-n", type=int, default=None)
+    p.add_argument("--coverage-space", choices=["lin","log"], default="lin")
     p.add_argument("--replicates", type=int, default=1)
     p.add_argument("--jitter-bp", type=int, default=0)
+
     # SLiM
     p.add_argument("--slim-scaling", type=float, default=10.0)
     p.add_argument("--slim-burn-in", type=float, default=5.0)
+
     # I/O
     p.add_argument("--seed", type=int, default=13)
     p.add_argument("--trees", default="sims/out.trees")
     p.add_argument("--vcf", default="")
-    p.add_argument("--skip-existing", action="store_true", default=True,
-                   help="Skip simulation if output trees already exist (default true). Use --no-skip-existing to force.")
+    p.add_argument("--skip-existing", action="store_true", default=True)
     p.add_argument("--no-skip-existing", dest="skip_existing", action="store_false")
+
     # Moments
     p.add_argument("--moments-config", type=Path,
                    help="JSON with {'priors':{...}, 'mutation_rate':..., 'genome_length':...}")
     p.add_argument("--fixed-json", type=str, default="")
+
+    # Parallelism / cores
+    p.add_argument("--ray", action="store_true", help="Use Ray to parallelize coverage×replicate sweep (via subprocess workers).")
+    p.add_argument("--ray-num-cpus", type=int, default=None)
+    p.add_argument("--ray-address", type=str, default=None)
+    p.add_argument("--cores", type=int, default=None,
+                   help="Convenience: sets --ray-num-cpus if not provided; also caps BLAS threads.")
+    p.add_argument("--threads-per-task", type=int, default=1,
+                   help="Set OMP/MKL/NUMEXPR threads per worker. Often 1 is best.")
+
+    # Hidden: internal single-run for Ray subprocess workers
+    p.add_argument("--_internal-single-run", action="store_true", default=False)
+    p.add_argument("--_internal-coverage", type=float, default=None)
+    p.add_argument("--_internal-label", type=str, default="")
+    p.add_argument("--_internal-seed-offset", type=int, default=0)
+    p.add_argument("--_internal-row-json", type=Path, default=None)
     return p.parse_args()
 
 # ────────────────────────── run helpers ──────────────────────────
@@ -273,8 +316,14 @@ def _paths_from_suffix(base_trees: Path, suffix: str):
             outroot.with_suffix(".sfs.npy"),
             outroot)
 
-def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
-                           seed_offset: int = 0, coverage_target: float | None = None):
+def run_single_sim_and_fit_serial(a, coverage_target: float | None, label_suffix: str,
+                                  seed_offset: int = 0) -> Dict:
+    # Build intervals (coverage mode) or tile-bp mode
+    if coverage_target is None:
+        intervals = build_tiling_intervals(a.length, a.exon_bp, a.tile_bp, jitter_bp=a.jitter_bp)
+    else:
+        intervals = intervals_from_coverage(a.length, a.exon_bp, coverage_target, jitter_bp=a.jitter_bp)
+
     trees_path, meta_path, bed_path, sfs_npy, outroot = _paths_from_suffix(Path(a.trees), label_suffix)
     vcf_path = (Path(a.vcf) if a.vcf else None)
 
@@ -287,12 +336,10 @@ def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
     # Skip if exists
     if a.skip_existing and trees_path.exists():
         print(f"[skip-existing] Using existing {trees_path.name}")
-        # ensure SFS exists; if not, build from trees
         if not sfs_npy.exists():
             ts = tskit.load(str(trees_path))
             sfs = create_SFS(ts)
             np.save(sfs_npy, sfs.data)
-        # moments: only run if requested and best.pkl missing
         moments_pkl = outroot.with_suffix(".moments_best.pkl")
         if a.moments_config and not moments_pkl.exists():
             sfs = moments.Spectrum(np.load(sfs_npy))
@@ -303,13 +350,10 @@ def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
             with open(moments_pkl, "wb") as f:
                 import pickle; pickle.dump(dict(best_params=best, best_ll=float(best_ll),
                                                 param_order=names, fixed_params=fixed), f)
-        # build row from meta if present
         meta = {}
         if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-            except Exception:
-                meta = {}
+            try: meta = json.loads(meta_path.read_text())
+            except Exception: meta = {}
         row = dict(
             label=(label_suffix or "single"),
             coverage_target=(coverage_target if coverage_target is not None else float(a.exon_bp)/float(a.tile_bp)),
@@ -317,7 +361,6 @@ def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
             selected_frac=float(meta.get("selected_frac", 0.0)),
             seg_sites=int(meta.get("sites", 0)),
         )
-        # add fitted if present
         moments_pkl = outroot.with_suffix(".moments_best.pkl")
         if moments_pkl.exists():
             import pickle
@@ -328,7 +371,7 @@ def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
         return row
 
     # demography & contig
-    model = SplitIsolationModel(N0=a.N_anc, N1=a.N1, N2=a.N2, T=a.t_split, m=a.m)
+    model = _build_split_isolation_model(N0=a.N_anc, N1=a.N1, N2=a.N2, T=a.t_split, m=a.m)
     contig = make_contig_and_apply_dfe(a.length, a.mu, a.r, a.species, a.dfe, intervals)
 
     # samples
@@ -389,7 +432,7 @@ def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
         fixed = json.loads(a.fixed_json) if a.fixed_json else {}
         best_vec, best_ll, names = fit_moments(sfs, cfg, fixed_params=fixed)
         best = {k: float(v) for k, v in zip(names, best_vec)}
-        out_pkl = outroot.with_suffix(".moments_best.pkl")
+        out_pkl = Path(str(trees_path)).with_suffix("").with_suffix(".moments_best.pkl")
         with open(out_pkl, "wb") as f:
             import pickle; pickle.dump(
                 dict(best_params=best, best_ll=float(best_ll),
@@ -408,6 +451,62 @@ def run_single_sim_and_fit(a, intervals: np.ndarray, label_suffix: str,
         row[f"fit_{k}"] = v
     return row
 
+# ────────────────────────── Ray worker (subprocess) ─────────────────────────
+if ray is not None:
+    @ray.remote
+    def ray_worker_subprocess(script_path: str, a_dict: Dict, coverage: float, label: str, seed_offset: int,
+                              threads_per_task: int) -> Dict:
+        # Per-task thread caps
+        env = os.environ.copy()
+        env["OMP_NUM_THREADS"] = str(threads_per_task)
+        env["MKL_NUM_THREADS"] = str(threads_per_task)
+        env["NUMEXPR_NUM_THREADS"] = str(threads_per_task)
+
+        # Build CLI args for the child
+        with tempfile.TemporaryDirectory() as tmpd:
+            row_json = Path(tmpd) / "row.json"
+            # Reconstruct base CLI from dict
+            args = [
+                sys.executable, script_path,
+                "--N-anc", str(a_dict["N_anc"]),
+                "--N1", str(a_dict["N1"]),
+                "--N2", str(a_dict["N2"]),
+                "--t-split", str(a_dict["t_split"]),
+                "--m", str(a_dict["m"]),
+                "--samples", a_dict["samples"],
+                "--species", a_dict["species"],
+                "--dfe", a_dict["dfe"],
+                "--length", str(a_dict["length"]),
+                "--mu", str(a_dict["mu"]),
+                "--r", str(a_dict["r"]),
+                "--exon-bp", str(a_dict["exon_bp"]),
+                "--tile-bp", str(a_dict["tile_bp"]),
+                "--jitter-bp", str(a_dict["jitter_bp"]),
+                "--slim-scaling", str(a_dict["slim_scaling"]),
+                "--slim-burn-in", str(a_dict["slim_burn_in"]),
+                "--seed", str(a_dict["seed"]),
+                "--trees", a_dict["trees"],
+                "--skip-existing" if a_dict["skip_existing"] else "--no-skip-existing",
+                "--threads-per-task", str(threads_per_task),
+                "--_internal-single-run",
+                "--_internal-coverage", str(coverage),
+                "--_internal-label", label,
+                "--_internal-seed-offset", str(seed_offset),
+                "--_internal-row-json", str(row_json),
+            ]
+            if a_dict.get("vcf"):
+                args += ["--vcf", a_dict["vcf"]]
+            if a_dict.get("moments_config"):
+                args += ["--moments-config", a_dict["moments_config"]]
+            if a_dict.get("fixed_json"):
+                args += ["--fixed-json", a_dict["fixed_json"]]
+
+            # Run child
+            subprocess.run(args, check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            # Read result row
+            return json.loads(row_json.read_text())
+
 # ────────────────────────── plotting: error vs coverage ─────────────────────
 def _true_param_map_from_cli(a) -> Dict[str, float]:
     return {
@@ -419,9 +518,7 @@ def _true_param_map_from_cli(a) -> Dict[str, float]:
     }
 
 def plot_errors_vs_coverage(rows: List[Dict], truths: Dict[str, float], out_png: Path):
-    # collect unique coverages sorted
     covs = sorted(set(float(r["coverage_target"]) for r in rows))
-    # which parameters are present in fits?
     fit_keys = sorted({k.replace("fit_","") for r in rows for k in r.keys() if k.startswith("fit_")})
     if not fit_keys:
         print("[plots] no fitted parameters found; skipping plot.")
@@ -430,7 +527,6 @@ def plot_errors_vs_coverage(rows: List[Dict], truths: Dict[str, float], out_png:
     fig, axes = plt.subplots(1, n, figsize=(4*n, 3.5), dpi=150, squeeze=False)
     for j, p in enumerate(fit_keys):
         ax = axes[0, j]
-        # points per replicate
         xs, ys = [], []
         for r in rows:
             if f"fit_{p}" in r and p in truths and truths[p] > 0:
@@ -438,7 +534,6 @@ def plot_errors_vs_coverage(rows: List[Dict], truths: Dict[str, float], out_png:
                 ys.append(100.0 * (float(r[f"fit_{p}"]) - truths[p]) / truths[p])
         if xs:
             ax.scatter(xs, ys, s=14, alpha=0.7)
-        # median per coverage
         medx, medy = [], []
         for c in covs:
             vals = [100.0 * (float(r.get(f"fit_{p}", np.nan)) - truths[p]) / truths[p]
@@ -458,34 +553,128 @@ def plot_errors_vs_coverage(rows: List[Dict], truths: Dict[str, float], out_png:
     plt.close(fig)
     print(f"[plots] wrote {out_png}")
 
+# ────────────────────────── utils ──────────────────────────
+def _build_coverage_list(a) -> List[float]:
+    vals: List[float] = []
+    if a.coverage_grid.strip():
+        vals.extend(float(x) for x in a.coverage_grid.split(","))
+    if a.coverage_min is not None and a.coverage_max is not None and a.coverage_n:
+        lo, hi, n = float(a.coverage_min), float(a.coverage_max), int(a.coverage_n)
+        if n < 1: raise ValueError("--coverage-n must be >=1")
+        if a.coverage_space == "lin":
+            vals.extend(np.linspace(lo, hi, n).tolist())
+        else:
+            if lo <= 0 or hi <= 0:
+                raise ValueError("For log spacing, coverage min/max must be > 0.")
+            vals.extend(np.exp(np.linspace(np.log(lo), np.log(hi), n)).tolist())
+    if a.coverage is not None:
+        vals.append(float(a.coverage))
+    vals = sorted({max(0.0, min(1.0, float(v))) for v in vals})
+    return vals
+
 # ────────────────────────── main ──────────────────────────
 def main():
     a = parse_args()
 
-    # Determine coverage list
-    cov_list = None
-    if a.coverage_grid.strip():
-        cov_list = [float(x) for x in a.coverage_grid.split(",")]
-    elif a.coverage is not None:
-        cov_list = [float(a.coverage)]
+    # Hidden single-run branch (used by Ray subprocess worker)
+    if a._internal_single_run:
+        # per-task thread caps respected; build a tiny NS for reuse
+        class NS: pass
+        ns = NS(); ns.__dict__.update(vars(a))
+        row = run_single_sim_and_fit_serial(ns, coverage_target=a._internal_coverage,
+                                            label_suffix=a._internal_label,
+                                            seed_offset=a._internal_seed_offset)
+        if a._internal_row_json:
+            a._internal_row_json.parent.mkdir(parents=True, exist_ok=True)
+            a._internal_row_json.write_text(json.dumps(row))
+        else:
+            print(json.dumps(row))
+        return
+
+    # Thread hygiene (user can override)
+    tp = int(a.threads_per_task)
+    os.environ.setdefault("OMP_NUM_THREADS", str(tp))
+    os.environ.setdefault("MKL_NUM_THREADS", str(tp))
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", str(tp))
+
+    # if --cores used and ray-num-cpus not set, apply it
+    if a.cores is not None and a.ray_num_cpus is None:
+        a.ray_num_cpus = int(a.cores)
+
+    cov_list = _build_coverage_list(a)
 
     # If no coverage controls → single run (tile-based)
     if not cov_list:
-        intervals = build_tiling_intervals(a.length, a.exon_bp, a.tile_bp, jitter_bp=a.jitter_bp)
-        _ = run_single_sim_and_fit(a, intervals, label_suffix="", seed_offset=0, coverage_target=None)
+        _ = run_single_sim_and_fit_serial(a, coverage_target=None, label_suffix="", seed_offset=0)
         return
 
     # Sweep coverages with replicates
     base = Path(a.trees).with_suffix("")
     summary_csv = base.with_suffix(".sweep_summary.csv")
-    rows = []
+    rows: List[Dict] = []
     seed_counter = 0
-    for cov in cov_list:
-        intervals = intervals_from_coverage(a.length, a.exon_bp, cov, jitter_bp=a.jitter_bp)
-        for rep in range(a.replicates):
+    total_jobs = len(cov_list) * max(1, int(a.replicates))
+
+    if a.ray:
+        if ray is None:
+            raise RuntimeError("Ray is not installed. `pip install ray` and try again.")
+
+        # Init Ray
+        if a.ray_address:
+            ray.init(address=a.ray_address, ignore_reinit_error=True)
+        else:
+            ray.init(num_cpus=a.ray_num_cpus, ignore_reinit_error=True)
+
+        a_dict = {
+            "N_anc": a.N_anc, "N1": a.N1, "N2": a.N2, "t_split": a.t_split, "m": a.m,
+            "samples": a.samples, "species": a.species, "dfe": a.dfe,
+            "length": a.length, "mu": a.mu, "r": a.r,
+            "exon_bp": a.exon_bp, "tile_bp": a.tile_bp, "jitter_bp": a.jitter_bp,
+            "slim_scaling": a.slim_scaling, "slim_burn_in": a.slim_burn_in,
+            "seed": a.seed, "trees": a.trees, "vcf": a.vcf,
+            "skip_existing": a.skip_existing,
+            "moments_config": (str(a.moments_config) if a.moments_config else None),
+            "fixed_json": a.fixed_json,
+        }
+
+        script_path = str(Path(sys.argv[0]).resolve())
+        obj_ids = []
+        labels = []
+        for cov in cov_list:
+            for rep in range(a.replicates):
+                label = ("cov{:.6f}".format(max(0.0, cov))).replace(".", "p") + (f"_r{rep}" if a.replicates > 1 else "")
+                labels.append((label, cov, rep))
+                obj_ids.append(ray_worker_subprocess.remote(script_path, a_dict, cov, label, seed_counter, tp))
+                seed_counter += 1
+
+        # gather with simple progress
+        pending = list(obj_ids)
+        results = []
+        bar = tqdm(total=total_jobs, desc="sims", smoothing=0) if tqdm else None
+        while pending:
+            done, pending = ray.wait(pending, num_returns=1)
+            res = ray.get(done[0])
+            results.append(res)
+            if bar: bar.update(1)
+        if bar: bar.close()
+        ray.shutdown()
+
+        # stitch labels back onto rows
+        for (label, cov, rep), row in zip(labels, results):
+            row["label"] = label
+            row["coverage_target"] = cov
+            row["replicate"] = rep
+            rows.append(row)
+
+    else:
+        it = ((cov, rep) for cov in cov_list for rep in range(a.replicates))
+        iterator = tqdm(list(it), desc="sims") if tqdm else ((cov, rep) for cov in cov_list for rep in range(a.replicates))
+        for cov, rep in iterator:
             label = ("cov{:.6f}".format(max(0.0, cov))).replace(".", "p") + (f"_r{rep}" if a.replicates > 1 else "")
-            row = run_single_sim_and_fit(a, intervals, label_suffix=label,
-                                         seed_offset=seed_counter, coverage_target=cov)
+            row = run_single_sim_and_fit_serial(a, coverage_target=cov,
+                                                label_suffix=label, seed_offset=seed_counter)
+            row["label"] = label
+            row["coverage_target"] = cov
             row["replicate"] = rep
             rows.append(row)
             seed_counter += 1
@@ -500,7 +689,7 @@ def main():
     print(f"[sweep] wrote {summary_csv} with {len(rows)} rows")
 
     # Plot errors vs coverage if moments ran and we can map truths
-    if any(k.startswith("fit_") for k in rows[0].keys()):
+    if rows and any(k.startswith("fit_") for k in rows[0].keys()):
         truths = _true_param_map_from_cli(a)
         out_png = base.with_suffix(".errors_vs_coverage.png")
         plot_errors_vs_coverage(rows, truths, out_png)

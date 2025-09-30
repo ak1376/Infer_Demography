@@ -1,336 +1,390 @@
-# src/simulation.py
 from __future__ import annotations
-
-import copy
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple, Optional, List
 
 import demes
 import msprime
-import moments
 import numpy as np
-import stdpopsim
+import stdpopsim as sps
 import tskit
+import moments
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────
-def _anc_name_from_cfg(experiment_config: Optional[Dict]) -> str:
-    """Optional override via config['ancestral_name']; else 'ANC'."""
-    if experiment_config and "ancestral_name" in experiment_config:
-        return str(experiment_config["ancestral_name"])
-    return "ANC"
+# ──────────────────────────────────
+# Minimal helpers
+# ──────────────────────────────────
+
+class _ModelFromDemes(sps.DemographicModel):
+    """Wrap a demes.Graph so stdpopsim engines can simulate it (bottleneck, drosophila)."""
+    def __init__(self, g: demes.Graph, model_id: str = "custom_from_demes", desc: str = "custom demes"):
+        model = msprime.Demography.from_demes(g)
+        super().__init__(id=model_id, description=desc, long_description=desc, model=model, generation_time=1)
 
 
-def _cfg_pop_names(experiment_config: Optional[Dict], k: int = 2) -> List[str]:
+# Leaf-first stdpopsim models for SLiM (avoid p0=ANC extinction at split)
+class _IM_Symmetric(sps.DemographicModel):
     """
-    Pull the first k population names from config['num_samples'] (for consistent labeling).
-    Falls back to N1..Nk if missing.
+    Isolation-with-migration, symmetric: YRI <-> CEU with rate m; split at time T from ANC.
+    Populations are added as leaves first so p0/p1 are YRI/CEU (not ANC), avoiding zero-size errors.
     """
-    if experiment_config and "num_samples" in experiment_config:
-        names = list(experiment_config["num_samples"].keys())
-        if len(names) < k:
-            raise ValueError(f"Need at least {k} population names in config['num_samples']")
-        return names[:k]
-    return [f"N{i+1}" for i in range(k)]
+    def __init__(self, N0, N1, N2, T, m):
+        dem = msprime.Demography()
+        dem.add_population(name="YRI", initial_size=float(N1))
+        dem.add_population(name="CEU", initial_size=float(N2))
+        dem.add_population(name="ANC", initial_size=float(N0))
+        m = float(m)
+        dem.set_migration_rate(source="YRI", dest="CEU", rate=m)
+        dem.set_migration_rate(source="CEU", dest="YRI", rate=m)
+        dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
+        super().__init__(
+            id="IM_sym",
+            description="Isolation-with-migration, symmetric",
+            long_description="ANC splits at T into YRI and CEU; symmetric migration m.",
+            model=dem,
+            generation_time=1,
+        )
 
 
-def _build_tiling_intervals(L: int, exon_bp: int = 200, tile_bp: int = 1000) -> np.ndarray:
-    """
-    Simple exon tiling intervals for BGS.
-    Returns Nx2 array of [start, end) integer positions.
-    """
-    L = int(L)
+class _IM_Asymmetric(sps.DemographicModel):
+    """Isolation-with-migration, asymmetric: YRI->CEU rate m12; CEU->YRI rate m21."""
+    def __init__(self, N0, N1, N2, T, m12, m21):
+        dem = msprime.Demography()
+        dem.add_population(name="YRI", initial_size=float(N1))
+        dem.add_population(name="CEU", initial_size=float(N2))
+        dem.add_population(name="ANC", initial_size=float(N0))
+        dem.set_migration_rate(source="YRI", dest="CEU", rate=float(m12))
+        dem.set_migration_rate(source="CEU", dest="YRI", rate=float(m21))
+        dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
+        super().__init__(
+            id="IM_asym",
+            description="Isolation-with-migration, asymmetric",
+            long_description="ANC splits at T into YRI and CEU; migration m12 and m21.",
+            model=dem,
+            generation_time=1,
+        )
+
+
+# ──────────────────────────────────
+# NEW: interval helpers for coverage-based tiling
+# ──────────────────────────────────
+
+def _sanitize_nonoverlap(intervals: np.ndarray, L: int) -> np.ndarray:
+    if intervals.size == 0:
+        return intervals
+    iv = intervals[np.argsort(intervals[:, 0])]
+    out = []
+    prev_end = -1
+    for s, e in iv:
+        s = int(max(0, min(s, L)))
+        e = int(max(0, min(e, L)))
+        if e <= s:
+            continue
+        if s < prev_end:
+            continue
+        out.append((s, e))
+        prev_end = e
+    return np.array(out, dtype=int) if out else np.empty((0, 2), dtype=int)
+
+def _build_tiling_intervals(L: int, exon_bp: int, tile_bp: int, jitter_bp: int = 0) -> np.ndarray:
     starts = np.arange(0, max(0, L - exon_bp + 1), tile_bp, dtype=int)
-    ends = np.minimum(starts + exon_bp, L).astype(int)
-    return np.column_stack([starts, ends])
+    if jitter_bp > 0 and len(starts) > 0:
+        rng = np.random.default_rng()
+        jitter = rng.integers(-jitter_bp, jitter_bp + 1, size=len(starts))
+        starts = np.clip(starts + jitter, 0, max(0, L - exon_bp))
+    ends = np.minimum(starts + int(exon_bp), L).astype(int)
+    iv = np.column_stack([starts, ends])
+    return _sanitize_nonoverlap(iv, L)
+
+def _intervals_from_coverage(L: int, exon_bp: int, coverage: float, jitter_bp: int = 0) -> np.ndarray:
+    """coverage in [0,1]. If 0 → empty; if 1 → whole contig; else tiling to approximate coverage."""
+    if coverage <= 0:
+        return np.empty((0, 2), dtype=int)
+    if coverage >= 1.0:
+        return np.array([[0, int(L)]], dtype=int)
+    # spacing chosen so expected selected fraction ≈ coverage
+    tile_bp = max(int(exon_bp), int(round(exon_bp / float(max(coverage, 1e-12)))))
+    return _build_tiling_intervals(int(L), int(exon_bp), tile_bp, jitter_bp=jitter_bp)
 
 
-def _rename_demes(g: demes.Graph, name_map: Dict[str, str]) -> demes.Graph:
+def _contig_from_cfg(cfg: Dict, sel: Dict):
     """
-    Return a new demes.Graph with deme names (and all references) renamed.
+    Synthetic-only contig builder.
+    Builds a stdpopsim Contig of length = cfg["genome_length"],
+    with user-specified mutation_rate and recombination_rate.
     """
-    d = copy.deepcopy(g.asdict())
+    sp = sps.get_species(sel.get("species", "HomSap"))
 
-    # Demes + ancestors
-    for deme in d.get("demes", []):
-        old = deme["name"]
-        if old in name_map:
-            deme["name"] = name_map[old]
-        if "ancestors" in deme and deme["ancestors"]:
-            deme["ancestors"] = [name_map.get(a, a) for a in deme["ancestors"]]
+    L = float(cfg["genome_length"])
+    mu = float(cfg["mutation_rate"]) if "mutation_rate" in cfg else None
+    r  = float(cfg["recombination_rate"]) if "recombination_rate" in cfg else None
 
-    # Continuous migrations
-    for mig in d.get("migrations", []) or []:
-        if "source" in mig:
-            mig["source"] = name_map.get(mig["source"], mig["source"])
-        if "dest" in mig:
-            mig["dest"] = name_map.get(mig["dest"], mig["dest"])
+    try:
+        # Newer stdpopsim supports recombination_rate kwarg
+        return sp.get_contig(
+            chromosome=None,
+            length=L,
+            mutation_rate=mu,
+            recombination_rate=r,
+        )
+    except TypeError:
+        # Older stdpopsim doesn’t accept recombination_rate
+        if r is not None:
+            print("[warn] This stdpopsim version ignores custom recombination_rate; "
+                  "using species default instead.")
+        return sp.get_contig(
+            chromosome=None,
+            length=L,
+            mutation_rate=mu,
+        )
 
-    # Pulses
-    for pul in d.get("pulses", []) or []:
-        if "source" in pul:
-            pul["source"] = name_map.get(pul["source"], pul["source"])
-        if "dest" in pul:
-            pul["dest"] = name_map.get(pul["dest"], pul["dest"])
-
-    return demes.loads(demes.dumps(d))  # validate
-
-
-def _sps_model_from_demes(
-    g: demes.Graph, model_id: str, description: str, long_description: str = ""
-) -> stdpopsim.DemographicModel:
+# CHANGED: now supports optional coverage tiling across the contig
+def _apply_dfe_intervals(contig, sel: Dict) -> Dict[str, float]:
     """
-    Convert a demes.Graph to a stdpopsim.DemographicModel (requires stdpopsim>=0.3).
+    Attach DFE over intervals determined by either:
+      - coverage_fraction / coverage_percent (preferred), or
+      - fixed tile spacing via tile_bp, or
+      - whole contig if nothing is specified.
+
+    Returns summary {selected_bp, selected_frac}.
     """
-    return stdpopsim.DemographicModel.from_demes(
-        g, id=model_id, description=description, long_description=long_description
-    )
+    sp = sps.get_species(sel.get("species", "HomSap"))
+    dfe = sp.get_dfe(sel.get("dfe_id", "Gamma_K17"))
+
+    # robust length getter (works for real windows and synthetic contigs)
+    L = int(getattr(contig, "length", getattr(contig, "recombination_map").sequence_length))
+
+    exon_bp   = int(sel.get("exon_bp", 200))
+    jitter_bp = int(sel.get("jitter_bp", 0))
+
+    cov_frac = None
+    if "coverage_fraction" in sel:
+        cov_frac = float(sel["coverage_fraction"])
+    elif "coverage_percent" in sel:
+        cov_frac = max(0.0, min(1.0, float(sel["coverage_percent"]) / 100.0))
+
+    if cov_frac is not None:
+        intervals = _intervals_from_coverage(L, exon_bp, cov_frac, jitter_bp=jitter_bp)
+    elif "tile_bp" in sel and sel["tile_bp"] is not None:
+        intervals = _build_tiling_intervals(L, exon_bp, int(sel["tile_bp"]), jitter_bp=jitter_bp)
+    else:
+        # default: whole contig
+        intervals = np.array([[0, L]], dtype=int)
+
+    if intervals.size > 0:
+        contig.add_dfe(intervals=intervals, DFE=dfe)
+
+    selected_bp = int(np.sum((intervals[:, 1] - intervals[:, 0])) if intervals.size else 0)
+    return dict(selected_bp=selected_bp, selected_frac=(selected_bp / float(L) if L > 0 else 0.0))
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Demographic model builders (return demes.Graph)
-# ──────────────────────────────────────────────────────────────────────
-def bottleneck_model(sampled_params: Dict[str, float],
-                     experiment_config: Optional[Dict] = None) -> demes.Graph:
-    anc = _anc_name_from_cfg(experiment_config)
-    N0 = float(sampled_params["N0"])
-    N_b = float(sampled_params["N_bottleneck"])
-    N_r = float(sampled_params["N_recover"])
-    t_start = float(sampled_params["t_bottleneck_start"])  # generations ago
-    t_end   = float(sampled_params["t_bottleneck_end"])    # generations ago
+# ──────────────────────────────────
+# Your demography builders (demes)
+# ──────────────────────────────────
 
+def bottleneck_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
     b = demes.Builder()
     b.add_deme(
-        anc,
+        "ANC",
         epochs=[
-            dict(start_size=N0, end_time=t_start),
-            dict(start_size=N_b, end_time=t_end),
-            dict(start_size=N_r, end_time=0),
+            dict(start_size=float(sampled["N0"]),            end_time=float(sampled["t_bottleneck_start"])),
+            dict(start_size=float(sampled["N_bottleneck"]), end_time=float(sampled["t_bottleneck_end"])),
+            dict(start_size=float(sampled["N_recover"]),    end_time=0),
         ],
     )
     return b.resolve()
 
 
-def split_isolation_model(sampled_params: Dict[str, float],
-                          experiment_config: Optional[Dict] = None) -> demes.Graph:
-    anc = _anc_name_from_cfg(experiment_config)
-    p1, p2 = _cfg_pop_names(experiment_config, k=2)
-
-    N0 = float(sampled_params.get("N_anc", sampled_params.get("N0")))
-    N1 = float(sampled_params.get(f"N_{p1}", sampled_params.get("N1")))
-    N2 = float(sampled_params.get(f"N_{p2}", sampled_params.get("N2")))
-    T  = float(sampled_params.get("T_split", sampled_params.get("t_split")))
+def split_isolation_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+    """Split + symmetric low migration (YRI/CEU)."""
+    N0 = float(sampled.get("N_anc", sampled.get("N0")))
+    N1 = float(sampled.get("N_YRI", sampled.get("N1")))
+    N2 = float(sampled.get("N_CEU", sampled.get("N2")))
+    T  = float(sampled.get("T_split", sampled.get("t_split")))
+    # accept MANY possible keys; if both directions provided, average them
+    m_keys = [
+        "m", "m_sym", "m12", "m21", "m_YRI_CEU", "m_CEU_YRI"
+    ]
+    vals = [float(sampled[k]) for k in m_keys if k in sampled]
+    m = float(np.mean(vals)) if vals else 0.0
 
     b = demes.Builder()
-    b.add_deme(anc, epochs=[dict(start_size=N0, end_time=T)])
-    b.add_deme(p1, ancestors=[anc], epochs=[dict(start_size=N1)])
-    b.add_deme(p2, ancestors=[anc], epochs=[dict(start_size=N2)])
+    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T)])
+    b.add_deme("YRI", ancestors=["ANC"], epochs=[dict(start_size=N1)])
+    b.add_deme("CEU", ancestors=["ANC"], epochs=[dict(start_size=N2)])
+    if m > 0:
+        b.add_migration(source="YRI", dest="CEU", rate=m)
+        b.add_migration(source="CEU", dest="YRI", rate=m)
     return b.resolve()
 
 
-def split_migration_model(sampled_params: Dict[str, float],
-                          experiment_config: Optional[Dict] = None) -> demes.Graph:
-    anc = _anc_name_from_cfg(experiment_config)
-    p1, p2 = _cfg_pop_names(experiment_config, k=2)
-
-    N0 = float(sampled_params.get("N_anc", sampled_params.get("N0")))
-    N1 = float(sampled_params.get(f"N_{p1}", sampled_params.get("N1")))
-    N2 = float(sampled_params.get(f"N_{p2}", sampled_params.get("N2")))
-    T  = float(sampled_params.get("T_split", sampled_params.get("t_split")))
-    m12 = float(sampled_params.get(f"m_{p1}_{p2}", sampled_params.get("m12", sampled_params.get("m", 0.0))))
-    m21 = float(sampled_params.get(f"m_{p2}_{p1}", sampled_params.get("m21", sampled_params.get("m", 0.0))))
+def split_migration_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+    """
+    Split + asymmetric migration (two rates).
+    Deme names: 'YRI' and 'CEU'.
+    """
+    N0 = float(sampled.get("N_anc", sampled.get("N0")))
+    N1 = float(sampled.get("N_YRI", sampled.get("N1")))
+    N2 = float(sampled.get("N_CEU", sampled.get("N2")))
+    T  = float(sampled.get("T_split", sampled.get("t_split")))
+    m12 = float(sampled.get("m_YRI_CEU", sampled.get("m12", sampled.get("m", 0.0))))
+    m21 = float(sampled.get("m_CEU_YRI", sampled.get("m21", sampled.get("m", 0.0))))
 
     b = demes.Builder()
-    b.add_deme(anc, epochs=[dict(start_size=N0, end_time=T)])
-    b.add_deme(p1, ancestors=[anc], epochs=[dict(start_size=N1)])
-    b.add_deme(p2, ancestors=[anc], epochs=[dict(start_size=N2)])
+    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T)])
+    b.add_deme("YRI", ancestors=["ANC"], epochs=[dict(start_size=N1)])
+    b.add_deme("CEU", ancestors=["ANC"], epochs=[dict(start_size=N2)])
     if m12 > 0:
-        b.add_migration(source=p1, dest=p2, rate=m12)
+        b.add_migration(source="YRI", dest="CEU", rate=m12)
     if m21 > 0:
-        b.add_migration(source=p2, dest=p1, rate=m21)
+        b.add_migration(source="CEU", dest="YRI", rate=m21)
     return b.resolve()
 
 
-def drosophila_three_epoch(sampled_params: Dict[str, float],
-                           experiment_config: Optional[Dict] = None) -> demes.Graph:
+def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
     """
-    Start from stdpopsim DroMel OutOfAfrica_2L06, apply overrides, convert to demes,
-    optionally rename leaf demes to match config pop names (first two).
+    Two-pop Drosophila-style model:
+      ANC (size N0) → split at T_AFR_EUR_split → AFR (AFR_recover)
+      and EUR with a bottleneck at T_EUR_expansion then recovery to EUR_recover.
+    Deme names: 'AFR' and 'EUR'.
     """
-    species = stdpopsim.get_species("DroMel")
-    model = species.get_demographic_model("OutOfAfrica_2L06")
+    N0              = float(sampled["N0"])
+    AFR_recover     = float(sampled["AFR"])
+    EUR_bottleneck  = float(sampled["EUR_bottleneck"])
+    EUR_recover     = float(sampled["EUR_recover"])
+    T_split         = float(sampled["T_AFR_EUR_split"])
+    T_EUR_exp       = float(sampled["T_EUR_expansion"])
 
-    N0               = float(sampled_params["N0"])
-    AFR_recover      = float(sampled_params["AFR"])
-    EUR_bottleneck   = float(sampled_params["EUR_bottleneck"])
-    EUR_recover      = float(sampled_params["EUR_recover"])
-    T_AFR_expansion  = float(sampled_params["T_AFR_expansion"])
-    T_AFR_EUR_split  = float(sampled_params["T_AFR_EUR_split"])
-    T_EUR_expansion  = float(sampled_params["T_EUR_expansion"])
-
-    # override the underlying msprime demography embedded in stdpopsim model
-    model.model.events[2].initial_size      = N0
-    model.model.populations[0].initial_size = AFR_recover
-    model.model.events[0].initial_size      = EUR_bottleneck
-    model.model.populations[1].initial_size = EUR_recover
-    model.model.events[2].time              = T_AFR_expansion
-    model.model.events[1].time              = T_AFR_EUR_split
-    model.model.events[0].time              = T_EUR_expansion
-
-    g = model.model.to_demes()  # names 'AFR','EUR'
-
-    # Optionally rename leaf demes to match config labels (first two names)
-    if experiment_config and "num_samples" in experiment_config:
-        cfg_names = list(experiment_config["num_samples"].keys())
-        if len(cfg_names) >= 2:
-            old = ["AFR", "EUR"]
-            new = cfg_names[:2]
-            if old != new:
-                g = _rename_demes(g, dict(zip(old, new)))
-
-    return g
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Simulation entry (neutral via msprime; BGS via stdpopsim+SLiM using same demes)
-# ──────────────────────────────────────────────────────────────────────
-def _build_demes(model_type: str, sampled_params: Dict[str, float], cfg: Dict) -> demes.Graph:
-    if model_type == "bottleneck":
-        return bottleneck_model(sampled_params, cfg)
-    if model_type == "split_isolation":
-        return split_isolation_model(sampled_params, cfg)
-    if model_type == "split_migration":
-        return split_migration_model(sampled_params, cfg)
-    if model_type == "drosophila_three_epoch":
-        return drosophila_three_epoch(sampled_params, cfg)
-    raise ValueError(f"Unknown model type: {model_type}")
-
-
-def _samples_from_cfg_for_model(model: stdpopsim.DemographicModel, cfg: Dict) -> Dict[str, int]:
-    """
-    Build samples dict by intersecting cfg['num_samples'] with model population IDs.
-    """
-    cfg_ns = (cfg.get("num_samples") or {})
-    model_ids = {p.id for p in model.populations}
-    out = {k: int(v) for k, v in cfg_ns.items() if k in model_ids and int(v) > 0}
-    if not out:
-        raise ValueError(
-            f"No overlap between num_samples keys {list(cfg_ns.keys())} "
-            f"and model population IDs {sorted(model_ids)}."
-        )
-    return out
-
-
-def _simulate_neutral(g: demes.Graph, cfg: Dict) -> tskit.TreeSequence:
-    demog = msprime.Demography.from_demes(g)
-    samples = {k: int(v) for k, v in (cfg.get("num_samples") or {}).items()}
-    ts = msprime.sim_ancestry(
-        samples=samples,
-        demography=demog,
-        sequence_length=float(cfg["genome_length"]),
-        recombination_rate=float(cfg["recombination_rate"]),
-        random_seed=int(cfg["seed"]),
+    b = demes.Builder()
+    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T_split)])
+    b.add_deme("AFR", ancestors=["ANC"], epochs=[dict(start_size=AFR_recover)])
+    b.add_deme(
+        "EUR", ancestors=["ANC"],
+        epochs=[dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),
+                dict(start_size=EUR_recover, end_time=0)]
     )
-    ts = msprime.sim_mutations(
-        ts, rate=float(cfg["mutation_rate"]), random_seed=int(cfg["seed"])
-    )
-    return ts
+    return b.resolve()
 
 
-def _simulate_bgs(g: demes.Graph, cfg: Dict, sel_cfg: Dict) -> tskit.TreeSequence:
-    # 1) Convert demes -> stdpopsim model (same demography as neutral)
-    model_id = sel_cfg.get("model_id", "custom_from_demes")
-    desc     = sel_cfg.get("model_desc", "Custom demography via demes")
-    model = _sps_model_from_demes(g, model_id, desc)
-
-    # 2) Build contig with same μ, r, L (your cfg overrides species defaults)
-    sp_id   = sel_cfg.get("species", "HomSap")
-    dfe_id  = sel_cfg.get("dfe_id", "Gamma_K17")
-    exon_bp = int(sel_cfg.get("exon_bp", 200))
-    tile_bp = int(sel_cfg.get("tile_bp", 5000))
-    Q       = float(sel_cfg.get("slim_scaling", 10.0))
-    burnin  = float(sel_cfg.get("slim_burn_in", 5.0))
-
-    sp = stdpopsim.get_species(sp_id)
-    contig = sp.get_contig(
-        chromosome=None,
-        length=float(cfg["genome_length"]),
-        mutation_rate=float(cfg["mutation_rate"]),
-        recombination_rate=float(cfg["recombination_rate"]),
-    )
-
-    # 3) Attach DFE tiling (Background Selection)
-    intervals = _build_tiling_intervals(cfg["genome_length"], exon_bp=exon_bp, tile_bp=tile_bp)
-    dfe = sp.get_dfe(dfe_id)
-    contig.add_dfe(intervals, dfe)
-
-    # 4) Samples (keys must match demes/ model pop IDs)
-    samples = _samples_from_cfg_for_model(model, cfg)
-
-    # 5) Run SLiM
-    ts = stdpopsim.get_engine("slim").simulate(
-        model,
-        contig,
-        samples,
-        seed=cfg.get("seed", None),
-        slim_scaling_factor=Q,
-        slim_burn_in=burnin,
-    )
-    return ts
-
+# ──────────────────────────────────
+# Main entry: BGS only (SLiM via stdpopsim)
+# ──────────────────────────────────
 
 def simulation(sampled_params: Dict[str, float],
                model_type: str,
-               experiment_config: Dict) -> Tuple[tskit.TreeSequence, Optional[demes.Graph]]:
+               experiment_config: Dict) -> Tuple[tskit.TreeSequence, demes.Graph]:
     """
-    One place to run either neutral (msprime) or BGS (SLiM via stdpopsim),
-    while keeping the *same* demography built from your demes functions.
-    """
-    sel_cfg = (experiment_config.get("selection") or {})
-    g = _build_demes(model_type, sampled_params, experiment_config)
+    Background selection only. Uses your demes graph + stdpopsim SLiM engine.
 
-    if sel_cfg.get("enabled", False):
-        ts = _simulate_bgs(g, experiment_config, sel_cfg)
-        return ts, g  # return g so you can still plot the demes graph
+    Config expects:
+      - num_samples (keys must match deme names, e.g. {"YRI":10,"CEU":10})
+      - mutation_rate, recombination_rate, genome_length (for synthetic contigs)
+      - seed
+      - selection:
+          enabled: true
+          species: "HomSap"
+          dfe_id: "Gamma_K17"
+          # (optional real chromosome window)
+          chromosome: "chr21"
+          left: 0
+          right: 1e6
+          genetic_map: "HapMapII_GRCh37"   # recommended for real chr
+          # BGS tiling
+          coverage_fraction: 0.2  # or coverage_percent: 20.0
+          exon_bp: 200
+          jitter_bp: 0
+          # OR fixed spacing:
+          # tile_bp: 5000
+          # SLiM rescaling
+          slim_scaling: 10.0
+          slim_burn_in: 5.0
+    """
+    sel = experiment_config.get("selection") or {}
+    if not sel.get("enabled", False):
+        raise ValueError("This file only runs BGS. Set selection.enabled=true.")
+
+    # 1) Build demes graph (kept for plotting/metadata)
+    if model_type == "bottleneck":
+        g = bottleneck_model(sampled_params, experiment_config)
+    elif model_type == "split_isolation":
+        g = split_isolation_model(sampled_params, experiment_config)   # symmetric m
+    elif model_type == "split_migration":
+        g = split_migration_model(sampled_params, experiment_config)   # asymmetric
+    elif model_type == "drosophila_three_epoch":
+        g = drosophila_three_epoch(sampled_params, experiment_config)
     else:
-        ts = _simulate_neutral(g, experiment_config)
-        return ts, g
+        raise ValueError(f"Unknown model_type: {model_type}")
+
+    # 2) Choose the SLiM-facing stdpopsim model
+    if model_type == "split_isolation":
+        N0 = float(sampled_params.get("N_anc", sampled_params.get("N0")))
+        N1 = float(sampled_params.get("N_YRI", sampled_params.get("N1")))
+        N2 = float(sampled_params.get("N_CEU", sampled_params.get("N2")))
+        T  = float(sampled_params.get("T_split", sampled_params.get("t_split")))
+        m  = float(sampled_params.get("m", sampled_params.get("m_sym",
+                 sampled_params.get("m12", sampled_params.get("m21", 0.0)))))
+        model = _IM_Symmetric(N0, N1, N2, T, m)
+    elif model_type == "split_migration":
+        N0 = float(sampled_params.get("N_anc", sampled_params.get("N0")))
+        N1 = float(sampled_params.get("N_YRI", sampled_params.get("N1")))
+        N2 = float(sampled_params.get("N_CEU", sampled_params.get("N2")))
+        T  = float(sampled_params.get("T_split", sampled_params.get("t_split")))
+        m12 = float(sampled_params.get("m_YRI_CEU", sampled_params.get("m12", sampled_params.get("m", 0.0))))
+        m21 = float(sampled_params.get("m_CEU_YRI", sampled_params.get("m21", sampled_params.get("m", 0.0))))
+        model = _IM_Asymmetric(N0, N1, N2, T, m12, m21)
+    else:
+        # bottleneck & drosophila: Demes wrapper is fine
+        model = _ModelFromDemes(g, model_id=f"custom_{model_type}", desc="custom demes")
+
+    # 3) Contig + DFE intervals (coverage-aware)
+    contig = _contig_from_cfg(experiment_config, sel)
+    sel_summary = _apply_dfe_intervals(contig, sel)  # ← coverage handled here
+
+    # 4) SLiM run
+    samples = {k: int(v) for k, v in (experiment_config.get("num_samples") or {}).items()}
+    eng = sps.get_engine("slim")
+    base_seed = experiment_config.get("seed", None)
+    if base_seed is not None:
+        ts = eng.simulate(
+            model,
+            contig,
+            samples,
+            slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
+            slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
+        )
+    else:
+        ts = eng.simulate(
+            model,
+            contig,
+            samples,
+            slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
+            slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
+        )
+
+    # Attach summary for the caller (via ts.metadata? we just return g and ts;
+    # the CLI wrapper will record sel_summary into the JSON sidecar.)
+    ts._bgs_selection_summary = sel_summary  # harmless, for downstream use
+
+    return ts, g
 
 
-# ──────────────────────────────────────────────────────────────────────
-# SFS builder
-# ──────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────
+# SFS utility
+# ──────────────────────────────────
+
 def create_SFS(ts: tskit.TreeSequence) -> moments.Spectrum:
-    """
-    Build a moments.Spectrum using ONLY populations that have sampled individuals.
-    sfs.pop_ids length equals dimensionality.
-    """
-    pop_idx_with_samples: List[Tuple[int, np.ndarray]] = []
-    for pop in ts.populations():
-        idx = pop.id
-        samp = ts.samples(population=idx)
-        if len(samp) > 0:
-            pop_idx_with_samples.append((idx, samp))
-
-    if not pop_idx_with_samples:
-        raise ValueError("No sampled populations found in the tree sequence.")
-
-    sample_sets = [samp for _, samp in pop_idx_with_samples]
-
+    """Build a moments.Spectrum using pops that have sampled individuals."""
+    sample_sets: List[np.ndarray] = []
     pop_ids: List[str] = []
-    for idx, _ in pop_idx_with_samples:
-        meta = ts.population(idx).metadata
-        name = meta.get("name") if isinstance(meta, dict) else None
-        pop_ids.append(name if name else f"pop{idx}")
-
+    for pop in ts.populations():
+        samps = ts.samples(population=pop.id)
+        if len(samps):
+            sample_sets.append(samps)
+            meta = pop.metadata if isinstance(pop.metadata, dict) else {}
+            pop_ids.append(meta.get("name", f"pop{pop.id}"))
+    if not sample_sets:
+        raise ValueError("No sampled populations found.")
     arr = ts.allele_frequency_spectrum(
-        sample_sets=sample_sets,
-        mode="site",
-        polarised=True,
-        span_normalise=False
+        sample_sets=sample_sets, mode="site", polarised=True, span_normalise=False
     )
-
     sfs = moments.Spectrum(arr)
     sfs.pop_ids = pop_ids
     return sfs

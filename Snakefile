@@ -89,7 +89,7 @@ rule all:
         expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
         # # Aggregated optimizer results
-        # [final_pkl(sid, "moments") for sid in SIM_IDS],
+        [final_pkl(sid, "moments") for sid in SIM_IDS],
         # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # # LD artifacts
@@ -207,6 +207,8 @@ rule infer_moments:
           --model-py "{params.model_py}" \
           --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
+          --generate-profiles \
+
           {params.fix}
 
         cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"

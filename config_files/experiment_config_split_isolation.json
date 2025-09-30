@@ -1,7 +1,7 @@
 {
-  "genome_length": 1000000,
-  "mutation_rate": 1.5e-8,
-  "recombination_rate": 1.5e-8,
+  "genome_length": 1e7,
+  "mutation_rate": 1.29e-8,
+  "recombination_rate": 1.2e-8,
   "demographic_model": "split_isolation",
   "num_samples": { "YRI": 10, "CEU": 10 },
   "seed": 42,
@@ -19,13 +19,8 @@
 
   "selection": {
     "enabled": true,
-    "engine": "stdpopsim",
     "species": "HomSap",
-    "use_custom_model": true, 
     "dfe_id": "Gamma_K17",
-    "exon_bp": 200,
-    "tile_bp": 5000,
-    "slim_scaling": 10.0,
-    "slim_burn_in": 5.0
+    "coverage_percent": 0.01
   }
 }
