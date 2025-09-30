@@ -21,6 +21,6 @@
     "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
-    "coverage_percent": 0.01
+    "coverage_percent": 50
   }
 }

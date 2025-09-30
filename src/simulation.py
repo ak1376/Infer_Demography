@@ -319,7 +319,7 @@ def simulation(sampled_params: Dict[str, float],
         N1 = float(sampled_params.get("N_YRI", sampled_params.get("N1")))
         N2 = float(sampled_params.get("N_CEU", sampled_params.get("N2")))
         T  = float(sampled_params.get("T_split", sampled_params.get("t_split")))
-        m  = float(sampled_params.get("m", sampled_params.get("m_sym",
+        m  = float(sampled_params.get("m", sampled_params.get("m_YRI_CEU",
                  sampled_params.get("m12", sampled_params.get("m21", 0.0)))))
         model = _IM_Symmetric(N0, N1, N2, T, m)
     elif model_type == "split_migration":

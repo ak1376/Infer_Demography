@@ -17,6 +17,7 @@ import demes
 import nlopt
 import numdifftools as nd
 import matplotlib.pyplot as plt
+from moments import Inference as MInf
 
 # Optional deps
 try:
@@ -139,15 +140,119 @@ def make_contig_and_apply_dfe(length: int, mu: float, r: float,
         contig.add_dfe(intervals=intervals, DFE=dfe)
     return contig
 
-# ────────────────────────── moments helpers (Poisson; UNCHANGED) ────────────
-def _moments_expected_sfs(params_vec: np.ndarray, param_names: List[str],
-                          sample_sizes: "_OD[str, int]", config: Dict) -> moments.Spectrum:
+# # ────────────────────────── moments helpers (Poisson; UNCHANGED) ────────────
+# def _moments_expected_sfs(params_vec: np.ndarray, param_names: List[str],
+#                           sample_sizes: "_OD[str, int]", config: Dict) -> moments.Spectrum:
+#     p = {k: float(v) for k, v in zip(param_names, params_vec)}
+#     g = split_isolation_graph(p)
+#     hap = [2 * n for n in sample_sizes.values()]
+#     demes_order = list(sample_sizes.keys())
+#     theta = float(p[param_names[0]]) * 4.0 * float(config["mutation_rate"]) * float(config["genome_length"])
+#     return moments.Spectrum.from_demes(g, sample_sizes=hap, sampled_demes=demes_order, theta=theta)
+
+# def _geometric_mean(lo: float, hi: float) -> float:
+#     return float(np.sqrt(float(lo) * float(hi)))
+
+# def _prepare_sample_sizes_from_sfs(sfs: moments.Spectrum) -> "_OD[str, int]":
+#     from collections import OrderedDict
+#     if hasattr(sfs, "pop_ids") and sfs.pop_ids:
+#         return OrderedDict((pid, (sfs.shape[i] - 1) // 2) for i, pid in enumerate(sfs.pop_ids))
+#     return OrderedDict((f"pop{i}", (n - 1) // 2) for i, n in enumerate(sfs.shape))
+
+# def fit_moments(sfs: moments.Spectrum, config: Dict,
+#                 fixed_params: Dict[str, float] | None = None) -> Tuple[np.ndarray, float, List[str]]:
+#     priors = config["priors"]
+#     param_names = list(priors.keys())
+#     lb = np.array([priors[p][0] for p in param_names], float)
+#     ub = np.array([priors[p][1] for p in param_names], float)
+#     start = np.array([_geometric_mean(*priors[p]) for p in param_names], float)
+
+#     fixed_params = dict(fixed_params or {})
+#     fixed_idx = [i for i, n in enumerate(param_names) if n in fixed_params]
+#     free_idx  = [i for i, n in enumerate(param_names) if n not in fixed_params]
+#     x0 = start.copy()
+#     for i in fixed_idx:
+#         x0[i] = float(fixed_params[param_names[i]])
+#         if not (lb[i] <= x0[i] <= ub[i]):
+#             raise ValueError(f"Fixed {param_names[i]}={x0[i]} outside bounds [{lb[i]},{ub[i]}]")
+
+#     ns = _prepare_sample_sizes_from_sfs(sfs)
+
+#     def pack_free(x_free: np.ndarray) -> np.ndarray:
+#         x = x0.copy()
+#         for j, i in enumerate(free_idx):
+#             x[i] = float(x_free[j])
+#         return x
+
+#     # Poisson composite log-likelihood (UNCHANGED)
+#     def obj_log10(xlog10_free: np.ndarray) -> float:
+#         x_free = 10.0 ** np.asarray(xlog10_free, float)
+#         x_full = pack_free(x_free)
+#         try:
+#             expected = _moments_expected_sfs(x_full, param_names, ns, config)
+#             if getattr(sfs, "folded", False):
+#                 expected = expected.fold()
+#             expected = np.maximum(expected, 1e-300)
+#             return float(np.sum(sfs * np.log(expected) - expected))
+#         except Exception as e:
+#             print(f"[moments obj] error: {e}")
+#             return -np.inf
+
+#     if len(free_idx) == 0:
+#         return x0, obj_log10(np.array([], float)), param_names
+
+#     lb_free = np.array([lb[i] for i in free_idx], float)
+#     ub_free = np.array([ub[i] for i in free_idx], float)
+#     x0_free = np.array([x0[i] for i in free_idx], float)
+#     x0_free = moments.Misc.perturb_params(x0_free, fold=0.1)
+#     x0_free = np.clip(x0_free, lb_free, ub_free)
+
+#     grad_fn = nd.Gradient(obj_log10, step=1e-4)
+
+#     def nlopt_objective(xlog10_free, grad):
+#         ll = obj_log10(xlog10_free)
+#         if grad.size > 0:
+#             grad[:] = grad_fn(xlog10_free)
+#         print(f"[LL={ll:.6g}] log10_free={np.array2string(np.asarray(xlog10_free), precision=4)}")
+#         return ll
+
+#     opt = nlopt.opt(nlopt.LD_LBFGS, len(free_idx))
+#     opt.set_lower_bounds(np.log10(np.maximum(lb_free, 1e-300)))
+#     opt.set_upper_bounds(np.log10(np.maximum(ub_free, 1e-300)))
+#     opt.set_max_objective(nlopt_objective)
+#     opt.set_ftol_rel(1e-8)
+#     opt.set_maxeval(10000)
+
+#     try:
+#         x_free_hat_log10 = opt.optimize(np.log10(np.maximum(x0_free, 1e-300)))
+#         ll_val = opt.last_optimum_value()
+#     except Exception as e:
+#         print(f"[moments] NLopt failed: {e}")
+#         x_free_hat_log10 = np.log10(np.maximum(x0_free, 1e-300))
+#         ll_val = obj_log10(x_free_hat_log10)
+
+#     x_free_hat = 10.0 ** x_free_hat_log10
+#     x_full_hat = pack_free(x_free_hat)
+#     return x_full_hat, ll_val, param_names
+
+# ────────────────────────── moments helpers (Multinomial; optimal scaling) ────────────
+from moments import Inference as MInf
+
+def _moments_expected_sfs_unscaled(
+    params_vec: np.ndarray,
+    param_names: List[str],
+    sample_sizes: "_OD[str, int]",
+) -> moments.Spectrum:
+    """
+    Expected SFS with theta=1 (unscaled). We scale to the data optimally in the objective.
+    """
     p = {k: float(v) for k, v in zip(param_names, params_vec)}
     g = split_isolation_graph(p)
     hap = [2 * n for n in sample_sizes.values()]
     demes_order = list(sample_sizes.keys())
-    theta = float(p[param_names[0]]) * 4.0 * float(config["mutation_rate"]) * float(config["genome_length"])
-    return moments.Spectrum.from_demes(g, sample_sizes=hap, sampled_demes=demes_order, theta=theta)
+    return moments.Spectrum.from_demes(
+        g, sample_sizes=hap, sampled_demes=demes_order, theta=1.0
+    )
 
 def _geometric_mean(lo: float, hi: float) -> float:
     return float(np.sqrt(float(lo) * float(hi)))
@@ -158,8 +263,11 @@ def _prepare_sample_sizes_from_sfs(sfs: moments.Spectrum) -> "_OD[str, int]":
         return OrderedDict((pid, (sfs.shape[i] - 1) // 2) for i, pid in enumerate(sfs.pop_ids))
     return OrderedDict((f"pop{i}", (n - 1) // 2) for i, n in enumerate(sfs.shape))
 
-def fit_moments(sfs: moments.Spectrum, config: Dict,
-                fixed_params: Dict[str, float] | None = None) -> Tuple[np.ndarray, float, List[str]]:
+def fit_moments(
+    sfs: moments.Spectrum,
+    config: Dict,
+    fixed_params: Dict[str, float] | None = None
+) -> Tuple[np.ndarray, float, List[str]]:
     priors = config["priors"]
     param_names = list(priors.keys())
     lb = np.array([priors[p][0] for p in param_names], float)
@@ -183,16 +291,24 @@ def fit_moments(sfs: moments.Spectrum, config: Dict,
             x[i] = float(x_free[j])
         return x
 
-    # Poisson composite log-likelihood (UNCHANGED)
+    # Multinomial log-likelihood with optimal scaling (decouples θ from N0)
     def obj_log10(xlog10_free: np.ndarray) -> float:
         x_free = 10.0 ** np.asarray(xlog10_free, float)
         x_full = pack_free(x_free)
         try:
-            expected = _moments_expected_sfs(x_full, param_names, ns, config)
+            model = _moments_expected_sfs_unscaled(x_full, param_names, ns)
+            # Optimal overall scale to match total segregating sites
+            scale = MInf.optimal_sfs_scaling(sfs, model)
+            model *= scale
+            # tiny floor to avoid zero cells, then renormalize to preserve total
+            total = float(model.sum())
+            if total <= 0:
+                return -np.inf
+            model = np.maximum(model, 1e-300)
+            model *= total / float(model.sum())
             if getattr(sfs, "folded", False):
-                expected = expected.fold()
-            expected = np.maximum(expected, 1e-300)
-            return float(np.sum(sfs * np.log(expected) - expected))
+                model = model.fold()
+            return float(MInf.ll_multinom(model, sfs))
         except Exception as e:
             print(f"[moments obj] error: {e}")
             return -np.inf
@@ -426,9 +542,8 @@ def run_single_sim_and_fit_serial(a, coverage_target: float | None, label_suffix
     best_ll = None
     if a.moments_config:
         cfg = json.loads(Path(a.moments_config).read_text())
-        for k in ("priors", "mutation_rate", "genome_length"):
-            if k not in cfg:
-                raise ValueError(f"--moments-config missing key: {k}")
+        if "priors" not in cfg:
+            raise ValueError("--moments-config must include 'priors'")
         fixed = json.loads(a.fixed_json) if a.fixed_json else {}
         best_vec, best_ll, names = fit_moments(sfs, cfg, fixed_params=fixed)
         best = {k: float(v) for k, v in zip(names, best_vec)}
