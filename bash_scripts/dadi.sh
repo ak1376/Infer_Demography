@@ -3,7 +3,7 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
-#SBATCH --time=8:00:00
+#SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=4G
 #SBATCH --partition=kern,preempt,kerngpu
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ---------------- batching knob ----------------
-BATCH_SIZE=10
+BATCH_SIZE=100
 
 # ---------------- paths & config ----------------
 ROOT="/projects/kernlab/akapoor/Infer_Demography"

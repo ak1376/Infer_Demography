@@ -12,7 +12,7 @@
     "seed": 42,
     "num_optimizations": 100,
     "top_k": 5,
-    "num_draws": 1000,
+    "num_draws": 10000,
   
     "priors": {
       "N0"            :  [5000,  20000],    
@@ -25,12 +25,13 @@
       "T_EUR_expansion" : [   500,   9000]    
     }, 
     "fixed_parameters": {
-        "T_AFR_expansion": "sampled"
+        "T_AFR_expansion": "sampled", 
+        "N0": "sampled"
       }, 
     
-    "use_FIM": true,
+    "use_FIM": false,
     "fim_engines": ["moments"],
-    "use_residuals": true,
+    "use_residuals": false,
     "residual_engines": "moments"
   }
   

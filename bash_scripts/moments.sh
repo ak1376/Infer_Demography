@@ -3,9 +3,9 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/moments_%A_%a.out
 #SBATCH --error=logs/moments_%A_%a.err
-#SBATCH --time=8:00:00
+#SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=8G
+#SBATCH --mem=12G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=10   # number of (sim,opt) pairs per array element
+BATCH_SIZE=100   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
