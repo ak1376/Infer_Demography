@@ -47,6 +47,27 @@ def sample_params(priors: Dict[str, List[float]], *,
             params["t_bottleneck_end"], params["t_bottleneck_start"])
     return params
 
+def sample_coverage(selection_cfg: Dict[str, List[float]], *,
+                    rng: Optional[np.random.Generator] = None) -> float:
+    """
+    Sample a coverage percentage from the prior specified in selection_cfg.
+
+    Parameters
+    ----------
+    selection_cfg : dict
+        Should contain key "coverage_percent" with [low, high] bounds.
+    rng : np.random.Generator, optional
+        Random number generator to use. Defaults to np.random.default_rng().
+
+    Returns
+    -------
+    float
+        Sampled coverage percentage.
+    """
+    rng = rng or np.random.default_rng()
+    low, high = selection_cfg["coverage_percent"]
+    return float(rng.uniform(low, high))
+
 
 # ------------------------------------------------------------------
 # main workflow
@@ -67,7 +88,8 @@ def run_simulation(simulation_dir: Path, experiment_config: Path, model_type: st
 
     # simulate (seeded sampling for reproducibility)
     sampled_params = sample_params(cfg["priors"])  # ← original: no seed offset, no rng passed
-    ts, g = simulation(sampled_params, model_type, cfg)  # ← original: only 3 args
+    sampled_coverage = sample_coverage(cfg["selection"])
+    ts, g = simulation(sampled_params, model_type, cfg, sampled_coverage)  # ← original: only 3 args
     sfs   = create_SFS(ts)
 
     # save artefacts

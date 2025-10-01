@@ -97,51 +97,51 @@ rule all:
         expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
         expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
 
-        # # FIM (always computed)
-        # expand(
-        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-        #     sid=SIM_IDS, engine=FIM_ENGINES
-        # ),
+        # FIM (always computed)
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+            sid=SIM_IDS, engine=FIM_ENGINES
+        ),
 
-        # # Residuals (always computed)
-        # expand(
-        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-        #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-        # ),
+        # Residuals (always computed)
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
+            sid=SIM_IDS, engine=RESIDUAL_ENGINES
+        ),
 
-        # # Combined per-sim inference blobs (include FIM/residuals payloads)
-        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
+        # Combined per-sim inference blobs (include FIM/residuals payloads)
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
-        # # Modeling datasets
-        # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        # Modeling datasets
+        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
 
-        # # Colors
-        # f"experiments/{MODEL}/modeling/color_shades.pkl",
-        # f"experiments/{MODEL}/modeling/main_colors.pkl",
+        # Colors
+        f"experiments/{MODEL}/modeling/color_shades.pkl",
+        f"experiments/{MODEL}/modeling/main_colors.pkl",
 
-        # # Models
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+        # Models
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
 
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
 
 ##############################################################################

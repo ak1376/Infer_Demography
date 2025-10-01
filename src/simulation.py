@@ -137,36 +137,46 @@ def _contig_from_cfg(cfg: Dict, sel: Dict):
         )
 
 # CHANGED: now supports optional coverage tiling across the contig
-def _apply_dfe_intervals(contig, sel: Dict) -> Dict[str, float]:
+def _apply_dfe_intervals(contig, sel: Dict, sampled_coverage: Optional[float] = None) -> Dict[str, float]:
     """
-    Attach DFE over intervals determined by either:
-      - coverage_fraction / coverage_percent (preferred), or
-      - fixed tile spacing via tile_bp, or
-      - whole contig if nothing is specified.
+    Attach DFE over intervals determined by:
+      1) sampled_coverage (takes precedence; may be percent >1 or fraction <=1),
+      2) sel['coverage_fraction'] or sel['coverage_percent'],
+      3) sel['tile_bp'], or
+      4) whole contig by default.
 
     Returns summary {selected_bp, selected_frac}.
     """
     sp = sps.get_species(sel.get("species", "HomSap"))
     dfe = sp.get_dfe(sel.get("dfe_id", "Gamma_K17"))
 
-    # robust length getter (works for real windows and synthetic contigs)
+    # robust length getter
     L = int(getattr(contig, "length", getattr(contig, "recombination_map").sequence_length))
 
     exon_bp   = int(sel.get("exon_bp", 200))
     jitter_bp = int(sel.get("jitter_bp", 0))
 
+    # 1) sampled_coverage overrides config if provided
     cov_frac = None
-    if "coverage_fraction" in sel:
-        cov_frac = float(sel["coverage_fraction"])
-    elif "coverage_percent" in sel:
-        cov_frac = max(0.0, min(1.0, float(sel["coverage_percent"]) / 100.0))
+    if sampled_coverage is not None:
+        # Accept either fraction in [0,1] or percent in (1,100]
+        cov_frac = float(sampled_coverage)
+        if cov_frac > 1.0:  # assume user passed a percent
+            cov_frac = cov_frac / 100.0
 
+    # 2) fall back to config coverage
+    if cov_frac is None:
+        if "coverage_fraction" in sel:
+            cov_frac = float(sel["coverage_fraction"])
+        elif "coverage_percent" in sel:
+            cov_frac = float(sel["coverage_percent"]) / 100.0
+
+    # Build intervals
     if cov_frac is not None:
         intervals = _intervals_from_coverage(L, exon_bp, cov_frac, jitter_bp=jitter_bp)
     elif "tile_bp" in sel and sel["tile_bp"] is not None:
         intervals = _build_tiling_intervals(L, exon_bp, int(sel["tile_bp"]), jitter_bp=jitter_bp)
     else:
-        # default: whole contig
         intervals = np.array([[0, L]], dtype=int)
 
     if intervals.size > 0:
@@ -270,7 +280,7 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
 
 def simulation(sampled_params: Dict[str, float],
                model_type: str,
-               experiment_config: Dict) -> Tuple[tskit.TreeSequence, demes.Graph]:
+               experiment_config: Dict, sampled_coverage: float) -> Tuple[tskit.TreeSequence, demes.Graph]:
     """
     Background selection only. Uses your demes graph + stdpopsim SLiM engine.
 
@@ -336,7 +346,7 @@ def simulation(sampled_params: Dict[str, float],
 
     # 3) Contig + DFE intervals (coverage-aware)
     contig = _contig_from_cfg(experiment_config, sel)
-    sel_summary = _apply_dfe_intervals(contig, sel)  # ← coverage handled here
+    sel_summary = _apply_dfe_intervals(contig, sel, sampled_coverage=sampled_coverage)
 
     # 4) SLiM run
     samples = {k: int(v) for k, v in (experiment_config.get("num_samples") or {}).items()}
