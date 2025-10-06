@@ -5,9 +5,9 @@
   "demographic_model": "split_isolation",
   "num_samples": { "YRI": 10, "CEU": 10 },
   "seed": 42,
-  "num_optimizations": 1,
-  "top_k": 1,
-  "num_draws": 100,
+  "num_optimizations": 100,
+  "top_k": 5,
+  "num_draws": 1000,
 
   "priors": {
     "N_anc":      [100, 30000],
@@ -22,5 +22,9 @@
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [1, 90]
-  }
+  },
+  "use_fim_features": false,
+  "fim_engines": ["moments"],
+  "use_residuals": false,
+  "residual_engines": "moments"
 }

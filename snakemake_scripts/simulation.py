@@ -87,9 +87,12 @@ def run_simulation(simulation_dir: Path, experiment_config: Path, model_type: st
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # simulate (seeded sampling for reproducibility)
-    sampled_params = sample_params(cfg["priors"])  # ← original: no seed offset, no rng passed
-    sampled_coverage = sample_coverage(cfg["selection"])
-    ts, g = simulation(sampled_params, model_type, cfg, sampled_coverage)  # ← original: only 3 args
+    sampled_params = sample_params(cfg["priors"])
+    sampled_coverage = sample_coverage(cfg["selection"])  # percent (e.g. 37.4)
+    print(f"• sampled coverage: {sampled_coverage:.2f}%")
+
+    # Run SLiM/stdpopsim path through src/simulation.simulation(...)
+    ts, g = simulation(sampled_params, model_type, cfg, sampled_coverage)
     sfs   = create_SFS(ts)
 
     # save artefacts
@@ -105,46 +108,63 @@ def run_simulation(simulation_dir: Path, experiment_config: Path, model_type: st
     ax.figure.savefig(fig_path, dpi=300, bbox_inches="tight")
     plt.close(ax.figure)
 
-    # metadata sidecar (now includes coverage summary if available)
+    # metadata sidecar (now includes the ACTUAL sampled coverage,
+    # plus realized selection tiling summary from ts._bgs_selection_summary)
     sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
+
+    # build a JSON-serializable dict (cast everything to primitives)
     meta = dict(
         selection=True,
-        species=sel_cfg.get("species", "HomSap"),
-        dfe_id=sel_cfg.get("dfe_id", "Gamma_K17"),
+        species=str(sel_cfg.get("species", "HomSap")),
+        dfe_id=str(sel_cfg.get("dfe_id", "Gamma_K17")),
 
-        # real-window options only present if you set them
+        # Real-window keys (None if unused)
         chromosome=sel_cfg.get("chromosome"),
         left=sel_cfg.get("left"),
         right=sel_cfg.get("right"),
         genetic_map=sel_cfg.get("genetic_map"),
 
-        # synthetic-contig parameters (used if not a real window)
-        genome_length=cfg.get("genome_length"),
-        mutation_rate=cfg.get("mutation_rate"),
-        recombination_rate=cfg.get("recombination_rate"),
+        # Synthetic-contig parameters
+        genome_length=float(cfg.get("genome_length")),
+        mutation_rate=float(cfg.get("mutation_rate")),
+        recombination_rate=float(cfg.get("recombination_rate")),
 
-        # BGS tiling / coverage knobs recorded for reproducibility
-        coverage_fraction=sel_cfg.get("coverage_fraction"),
-        coverage_percent=sel_cfg.get("coverage_percent"),
+        # BGS tiling / coverage knobs from config (if present)
+        coverage_fraction=(None if sel_cfg.get("coverage_fraction") is None
+                           else float(sel_cfg.get("coverage_fraction"))),
+        coverage_percent=(None if sel_cfg.get("coverage_percent") is None
+                          else [float(sel_cfg["coverage_percent"][0]),
+                                float(sel_cfg["coverage_percent"][1])]),
         exon_bp=int(sel_cfg.get("exon_bp", 200)),
         jitter_bp=int(sel_cfg.get("jitter_bp", 0)),
-        tile_bp=sel_cfg.get("tile_bp"),
+        tile_bp=(None if sel_cfg.get("tile_bp") is None else int(sel_cfg["tile_bp"])),
 
+        # Realized selection span (after interval building)
         selected_bp=int(sel_summary.get("selected_bp", 0)),
         selected_frac=float(sel_summary.get("selected_frac", 0.0)),
+
+        # CRITICAL: persist the actual coverage you sampled for this sim
+        sampled_coverage_percent=float(sampled_coverage),
+        # also store a fraction version for downstream (window) scripts
+        target_coverage_frac=(float(sampled_coverage) / 100.0
+                              if float(sampled_coverage) > 1.0
+                              else float(sampled_coverage)),
 
         # SLiM options
         slim_scaling=float(sel_cfg.get("slim_scaling", 10.0)),
         slim_burn_in=float(sel_cfg.get("slim_burn_in", 5.0)),
 
         # misc
-        num_samples=cfg.get("num_samples"),
-        seed=cfg.get("seed"),
+        num_samples={k: int(v) for k, v in (cfg.get("num_samples") or {}).items()},
+        seed=(None if cfg.get("seed") is None else int(cfg.get("seed"))),
         sequence_length=float(ts.sequence_length),
         tree_sequence=str(out_dir / "tree_sequence.trees"),
-        model_type=model_type,
-        sampled_params=sampled_params,
+        model_type=str(model_type),
+
+        # sampled priors (floats only)
+        sampled_params={k: float(v) for k, v in sampled_params.items()},
     )
+
     (out_dir / "bgs.meta.json").write_text(json.dumps(meta, indent=2))
 
     # friendly path for log message
@@ -153,6 +173,7 @@ def run_simulation(simulation_dir: Path, experiment_config: Path, model_type: st
     except ValueError:
         rel = out_dir
     print(f"✓ simulation written to {rel}")
+
 
 
 # ------------------------------------------------------------------

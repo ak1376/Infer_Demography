@@ -153,6 +153,7 @@ rule simulate:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         tree   = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
+        meta   = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
     params:
         sim_dir = SIM_BASEDIR,
@@ -170,12 +171,14 @@ rule simulate:
           --simulation-number {wildcards.sid}
 
         # ensure expected outputs exist, then create sentinel
-        test -f "{output.sfs}" && \
+        test -f "{output.sfs}"    && \
         test -f "{output.params}" && \
-        test -f "{output.tree}" && \
-        test -f "{output.fig}"
+        test -f "{output.tree}"   && \
+        test -f "{output.fig}"    && \
+        test -f "{output.meta}"
         touch "{output.done}"
         """
+
 
 ##############################################################################
 # RULE infer_moments  – custom NLopt Poisson SFS optimisation (moments)
@@ -297,8 +300,9 @@ rule aggregate_opts_dadi:
 ##############################################################################
 rule simulate_window:
     input:
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        done   = f"{SIM_BASEDIR}/{{sid}}/.done"
+        params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
+        done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
     params:
@@ -313,6 +317,7 @@ rule simulate_window:
             --sim-dir      "{params.base_sim}" \
             --rep-index    {params.rep_idx} \
             --config-file  "{params.cfg}" \
+            --meta-file    "{input.metafile}" \
             --out-dir      "{params.out_winDir}"
         """
 
