@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_isolation.json"
+EXP_CFG      = "config_files/experiment_config_split_migration.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -90,7 +90,7 @@ rule all:
 
         # # Aggregated optimizer results
         [final_pkl(sid, "moments") for sid in SIM_IDS],
-        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # # LD artifacts
         expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
@@ -511,12 +511,11 @@ rule combine_results:
 
 ##############################################################################
 # RULE combine_features – build datasets (filter, split, normalize)          #
+# (robust: discovers existing sims at runtime; skips missing)                #
 ##############################################################################
 rule combine_features:
     input:
-        cfg  = EXP_CFG,
-        infs = expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
-        truths = expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", sid=SIM_IDS)
+        cfg  = EXP_CFG
     output:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",

@@ -40,6 +40,6 @@ snakemake -j "$SLURM_CPUS_PER_TASK" \
   --directory "$ROOT" \
   --rerun-incomplete \
   --nolock \
-  --allowed-rules aggregate_opts \
+  --allowed-rules aggregate_opts_dadi aggregate_opts_moments \
   --keep-going \
   "$TGT_MOM" "$TGT_DADI"

@@ -353,9 +353,12 @@ def main(
     rng        = np.random.default_rng(seed)
 
     # Feature toggles (compute is always done by Snakemake; these control usage here)
-    use_fim_features = bool(cfg.get("use_fim_features", False))
+    # Accept both "use_fim_features" and legacy "use_FIM"
+    use_fim_features = bool(cfg.get("use_fim_features", cfg.get("use_FIM", False)))
     use_resid        = bool(cfg.get("use_residuals", False))
     resid_engs       = _norm_resid_engines(cfg.get("residual_engines", "moments"))
+
+    print(f"[INFO] Toggles: use_fim_features={use_fim_features}, use_residuals={use_resid}, residual_engines={resid_engs}")
 
     priors     = cfg["priors"]
     mu, sigma  = prior_stats(priors)
