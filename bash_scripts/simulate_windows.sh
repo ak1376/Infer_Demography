@@ -3,7 +3,7 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
-#SBATCH --time=12:00:00
+#SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=6G
 #SBATCH --partition=kern,preempt,kerngpu
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-BATCH_SIZE=10
+BATCH_SIZE=50
 
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"

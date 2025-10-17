@@ -6,8 +6,8 @@
     "log_dir": "bottleneck/inferences/moments/logs",
 
     "num_samples": {
-      "N1": 10,
-      "N2": 10
+      "YRI": 10,
+      "CEU": 10
     },
   
     "seed": 42,
@@ -16,12 +16,12 @@
     "num_draws": 1000,
   
     "priors": {
-      "N0"     : [100, 30000],
-      "N1"     : [100, 30000],
-      "N2"     : [100, 30000],
-      "m12"    : [1e-8 , 1e-4 ],   
-      "m21"    : [1e-8 , 1e-4 ], 
-      "t_split": [500, 2e4]
+      "N_anc"     : [100, 30000],
+      "N_YRI"     : [100, 30000],
+      "N_CEU"     : [100, 30000],
+      "m_YRI_CEU"    : [1e-8 , 1e-4 ],   
+      "m_CEU_YRI"    : [1e-8 , 1e-4 ], 
+      "T_split": [500, 2e4]
     },
 
     "selection": {

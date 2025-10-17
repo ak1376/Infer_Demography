@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=10   # number of (sim,opt) pairs per array element
+BATCH_SIZE=50   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
@@ -99,7 +99,6 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --directory "$ROOT" \
     --rerun-incomplete \
     --nolock \
-    --forcerun infer_moments \
     --latency-wait 300 \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" \

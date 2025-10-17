@@ -7,7 +7,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 1000,
+  "num_draws": 5000,
 
   "priors": {
     "N_anc":      [100, 30000],
@@ -23,8 +23,14 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [1, 90]
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": ["moments"],
   "use_residuals": false,
-  "residual_engines": "moments"
+  "residual_engines": "moments",
+
+  "use_residuals_gs": false,
+  "residuals_gs_k": 16,
+  "residuals_gs_seed": 123,
+  "residuals_gs_basis": "random"
+
 }

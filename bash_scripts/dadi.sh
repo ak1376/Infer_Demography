@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ---------------- batching knob ----------------
-BATCH_SIZE=10
+BATCH_SIZE=50
 
 # ---------------- paths & config ----------------
 ROOT="/projects/kernlab/akapoor/Infer_Demography"

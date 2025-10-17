@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=10     # number of (sim,window) jobs per array task
+BATCH_SIZE=50     # number of (sim,window) jobs per array task
 # ----------------------------------------------------------------------------
 
 # -------- config & constants -----------------------------------------------
