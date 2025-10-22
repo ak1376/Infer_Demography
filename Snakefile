@@ -424,11 +424,19 @@ rule sfs_residuals:
             else "src.simulation:drosophila_three_epoch"
         ),
         inf_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}",
-        out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}"
+        out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}",
+        n_bins   = CFG.get("sfs_n_bins", "")  # empty string if not specified
     threads: 1
     shell:
         r"""
         set -euo pipefail
+        
+        # Build n_bins argument conditionally
+        N_BINS_ARG=""
+        if [ -n "{params.n_bins}" ]; then
+            N_BINS_ARG="--n-bins {params.n_bins}"
+        fi
+        
         PYTHONPATH={workflow.basedir} \
         python "{RESID_SCRIPT}" \
           --mode {wildcards.engine} \
@@ -436,7 +444,8 @@ rule sfs_residuals:
           --model-py "{params.model_py}" \
           --observed-sfs "{input.obs_sfs}" \
           --inference-dir "{params.inf_dir}" \
-          --outdir "{params.out_dir}"
+          --outdir "{params.out_dir}" \
+          $N_BINS_ARG
 
         # ensure outputs exist
         test -f "{output.res_arr}"   && \

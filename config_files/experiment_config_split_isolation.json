@@ -27,10 +27,7 @@
   "fim_engines": ["moments"],
   "use_residuals": true,
   "residual_engines": "moments",
-
   "use_residuals_gs": false,
-  "residuals_gs_k": 16,
-  "residuals_gs_seed": 123,
-  "residuals_gs_basis": "random"
+  "sfs_n_bins": 5
 
 }

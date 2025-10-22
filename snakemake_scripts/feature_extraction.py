@@ -404,18 +404,18 @@ def main(
                 for k, v in enumerate(tri):
                     row[f"FIM_element_{k}"] = float(v)
 
-        # ---- original RAW SFS residual features (COMMENTED OUT BY REQUEST)
-        # if isinstance(data.get("SFS_residuals"), dict):
-        #     res_block = data["SFS_residuals"]
-        #     for eng in resid_engs:
-        #         payload = res_block.get(eng)
-        #         if not isinstance(payload, dict):
-        #             continue
-        #         flat = payload.get("flat")
-        #         if flat is None:
-        #             continue
-        #         for k, v in enumerate(flat):  # row-major order
-        #             row[f"SFSres_{eng}_{k}"] = float(v)
+        # ---- original RAW SFS residual features
+        if isinstance(data.get("SFS_residuals"), dict):
+            res_block = data["SFS_residuals"]
+            for eng in resid_engs:
+                payload = res_block.get(eng)
+                if not isinstance(payload, dict):
+                    continue
+                flat = payload.get("flat")
+                if flat is None:
+                    continue
+                for k, v in enumerate(flat):  # row-major order
+                    row[f"SFSres_{eng}_{k}"] = float(v)
 
         # ---- NEW: collect residual vectors per engine (do not append yet)
         if use_resid_gs and isinstance(data.get("SFS_residuals"), dict):
@@ -619,8 +619,75 @@ def main(
     (datasets_dir / "normalized_validation_features.pkl").write_bytes(pickle.dumps(norm_val_feats))
     (datasets_dir / "normalized_validation_targets.pkl").write_bytes(pickle.dumps(norm_val_targs))
 
-    # ---------- plotting / metrics (unchanged) ------------------------------
-    # keep your existing plotting and metrics code here
+    # ---------- plotting / metrics ------------------------------
+    
+    # Determine which tools we have data for
+    available_tools = []
+    for tool in ("dadi", "moments", "momentsLD"):
+        tool_cols = [c for c in feat_df.columns if c.startswith(f"{tool}_")]
+        if tool_cols:
+            available_tools.append(tool)
+    
+    if available_tools:
+        # Get common parameters across tools and targets
+        common_params = infer_common_params(feat_df, targ_df, tuple(available_tools))
+        
+        if common_params:
+            # Generate scatter plot of estimates vs truth
+            plot_path = datasets_dir / "features_scatterplot.png"
+            plot_estimates_vs_truth_grid_multi_rep(
+                feat_df,
+                targ_df,
+                tools=tuple(available_tools),
+                params=common_params,
+                out_path=plot_path
+            )
+            print(f"[INFO] Created scatter plot: {plot_path}")
+            
+            # Generate MSE bar plots for training and validation sets
+            if len(norm_train_feats) > 0 and len(norm_val_feats) > 0:
+                # Training MSE plot
+                train_mse_path = datasets_dir / "training_mse_bars.png"
+                plot_mse_bars_with_sem(
+                    feat_norm_df, targ_norm_df, train_idx,
+                    tools=tuple(available_tools),
+                    params=common_params,
+                    sigma=sigma,
+                    normalized=False,
+                    out_path=train_mse_path,
+                    title="Training Set - Normalized MSE"
+                )
+                
+                # Validation MSE plot
+                val_mse_path = datasets_dir / "validation_mse_bars.png"
+                plot_mse_bars_with_sem(
+                    feat_norm_df, targ_norm_df, val_idx,
+                    tools=tuple(available_tools),
+                    params=common_params,
+                    sigma=sigma,
+                    normalized=False,
+                    out_path=val_mse_path,
+                    title="Validation Set - Normalized MSE"
+                )
+                
+                print(f"[INFO] Created MSE bar plots: {train_mse_path}, {val_mse_path}")
+            
+            # Compute and save metrics as JSON
+            metrics = {}
+            for tool in available_tools:
+                metrics[tool] = compute_split_metrics_for_tool(
+                    feat_norm_df, targ_norm_df, train_idx, val_idx,
+                    tool=tool, params=common_params, sigma=sigma, normalized=False
+                )
+            
+            metrics_path = datasets_dir / "metrics.json"
+            with open(metrics_path, 'w') as f:
+                json.dump(metrics, f, indent=2)
+            print(f"[INFO] Created metrics file: {metrics_path}")
+        else:
+            print("[WARN] No common parameters found across tools and targets - skipping plots")
+    else:
+        print("[WARN] No inference tool data found - skipping plots")
 
     print(f"✓ wrote datasets, plots, and metrics to: {datasets_dir}")
 

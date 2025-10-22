@@ -154,6 +154,34 @@ def _auto_pts_from_samples(sample_sizes: "OrderedDict[str,int]") -> List[int]:
     n_max_hap = max(2 * n for n in sample_sizes.values())
     return [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60]
 
+def collapse_sfs_bins(sfs: np.ndarray, n_bins: int) -> np.ndarray:
+    """
+    Collapse SFS into fewer bins by summing adjacent entries.
+    
+    Args:
+        sfs: Original SFS array (any shape)
+        n_bins: Target number of bins for the collapsed SFS
+        
+    Returns:
+        Collapsed SFS with approximately n_bins entries
+    """
+    sfs_flat = sfs.ravel()
+    original_bins = len(sfs_flat)
+    
+    if n_bins >= original_bins:
+        return sfs  # No need to collapse
+    
+    # Create bin edges for collapsing
+    bin_edges = np.linspace(0, original_bins, n_bins + 1, dtype=int)
+    collapsed = np.zeros(n_bins)
+    
+    for i in range(n_bins):
+        start_idx = bin_edges[i]
+        end_idx = bin_edges[i + 1]
+        collapsed[i] = np.sum(sfs_flat[start_idx:end_idx])
+    
+    return collapsed
+
 # ------------------ CLI ------------------
 
 def parse_args():
@@ -164,6 +192,8 @@ def parse_args():
     ap.add_argument("--observed-sfs", type=Path, required=True)
     ap.add_argument("--inference-dir", type=Path, required=True)
     ap.add_argument("--outdir", type=Path, required=True)
+    ap.add_argument("--n-bins", type=int, default=None, 
+                    help="Number of bins to collapse SFS into (default: no collapsing)")
     return ap.parse_args()
 
 # ------------------ Main ------------------
@@ -225,7 +255,15 @@ def main():
                 "Check folding and sample sizes; for dadi also pts."
             )
 
-        residuals = compute_residuals(observed, fitted)  # Observed − Fitted
+        # Apply bin collapsing if requested
+        obs_to_use = observed
+        fit_to_use = fitted
+        if args.n_bins is not None:
+            obs_to_use = collapse_sfs_bins(observed, args.n_bins)
+            fit_to_use = collapse_sfs_bins(fitted, args.n_bins)
+            print(f"[{mode}] Collapsed SFS from {np.asarray(observed).size} to {len(obs_to_use)} bins")
+
+        residuals = compute_residuals(obs_to_use, fit_to_use)  # Observed − Fitted
         residuals_flat = residuals.ravel()
 
         print(f"[{mode}] sum(Fitted)={float(np.sum(fitted)):.6g}  "
@@ -250,6 +288,8 @@ def main():
             "best_params": full_best,
             "best_ll": best_ll,
             "observed_source": str(args.observed_sfs),
+            "n_bins": args.n_bins,
+            "original_sfs_shape": list(np.asarray(observed).shape),
             "notes": "Residuals = Observed − Fitted",
         })
 
