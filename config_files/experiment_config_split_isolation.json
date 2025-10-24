@@ -23,7 +23,7 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [1, 90]
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": ["moments"],
   "use_residuals": true,
   "residual_engines": "moments",

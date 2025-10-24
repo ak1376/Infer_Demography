@@ -130,22 +130,7 @@ def _norm_resid_engines(val) -> list[str]:
         return keep or ["moments"]
     return ["moments"]
 
-# =============================== GS helpers =================================
 
-def gram_schmidt_rows(X: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-    Classical Gram–Schmidt on row vectors of X.
-    Returns Q with orthonormal rows (Q Q^T = I), shape (r, D), r <= X.shape[0].
-    """
-    Q = []
-    for v in X.astype(float):
-        w = v.copy()
-        for q in Q:
-            w -= np.dot(q, w) * q
-        nrm = np.linalg.norm(w)
-        if nrm > eps:
-            Q.append(w / nrm)
-    return np.vstack(Q) if Q else np.zeros((0, X.shape[1]), dtype=float)
 
 # ================================= plotting =================================
 # (unchanged)
@@ -341,20 +326,12 @@ def main(
     seed       = int(cfg.get("seed", 42))
     rng        = np.random.default_rng(seed)
 
-    # Feature toggles
-    use_fim_features = bool(cfg.get("use_fim_features", cfg.get("use_FIM", False)))
-
-    # NEW: GS residual toggles
-    use_resid_gs     = bool(cfg.get("use_residuals_gs", False))
-    resid_gs_k       = int(cfg.get("residuals_gs_k", 16))
-    resid_gs_seed    = int(cfg.get("residuals_gs_seed", 123))
-    resid_gs_basis   = str(cfg.get("residuals_gs_basis", "random")).lower()  # "random" | "from_residuals"
-
-    # Keep your existing engine selector
+    # Feature toggles - look through the config and enable/disable extra features
+    use_fim_features = cfg['use_fim_features']
+    use_resid        = cfg['use_residuals']
     resid_engs       = _norm_resid_engines(cfg.get("residual_engines", "moments"))
 
-    print(f"[INFO] Toggles: use_fim_features={use_fim_features}, use_residuals_gs={use_resid_gs} "
-          f"(k={resid_gs_k}, basis={resid_gs_basis}) with engines={resid_engs}")
+    print(f"[INFO] Extra Features: use_fim_features={use_fim_features}, use_residuals={use_resid}, residual_engines={resid_engs}")
 
     priors     = cfg["priors"]
     mu, sigma  = prior_stats(priors)
@@ -366,10 +343,7 @@ def main(
     target_rows:  list[dict[str, float]] = []
     index:        list[int]              = []
 
-    # NEW: stash residual vectors per engine and sim id
-    # residuals_store[eng][sid] = np.ndarray shape (D,)
-    residuals_store: dict[str, dict[int, np.ndarray]] = {eng: {} for eng in resid_engs}
-    residual_dims: dict[str, int] = {}
+
 
     # ---------- load all sims ----------------------------------------------
     for sid in range(n_sims):
@@ -404,8 +378,8 @@ def main(
                 for k, v in enumerate(tri):
                     row[f"FIM_element_{k}"] = float(v)
 
-        # ---- original RAW SFS residual features
-        if isinstance(data.get("SFS_residuals"), dict):
+        # ---- attach SFS residuals (optional usage)
+        if use_resid and isinstance(data.get("SFS_residuals"), dict):
             res_block = data["SFS_residuals"]
             for eng in resid_engs:
                 payload = res_block.get(eng)
@@ -416,24 +390,6 @@ def main(
                     continue
                 for k, v in enumerate(flat):  # row-major order
                     row[f"SFSres_{eng}_{k}"] = float(v)
-
-        # ---- NEW: collect residual vectors per engine (do not append yet)
-        if use_resid_gs and isinstance(data.get("SFS_residuals"), dict):
-            res_block = data["SFS_residuals"]
-            for eng in resid_engs:
-                payload = res_block.get(eng)
-                if not isinstance(payload, dict):
-                    continue
-                flat = payload.get("flat")
-                if flat is None:
-                    continue
-                vec = np.asarray(flat, dtype=float).ravel()
-                residuals_store[eng][sid] = vec
-                d = int(vec.size)
-                if eng in residual_dims and residual_dims[eng] != d:
-                    print(f"[WARN] residual dimension mismatch for engine {eng}: "
-                          f"seen {residual_dims[eng]} vs {d} at sid={sid}")
-                residual_dims.setdefault(eng, d)
 
         feature_rows.append(row)
         target_rows.append(truth)
@@ -485,110 +441,126 @@ def main(
     print(f"[INFO] Outlier filtering (extreme only): kept {kept_count} / {total_rows} rows "
           f"({dropped_count} dropped).")
 
-    # save outlier previews (unchanged: you can keep your existing reporting)
-    # ... keep your existing outlier logging code here ...
+    # ---------- outlier removal BEFORE split --------------------------------
+    outlier_records: list[dict[str, float]] = []
 
-    # apply filtering for subsequent steps
+    def _parse_tool_rep(col: str) -> tuple[str, int | None]:
+        tool = col.split("_", 1)[0]
+        m = re.search(r"_rep_(\d+)$", col)
+        return tool, (int(m.group(1)) if m else None)
+
+    keep = pd.Series(True, index=feat_df.index)
+
+    for col in feat_df.columns:
+        k = base_param(col)
+        if k not in priors:
+            continue  # skip non-demographic columns (FIM, residuals, etc.)
+        lo, hi = map(float, priors[k])
+        mu_k, sg_k = float(mu[k]), float(sigma[k])
+        s = feat_df[col].astype(float)
+
+        finite = np.isfinite(s.to_numpy())
+        scale = max(1.0, abs(lo), abs(hi))
+        eps = max(tol_abs, tol_rel * scale)
+
+        outside_lo = s < (lo - eps)
+        outside_hi = s > (hi + eps)
+
+        z = (s - mu_k) / sg_k
+        big_z = np.abs(z) > zmax
+
+        extreme = (outside_lo | outside_hi) & big_z
+        bad = (~finite) | extreme
+
+        if bad.any():
+            tool, rep = _parse_tool_rep(col)
+            for sid_i, val, fin, is_lo, is_hi, is_bigz in zip(
+                s.index, s.to_numpy(), finite, outside_lo.to_numpy(), outside_hi.to_numpy(), big_z.to_numpy()
+            ):
+                if not fin:
+                    reason = "nan_or_inf"
+                elif (is_lo or is_hi) and is_bigz:
+                    reason = "extreme_below_lo" if is_lo else "extreme_above_hi"
+                else:
+                    continue
+
+                outlier_records.append({
+                    "sid": sid_i,
+                    "column": col,
+                    "tool": tool,
+                    "rep": rep,
+                    "base_param": k,
+                    "value": float(val) if np.isfinite(val) else np.nan,
+                    "lo": lo,
+                    "hi": hi,
+                    "mu": mu_k,
+                    "sigma": sg_k,
+                    "z": float(((val - mu_k) / sg_k) if np.isfinite(val) else np.nan),
+                    "eps": eps,
+                    "reason": reason,
+                })
+
+        keep &= ~bad
+
+    kept_count    = int(keep.sum())
+    dropped_count = int((~keep).sum())
+    total_rows    = len(keep)
+
+    datasets_dir = out_root / "datasets"
+    datasets_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[INFO] Outlier filtering (extreme only): kept {kept_count} / {total_rows} rows "
+          f"({dropped_count} dropped).")
+
+    # save detailed outliers (TSV) + preview text
+    outliers_path  = datasets_dir / "outliers_removed.tsv"
+    preview_path   = datasets_dir / "outliers_preview.txt"
+
+    if outlier_records:
+        outliers_df = pd.DataFrame(outlier_records).sort_values(["sid", "column"])
+        outliers_df.to_csv(outliers_path, sep="\t", index=False)
+        print(f"[INFO] Wrote detailed outliers to: {outliers_path}")
+
+        show_all = (preview_rows is None) or (int(preview_rows) < 0)
+        to_show = len(outliers_df) if show_all else min(int(preview_rows), len(outliers_df))
+
+        with open(preview_path, "w") as fh:
+            fh.write("Outlier filtering summary\n")
+            fh.write("=========================\n")
+            fh.write(f"kept {kept_count} / {total_rows} rows ({dropped_count} dropped)\n")
+            fh.write(f"zmax={zmax}, tol_rel={tol_rel}, tol_abs={tol_abs}\n")
+            fh.write(f"total outlier rows: {len(outliers_df)}\n\n")
+            fh.write("All outlier rows:\n" if show_all else f"First {to_show} rows:\n")
+            fh.write((outliers_df if show_all else outliers_df.head(to_show)).to_string(index=False))
+            fh.write("\n\nCounts by base_param and reason:\n")
+            counts = (
+                outliers_df.groupby(["base_param", "reason"])
+                .size()
+                .reset_index(name="n")
+                .sort_values(["base_param", "reason"])
+            )
+            fh.write(counts.to_string(index=False))
+            fh.write("\n")
+
+        print(f"[INFO] Wrote preview to: {preview_path}")
+        if show_all:
+            print(f"[INFO] Showing ALL {len(outliers_df)} extreme outlier rows:")
+            print(outliers_df.to_string(index=False))
+        else:
+            print(f"[INFO] Showing first {to_show} extreme outlier rows:")
+            print(outliers_df.head(to_show).to_string(index=False))
+    else:
+        with open(preview_path, "w") as fh:
+            fh.write("Outlier filtering summary\n")
+            fh.write("=========================\n")
+            fh.write(f"kept {kept_count} / {total_rows} rows ({dropped_count} dropped)\n")
+            fh.write(f"zmax={zmax}, tol_rel={tol_rel}, tol_abs={tol_abs}\n")
+            fh.write("No extreme outliers detected.\n")
+        print("[INFO] No extreme outliers detected.")
+
+    # apply filtering
     feat_df = feat_df.loc[keep].copy()
     targ_df = targ_df.loc[keep].copy()
-    kept_sids = set(feat_df.index.tolist())
-
-    # ---------- NEW: build GS basis per engine and append GS features -------
-    if use_resid_gs:
-        for eng in resid_engs:
-            eng_store = residuals_store.get(eng, {})
-            if not eng_store:
-                print(f"[WARN] No residuals collected for engine '{eng}'. Skipping GS features.")
-                continue
-
-            # ensure consistent dimension
-            D = residual_dims.get(eng, None)
-            if D is None or D <= 0:
-                print(f"[WARN] Unknown residual dimension for engine '{eng}'. Skipping.")
-                continue
-
-            # stack residuals for KEPT rows only; some rows may miss residuals → mark NaN later
-            kept_list = sorted(kept_sids)
-            R = np.full((len(kept_list), D), np.nan, dtype=float)
-            sid_to_row = {sid: i for i, sid in enumerate(kept_list)}
-            present_count = 0
-            for sid, vec in eng_store.items():
-                if sid in sid_to_row:
-                    if vec.size != D:
-                        print(f"[WARN] engine {eng} sid={sid} residual size {vec.size} != {D}; skipping this row.")
-                        continue
-                    R[sid_to_row[sid], :] = vec
-                    present_count += 1
-            if present_count == 0:
-                print(f"[WARN] After filtering, no residual rows present for engine '{eng}'. Skipping.")
-                continue
-
-            # rows with all-NaN should be ignored when forming the basis
-            valid_rows = ~np.isnan(R).all(axis=1)
-            R_valid = R[valid_rows]
-            if R_valid.size == 0:
-                print(f"[WARN] No valid residual vectors for engine '{eng}'. Skipping.")
-                continue
-
-            # Create basis matrix B (k x D) per engine
-            k = min(resid_gs_k, D)
-            if resid_gs_basis == "from_residuals":
-                # Use data rows to generate a basis; take up to k rows
-                # If more rows than k, sample deterministically by seed
-                rng_gs = np.random.default_rng(resid_gs_seed)
-                if R_valid.shape[0] > k:
-                    sel = rng_gs.choice(R_valid.shape[0], size=k, replace=False)
-                    B0 = R_valid[sel, :]
-                else:
-                    B0 = R_valid
-                Q = gram_schmidt_rows(B0)
-                if Q.shape[0] > k:
-                    Q = Q[:k, :]
-                elif Q.shape[0] < k:
-                    # complete basis with random rows if rank-deficient
-                    missing = k - Q.shape[0]
-                    G = rng_gs.normal(size=(missing, D))
-                    Q_extra = gram_schmidt_rows(np.vstack([Q, G]))
-                    Q = Q_extra[:k, :]
-            else:
-                # random Gaussian basis, orthonormalize rows
-                rng_gs = np.random.default_rng(resid_gs_seed)
-                G = rng_gs.normal(size=(k, D))
-                Q = gram_schmidt_rows(G)
-                # if numerical rank < k, top-up with more random rows
-                attempts = 0
-                while Q.shape[0] < k and attempts < 5:
-                    G2 = rng_gs.normal(size=(k - Q.shape[0], D))
-                    Q = gram_schmidt_rows(np.vstack([Q, G2]))
-                    attempts += 1
-                if Q.shape[0] < k:
-                    print(f"[WARN] engine '{eng}': could only obtain {Q.shape[0]} orthonormal rows (requested {k}).")
-                    k = Q.shape[0]
-
-            if k == 0:
-                print(f"[WARN] engine '{eng}': GS basis is empty. Skipping.")
-                continue
-
-            # Project each residual vector (row) onto the basis: coords = r @ Q^T
-            # Build columns in a DataFrame aligned with feat_df.index
-            proj_cols = {}
-            for i in range(k):
-                proj_cols[f"SFSresGS_{eng}_{i}"] = np.full(len(kept_list), np.nan, dtype=float)
-
-            for sid, row_idx in sid_to_row.items():
-                r = R[row_idx, :]
-                if np.isnan(r).all():
-                    continue
-                coords = r @ Q.T  # shape (k,)
-                for i in range(k):
-                    proj_cols[f"SFSresGS_{eng}_{i}"][row_idx] = float(coords[i])
-
-            # attach to feat_df (kept_list order matches feat_df.loc[kept_list])
-            proj_df = pd.DataFrame(proj_cols, index=kept_list)
-            feat_df = feat_df.join(proj_df, how="left")
-
-            print(f"[INFO] Added {k} GS features for engine '{eng}' "
-                  f"(columns SFSresGS_{eng}_0..{k-1}).")
 
     # ---------- normalise AFTER outlier removal -----------------------------
     feat_norm_df = normalise_df(feat_df, mu, sigma)
@@ -611,7 +583,6 @@ def main(
     norm_val_targs   = targ_norm_df.loc[val_idx]
 
     # ---------- outputs: DataFrames ----------------------------------------
-    datasets_dir.mkdir(parents=True, exist_ok=True)
     (datasets_dir / "features_df.pkl").write_bytes(pickle.dumps(feat_df))
     (datasets_dir / "targets_df.pkl").write_bytes(pickle.dumps(targ_df))
     (datasets_dir / "normalized_train_features.pkl").write_bytes(pickle.dumps(norm_train_feats))
@@ -619,77 +590,60 @@ def main(
     (datasets_dir / "normalized_validation_features.pkl").write_bytes(pickle.dumps(norm_val_feats))
     (datasets_dir / "normalized_validation_targets.pkl").write_bytes(pickle.dumps(norm_val_targs))
 
-    # ---------- plotting / metrics ------------------------------
-    
-    # Determine which tools we have data for
-    available_tools = []
-    for tool in ("dadi", "moments", "momentsLD"):
-        tool_cols = [c for c in feat_df.columns if c.startswith(f"{tool}_")]
-        if tool_cols:
-            available_tools.append(tool)
-    
-    if available_tools:
-        # Get common parameters across tools and targets
-        common_params = infer_common_params(feat_df, targ_df, tuple(available_tools))
-        
-        if common_params:
-            # Generate scatter plot of estimates vs truth
-            plot_path = datasets_dir / "features_scatterplot.png"
-            plot_estimates_vs_truth_grid_multi_rep(
-                feat_df,
-                targ_df,
-                tools=tuple(available_tools),
-                params=common_params,
-                out_path=plot_path
-            )
-            print(f"[INFO] Created scatter plot: {plot_path}")
-            
-            # Generate MSE bar plots for training and validation sets
-            if len(norm_train_feats) > 0 and len(norm_val_feats) > 0:
-                # Training MSE plot
-                train_mse_path = datasets_dir / "training_mse_bars.png"
-                plot_mse_bars_with_sem(
-                    feat_norm_df, targ_norm_df, train_idx,
-                    tools=tuple(available_tools),
-                    params=common_params,
-                    sigma=sigma,
-                    normalized=False,
-                    out_path=train_mse_path,
-                    title="Training Set - Normalized MSE"
-                )
-                
-                # Validation MSE plot
-                val_mse_path = datasets_dir / "validation_mse_bars.png"
-                plot_mse_bars_with_sem(
-                    feat_norm_df, targ_norm_df, val_idx,
-                    tools=tuple(available_tools),
-                    params=common_params,
-                    sigma=sigma,
-                    normalized=False,
-                    out_path=val_mse_path,
-                    title="Validation Set - Normalized MSE"
-                )
-                
-                print(f"[INFO] Created MSE bar plots: {train_mse_path}, {val_mse_path}")
-            
-            # Compute and save metrics as JSON
-            metrics = {}
-            for tool in available_tools:
-                metrics[tool] = compute_split_metrics_for_tool(
-                    feat_norm_df, targ_norm_df, train_idx, val_idx,
-                    tool=tool, params=common_params, sigma=sigma, normalized=False
-                )
-            
-            metrics_path = datasets_dir / "metrics.json"
-            with open(metrics_path, 'w') as f:
-                json.dump(metrics, f, indent=2)
-            print(f"[INFO] Created metrics file: {metrics_path}")
-        else:
-            print("[WARN] No common parameters found across tools and targets - skipping plots")
-    else:
-        print("[WARN] No inference tool data found - skipping plots")
+    # ---------- plotting: scatter grid -------------------------------------
+    plot_estimates_vs_truth_grid_multi_rep(
+        features_df=feat_df,
+        targets_df=targ_df,
+        tools=("dadi", "moments", "momentsLD"),
+        params=None,
+        figsize_per_panel=(3.2, 3.0),
+        out_path=datasets_dir / "features_scatterplot.png",
+        colorize_reps_tools=("momentsLD",),
+    )
+
+    # ---------- JSON metrics logging (normalized MSE, per tool) ------------
+    tools = ("dadi", "moments", "momentsLD")
+    common_params = infer_common_params(feat_df, targ_df, tools)
+    metrics_all: dict[str, dict] = {}
+
+    for tool in tools:
+        metrics = compute_split_metrics_for_tool(
+            feat_df, targ_df, train_idx, val_idx,
+            tool=tool, params=common_params, sigma=sigma, normalized=True
+        )
+        metrics_all[tool] = metrics
+        with open(datasets_dir / f"metrics_{tool}.json", "w") as fh:
+            json.dump(metrics, fh, indent=4)
+
+    with open(datasets_dir / "metrics_all.json", "w") as fh:
+        json.dump(metrics_all, fh, indent=4)
+
+    print("[INFO] Wrote JSON metrics to:")
+    for tool in tools:
+        print("   ", datasets_dir / f"metrics_{tool}.json")
+    print("   ", datasets_dir / "metrics_all.json")
+
+    # ---------- bar charts: mean±SEM (normalized MSE) -----------------------
+    title_val   = "Normalized MSE by parameter (Validation; replicate-avg per simulation)"
+    title_train = "Normalized MSE by parameter (Training; replicate-avg per simulation)"
+
+    plot_mse_bars_with_sem(
+        feat_df, targ_df, val_idx,
+        tools=tools, params=common_params, sigma=sigma,
+        normalized=True,
+        out_path=datasets_dir / "mse_bars_val_normalized.png",
+        title=title_val,
+    )
+    plot_mse_bars_with_sem(
+        feat_df, targ_df, train_idx,
+        tools=tools, params=common_params, sigma=sigma,
+        normalized=True,
+        out_path=datasets_dir / "mse_bars_train_normalized.png",
+        title=title_train,
+    )
 
     print(f"✓ wrote datasets, plots, and metrics to: {datasets_dir}")
+    print(f"✓ outlier preview: {preview_path}")
 
 # ================================= CLI ======================================
 
