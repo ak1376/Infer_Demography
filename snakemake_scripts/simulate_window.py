@@ -50,6 +50,7 @@ def _demes_from_model(model: str, sampled: Dict[str, float]) -> demes.Graph:
     if model == "split_isolation":
         return split_isolation_model(sampled)
     if model == "split_migration":
+        print(f'Demes Graph: {split_migration_model(sampled)}')
         return split_migration_model(sampled)
     if model == "drosophila_three_epoch":
         return drosophila_three_epoch(sampled)
@@ -75,15 +76,20 @@ def _simulate_neutral_msprime(*, graph: demes.Graph, cfg: Dict[str, Any], seed_b
 def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
                             sel_cfg: Dict[str, Any], seed_base: int,
                             sampled_cov_percent_or_frac: float) -> msprime.TreeSequence:
-    # Choose an stdpopsim model for SLiM. For IM variants we want leaf-first models; otherwise wrap demes.
+    """
+    Simulate background selection (BGS) using stdpopsim + SLiM.
+    Handles both symmetric and asymmetric IM models and ensures leaf-first ordering
+    to avoid 'p0 (ANC) is zero' SLiM errors.
+    """
     model_id = cfg["demographic_model"]
+
     if model_id == "split_isolation":
-        # symmetric migration m (use same extraction as in your other file if needed)
         N0 = float(samp.get("N_anc", samp.get("N0")))
         N1 = float(samp.get("N_YRI", samp.get("N1")))
         N2 = float(samp.get("N_CEU", samp.get("N2")))
         T  = float(samp.get("T_split", samp.get("t_split")))
         m  = float(samp.get("m", samp.get("m_YRI_CEU", samp.get("m12", samp.get("m21", 0.0)))))
+
         class _IM_Symmetric(sps.DemographicModel):
             def __init__(self, N0, N1, N2, T, m):
                 dem = msprime.Demography()
@@ -94,19 +100,57 @@ def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
                 dem.set_migration_rate(source="CEU", dest="YRI", rate=float(m))
                 dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
                 super().__init__(id="IM_sym", description="IM symmetric", long_description="", model=dem, generation_time=1)
-        model = _IM_Symmetric(N0, N1, N2, T, m)
-    elif model_id == "split_migration":
-        # similar custom class for asymmetric, or wrap demes if you prefer
-        model = sps.DemographicModel(id="from_demes", description="", long_description="",
-                                     model=msprime.Demography.from_demes(graph), generation_time=1)
-    else:
-        model = sps.DemographicModel(id="from_demes", description="", long_description="",
-                                     model=msprime.Demography.from_demes(graph), generation_time=1)
 
-    # Build synthetic contig and add DFE intervals using your helpers
+        model = _IM_Symmetric(N0, N1, N2, T, m)
+
+    elif model_id == "split_migration":
+        # --- Build msprime demography directly from graph ---
+        dem = msprime.Demography()
+        leaf_names = [d.name for d in graph.demes if d.end_time == 0]     # YRI, CEU
+        nonleaf_names = [d.name for d in graph.demes if d.end_time != 0]  # ANC
+        ordered = leaf_names + nonleaf_names
+
+        # Add populations
+        for name in ordered:
+            deme = graph[name]
+            size = deme.epochs[-1].start_size
+            dem.add_population(name=name, initial_size=size)
+
+        # Add migrations (directly from graph)
+        if hasattr(graph, "migrations"):
+            for mig in graph.migrations:
+                dem.set_migration_rate(source=mig.source, dest=mig.dest, rate=mig.rate)
+
+        # Add split event
+        anc_deme = nonleaf_names[0]
+        derived = leaf_names
+        split_time = max(d.end_time for d in graph.demes if d.end_time != 0)
+        dem.add_population_split(time=split_time, ancestral=anc_deme, derived=derived)
+
+        print("Population order for SLiM:", [p.name for p in dem.populations])
+
+        model = sps.DemographicModel(
+            id="IM_asym",
+            description="Isolation-with-migration, asymmetric",
+            long_description="ANC splits at T into YRI and CEU; asymmetric migration.",
+            model=dem,
+            generation_time=1,
+        )
+
+    else:
+        model = sps.DemographicModel(
+            id="from_demes",
+            description="",
+            long_description="",
+            model=msprime.Demography.from_demes(graph),
+            generation_time=1,
+        )
+
+    # --- Build contig + apply DFE intervals ---
     contig = _contig_from_cfg(cfg, sel_cfg)
     _ = _apply_dfe_intervals(contig, sel_cfg, sampled_coverage=sampled_cov_percent_or_frac)
 
+    # --- Run SLiM via stdpopsim engine ---
     samples = {k: int(v) for k, v in (cfg.get("num_samples") or {}).items()}
     eng = sps.get_engine("slim")
     ts = eng.simulate(
@@ -115,10 +159,11 @@ def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
         samples,
         slim_scaling_factor=float(sel_cfg.get("slim_scaling", 10.0)),
         slim_burn_in=float(sel_cfg.get("slim_burn_in", 5.0)),
-        # SLiM seeds are handled internally, but the stdpopsim engine will seed itself deterministically
-        # from Python's RNG state; if you need extra determinism, set env var SLIM_SEED before calling.
     )
+
     return ts
+
+
 
 def main() -> None:
     cli = argparse.ArgumentParser("simulate one replicate (neutral or BGS)")

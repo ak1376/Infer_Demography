@@ -45,19 +45,30 @@ class _IM_Symmetric(sps.DemographicModel):
 
 
 class _IM_Asymmetric(sps.DemographicModel):
-    """Isolation-with-migration, asymmetric: YRI->CEU rate m12; CEU->YRI rate m21."""
+    """Isolation-with-migration, asymmetric: YRI→CEU rate m12; CEU→YRI rate m21."""
     def __init__(self, N0, N1, N2, T, m12, m21):
         dem = msprime.Demography()
+
+        # ✅ Add leaves first so that p0/p1 are extant pops, not ANC
         dem.add_population(name="YRI", initial_size=float(N1))
         dem.add_population(name="CEU", initial_size=float(N2))
         dem.add_population(name="ANC", initial_size=float(N0))
-        dem.set_migration_rate(source="YRI", dest="CEU", rate=float(m12))
-        dem.set_migration_rate(source="CEU", dest="YRI", rate=float(m21))
-        dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
+
+        # asymmetric migration
+        dem.set_migration_rate("YRI", "CEU", float(m12))
+        dem.set_migration_rate("CEU", "YRI", float(m21))
+
+        # split backward in time
+        dem.add_population_split(time=float(T),
+                                 ancestral="ANC",
+                                 derived=["YRI", "CEU"])
+
         super().__init__(
             id="IM_asym",
             description="Isolation-with-migration, asymmetric",
-            long_description="ANC splits at T into YRI and CEU; migration m12 and m21.",
+            long_description=(
+                "ANC splits at T into YRI and CEU; asymmetric migration m12 and m21."
+            ),
             model=dem,
             generation_time=1,
         )
