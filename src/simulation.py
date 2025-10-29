@@ -355,30 +355,39 @@ def simulation(sampled_params: Dict[str, float],
         # bottleneck & drosophila: Demes wrapper is fine
         model = _ModelFromDemes(g, model_id=f"custom_{model_type}", desc="custom demes")
 
+    engine = experiment_config.get("engine", "slim")
+
     # 3) Contig + DFE intervals (coverage-aware)
     contig = _contig_from_cfg(experiment_config, sel)
-    sel_summary = _apply_dfe_intervals(contig, sel, sampled_coverage=sampled_coverage)
+    if engine == "slim":
+        sel_summary = _apply_dfe_intervals(contig, sel, sampled_coverage=sampled_coverage)
+    else:
+        # msprime: no selection intervals
+        sel_summary = dict(selected_bp=0, selected_frac=0.0)
 
     # 4) SLiM run
     samples = {k: int(v) for k, v in (experiment_config.get("num_samples") or {}).items()}
-    eng = sps.get_engine("slim")
     base_seed = experiment_config.get("seed", None)
-    if base_seed is not None:
+    if engine == "slim":
+        eng = sps.get_engine("slim")
         ts = eng.simulate(
             model,
             contig,
             samples,
             slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
             slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
+            seed=base_seed,
+        )
+    elif engine == "msprime":
+        eng = sps.get_engine("msprime")
+        ts = eng.simulate(
+            model,
+            contig,
+            samples,
+            seed=base_seed,
         )
     else:
-        ts = eng.simulate(
-            model,
-            contig,
-            samples,
-            slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
-            slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
-        )
+        raise ValueError("engine must be 'slim' or 'msprime'.")
 
     # Attach summary for the caller (via ts.metadata? we just return g and ts;
     # the CLI wrapper will record sel_summary into the JSON sidecar.)

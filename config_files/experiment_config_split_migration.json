@@ -28,13 +28,11 @@
     "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
-    "coverage_percent": [1, 5]
+    "coverage_percent": [0, 1e-36]
     },
     "use_fim_features": false,
     "fim_engines": ["moments"],
     "use_residuals": false,
     "residual_engines": "moments", 
-    "fixed_parameters": {
-    "m12": "sampled"
-    }
+    "engine": "slim"
   }
