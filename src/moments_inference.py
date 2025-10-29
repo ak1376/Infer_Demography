@@ -154,6 +154,30 @@ def fit_model(
         (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
     )
 
+    # --- PARAM → GRAPH sanity check -----------------------------------
+    p_dict = dict(zip(param_names, start_vec))
+    g = demo_model(p_dict)
+
+    def _list_migs(graph):
+        rows = []
+        for m in getattr(graph, "migrations", []):
+            # demes.Graph has either 'demes=[a,b]' (old) or (source,dest) (new)
+            src = getattr(m, "source", None)
+            dst = getattr(m, "dest",   None)
+            if src is None or dst is None:
+                # older demes uses 'demes' 2-list
+                pair = getattr(m, "demes", None)
+                if pair: src, dst = pair[0], pair[1]
+            rate = getattr(m, "rate", None)
+            rows.append((src, dst, rate))
+        return rows
+
+    print("[CHECK] param_names:", param_names)
+    print("[CHECK] start_vec  :", start_vec)
+    print("[CHECK] fixed_params:", fixed_params if fixed_params else {})
+    print("[CHECK] migrations in graph (src→dst, rate):", _list_migs(g))
+
+
     # ----- bounds from priors ------------------------------------------
     lower_bounds = [priors[p][0] for p in param_names]
     upper_bounds = [priors[p][1] for p in param_names]

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer
-#SBATCH --array=0-9999
+#SBATCH --array=0-499
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
 #SBATCH --time=8:00:00
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ---------------- batching knob ----------------
-BATCH_SIZE=50
+BATCH_SIZE=1
 
 # ---------------- paths & config ----------------
 ROOT="/projects/kernlab/akapoor/Infer_Demography"

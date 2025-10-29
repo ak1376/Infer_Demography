@@ -236,30 +236,24 @@ def compute_likelihood_profile(mode: str, param_values: np.ndarray, param_idx: i
                 )
                 
             elif mode == "moments":
-                # Use moments to compute expected SFS
+                # Use moments to compute expected SFS (consistent with optimizer)
                 if hasattr(sfs, 'pop_ids') and sfs.pop_ids:
-                    # Use the actual population IDs from the SFS
                     sample_sizes = {pop_id: (sfs.shape[i] - 1) // 2 for i, pop_id in enumerate(sfs.pop_ids)}
                 elif hasattr(sfs, 'sample_sizes'):
-                    # If sample_sizes attribute exists, use it directly
                     sample_sizes = sfs.sample_sizes
                 else:
-                    # Fall back to inferring from shape
                     from collections import OrderedDict
-                    sample_sizes = OrderedDict()
-                    for i, n in enumerate(sfs.shape):
-                        sample_sizes[f"pop{i}"] = (n - 1) // 2
-                
-                expected = dadi_inference.diffusion_sfs_dadi(
-                    params_vec=test_params,
+                    sample_sizes = OrderedDict((f"pop{i}", (n - 1) // 2) for i, n in enumerate(sfs.shape))
+
+                # Build expected with *moments* (not dadi)
+                expected = moments_inference._diffusion_sfs(
+                    init_vec=test_params,                 # np.array aligned with param_names
+                    demo_model=demo_func,                 # callable dict->demes.Graph
                     param_names=param_names,
-                    sample_sizes=sample_sizes,        # OrderedDict pop -> diploid n
-                    demo_model=demo_func,             # callable dict -> demes.Graph
-                    mutation_rate=float(config["mutation_rate"]),
-                    sequence_length=float(config["genome_length"]),
-                    pts=[50, 60, 70],
-                    config=config,
+                    sample_sizes=sample_sizes,            # OrderedDict pop->diploid n
+                    experiment_config=config,
                 )
+
             
             if hasattr(sfs, 'folded') and sfs.folded:
                 expected = expected.fold()
