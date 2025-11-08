@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Simulate **one replicate** and write:
-    - window_<idx>.vcf.gz (compressed VCF)
-    - window_<idx>.trees (tree sequence)
-    - samples.txt / flat_map.txt
+- window_<idx>.vcf.gz (compressed VCF)
+- window_<idx>.trees (tree sequence)
+- samples.txt / flat_map.txt
 """
 from __future__ import annotations
 import argparse, json, pickle, sys, gzip, shutil
@@ -27,12 +27,14 @@ from simulation import (
     split_isolation_model,
     split_migration_model,
     drosophila_three_epoch,
-    _contig_from_cfg,          # ← you already have this
-    _apply_dfe_intervals       # ← and this
+    _contig_from_cfg,  # ← you already have this
+    _apply_dfe_intervals,  # ← and this
 )
-def write_samples_and_map(*, L: int, r: float,
-                          samples: dict[str, int],
-                          out_dir: Path) -> None:
+
+
+def write_samples_and_map(
+    *, L: int, r: float, samples: dict[str, int], out_dir: Path
+) -> None:
     lines = ["sample\tpop"]
     tsk_i = 0
     for pop, n in samples.items():
@@ -44,19 +46,23 @@ def write_samples_and_map(*, L: int, r: float,
     cm_total = r * L * 100
     (out_dir / "flat_map.txt").write_text(f"pos\tMap(cM)\n0\t0\n{L}\t{cm_total}\n")
 
+
 def _demes_from_model(model: str, sampled: Dict[str, float]) -> demes.Graph:
     if model == "bottleneck":
         return bottleneck_model(sampled)
     if model == "split_isolation":
         return split_isolation_model(sampled)
     if model == "split_migration":
-        print(f'Demes Graph: {split_migration_model(sampled)}')
+        print(f"Demes Graph: {split_migration_model(sampled)}")
         return split_migration_model(sampled)
     if model == "drosophila_three_epoch":
         return drosophila_three_epoch(sampled)
     raise ValueError(f"Unsupported model: {model}")
 
-def _simulate_neutral_msprime(*, graph: demes.Graph, cfg: Dict[str, Any], seed_base: int) -> msprime.TreeSequence:
+
+def _simulate_neutral_msprime(
+    *, graph: demes.Graph, cfg: Dict[str, Any], seed_base: int
+) -> msprime.TreeSequence:
     demog = msprime.Demography.from_demes(graph)
     samples_dict = {pop: int(n) for pop, n in cfg["num_samples"].items()}
     ts = msprime.sim_ancestry(
@@ -73,9 +79,15 @@ def _simulate_neutral_msprime(*, graph: demes.Graph, cfg: Dict[str, Any], seed_b
     )
     return ts
 
-def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
-                            sel_cfg: Dict[str, Any], seed_base: int,
-                            sampled_cov_percent_or_frac: float) -> msprime.TreeSequence:
+
+def _simulate_bgs_stdpopsim(
+    *,
+    graph: demes.Graph,
+    cfg: Dict[str, Any],
+    sel_cfg: Dict[str, Any],
+    seed_base: int,
+    sampled_cov_percent_or_frac: float,
+) -> msprime.TreeSequence:
     """
     Simulate background selection (BGS) using stdpopsim + SLiM.
     Handles both symmetric and asymmetric IM models and ensures leaf-first ordering
@@ -87,8 +99,10 @@ def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
         N0 = float(samp.get("N_anc", samp.get("N0")))
         N1 = float(samp.get("N_YRI", samp.get("N1")))
         N2 = float(samp.get("N_CEU", samp.get("N2")))
-        T  = float(samp.get("T_split", samp.get("t_split")))
-        m  = float(samp.get("m", samp.get("m_YRI_CEU", samp.get("m12", samp.get("m21", 0.0)))))
+        T = float(samp.get("T_split", samp.get("t_split")))
+        m = float(
+            samp.get("m", samp.get("m_YRI_CEU", samp.get("m12", samp.get("m21", 0.0))))
+        )
 
         class _IM_Symmetric(sps.DemographicModel):
             def __init__(self, N0, N1, N2, T, m):
@@ -98,15 +112,23 @@ def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
                 dem.add_population(name="ANC", initial_size=float(N0))
                 dem.set_migration_rate(source="YRI", dest="CEU", rate=float(m))
                 dem.set_migration_rate(source="CEU", dest="YRI", rate=float(m))
-                dem.add_population_split(time=float(T), ancestral="ANC", derived=["YRI", "CEU"])
-                super().__init__(id="IM_sym", description="IM symmetric", long_description="", model=dem, generation_time=1)
+                dem.add_population_split(
+                    time=float(T), ancestral="ANC", derived=["YRI", "CEU"]
+                )
+                super().__init__(
+                    id="IM_sym",
+                    description="IM symmetric",
+                    long_description="",
+                    model=dem,
+                    generation_time=1,
+                )
 
         model = _IM_Symmetric(N0, N1, N2, T, m)
 
     elif model_id == "split_migration":
         # --- Build msprime demography directly from graph ---
         dem = msprime.Demography()
-        leaf_names = [d.name for d in graph.demes if d.end_time == 0]     # YRI, CEU
+        leaf_names = [d.name for d in graph.demes if d.end_time == 0]  # YRI, CEU
         nonleaf_names = [d.name for d in graph.demes if d.end_time != 0]  # ANC
         ordered = leaf_names + nonleaf_names
 
@@ -148,7 +170,9 @@ def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
 
     # --- Build contig + apply DFE intervals ---
     contig = _contig_from_cfg(cfg, sel_cfg)
-    _ = _apply_dfe_intervals(contig, sel_cfg, sampled_coverage=sampled_cov_percent_or_frac)
+    _ = _apply_dfe_intervals(
+        contig, sel_cfg, sampled_coverage=sampled_cov_percent_or_frac
+    )
 
     # --- Run SLiM via stdpopsim engine ---
     samples = {k: int(v) for k, v in (cfg.get("num_samples") or {}).items()}
@@ -164,7 +188,6 @@ def _simulate_bgs_stdpopsim(*, graph: demes.Graph, cfg: Dict[str, Any],
     return ts
 
 
-
 def main() -> None:
     cli = argparse.ArgumentParser("simulate one replicate (neutral or BGS)")
     cli.add_argument("--sim-dir", required=True, type=Path)
@@ -172,8 +195,12 @@ def main() -> None:
     cli.add_argument("--config-file", required=True, type=Path)
     cli.add_argument("--out-dir", required=True, type=Path)
     # NEW: use previously recorded metadata, so we don't resample coverage
-    cli.add_argument("--meta-file", type=Path, required=False,
-                     help="bgs.meta.json from the base simulation (per sid)")
+    cli.add_argument(
+        "--meta-file",
+        type=Path,
+        required=False,
+        help="bgs.meta.json from the base simulation (per sid)",
+    )
     args = cli.parse_args()
 
     cfg: Dict[str, Any] = json.loads(args.config_file.read_text())
@@ -181,7 +208,7 @@ def main() -> None:
     samp = pickle.load((args.sim_dir / "sampled_params.pkl").open("rb"))
 
     graph = _demes_from_model(cfg["demographic_model"], samp)
-    sel_cfg: Dict[str, Any] = (cfg.get("selection") or {})
+    sel_cfg: Dict[str, Any] = cfg.get("selection") or {}
     seed_base = int(cfg.get("seed", 0)) + int(args.rep_index)
 
     # --- If BGS is enabled, get the SAME coverage as before from the meta file ---
@@ -190,15 +217,21 @@ def main() -> None:
         if args.meta_file and args.meta_file.exists():
             meta = json.loads(args.meta_file.read_text())
             # Preferred exact fields if you added them previously:
-            if "sampled_coverage_percent" in meta and meta["sampled_coverage_percent"] is not None:
-                sampled_cov = float(meta["sampled_coverage_percent"])           # percent
-            elif "target_coverage_frac" in meta and meta["target_coverage_frac"] is not None:
-                sampled_cov = float(meta["target_coverage_frac"])               # fraction
+            if (
+                "sampled_coverage_percent" in meta
+                and meta["sampled_coverage_percent"] is not None
+            ):
+                sampled_cov = float(meta["sampled_coverage_percent"])  # percent
+            elif (
+                "target_coverage_frac" in meta
+                and meta["target_coverage_frac"] is not None
+            ):
+                sampled_cov = float(meta["target_coverage_frac"])  # fraction
             elif "coverage_fraction" in meta and meta["coverage_fraction"] is not None:
-                sampled_cov = float(meta["coverage_fraction"])                  # fraction
+                sampled_cov = float(meta["coverage_fraction"])  # fraction
             elif "selected_frac" in meta and meta["selected_frac"] is not None:
                 # last-resort: reuse realized coverage; close enough for consistency
-                sampled_cov = float(meta["selected_frac"])                      # fraction
+                sampled_cov = float(meta["selected_frac"])  # fraction
         # If meta missing, fall back to config bounds once (no resampling per window!)
         # i.e., do nothing here; better to error than silently resample:
         if sampled_cov is None:
@@ -211,9 +244,13 @@ def main() -> None:
     do_bgs = bool(sel_cfg.get("enabled", False))
     if do_bgs:
         # Pass through *exact same* coverage as used originally
-        ts = _simulate_bgs_stdpopsim(graph=graph, cfg=cfg, sel_cfg=sel_cfg,
-                                     seed_base=seed_base,
-                                     sampled_cov_percent_or_frac=sampled_cov)
+        ts = _simulate_bgs_stdpopsim(
+            graph=graph,
+            cfg=cfg,
+            sel_cfg=sel_cfg,
+            seed_base=seed_base,
+            sampled_cov_percent_or_frac=sampled_cov,
+        )
     else:
         ts = _simulate_neutral_msprime(graph=graph, cfg=cfg, seed_base=seed_base)
 
@@ -240,7 +277,10 @@ def main() -> None:
         out_dir=out_dir,
     )
 
-    print(f"✓ replicate {args.rep_index:04d} → {ts_file.relative_to(out_dir.parent.parent)}")
+    print(
+        f"✓ replicate {args.rep_index:04d} → {ts_file.relative_to(out_dir.parent.parent)}"
+    )
+
 
 if __name__ == "__main__":
     main()

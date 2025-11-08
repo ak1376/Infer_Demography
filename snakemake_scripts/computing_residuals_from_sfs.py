@@ -13,14 +13,18 @@ import matplotlib.pyplot as plt
 
 # ------------------ Expected SFS helpers ------------------
 
-def expected_sfs_dadi(params_in_order: List[float],
-                      param_names: List[str],
-                      sample_sizes: "OrderedDict[str,int]",
-                      demo_model,
-                      mutation_rate: float,
-                      sequence_length: int,
-                      pts: List[int]):
+
+def expected_sfs_dadi(
+    params_in_order: List[float],
+    param_names: List[str],
+    sample_sizes: "OrderedDict[str,int]",
+    demo_model,
+    mutation_rate: float,
+    sequence_length: int,
+    pts: List[int],
+):
     import dadi
+
     p_dict = dict(zip(param_names, params_in_order))
     graph = demo_model(p_dict)
     haploid_sizes = [2 * n for n in sample_sizes.values()]
@@ -35,13 +39,17 @@ def expected_sfs_dadi(params_in_order: List[float],
     fs *= theta
     return fs
 
-def expected_sfs_moments(params_in_order: List[float],
-                         param_names: List[str],
-                         sample_sizes: "OrderedDict[str,int]",
-                         demo_model,
-                         mutation_rate: float,
-                         genome_length: int):
+
+def expected_sfs_moments(
+    params_in_order: List[float],
+    param_names: List[str],
+    sample_sizes: "OrderedDict[str,int]",
+    demo_model,
+    mutation_rate: float,
+    genome_length: int,
+):
     import moments
+
     p_dict = dict(zip(param_names, params_in_order))
     graph = demo_model(p_dict)
     haploid_sizes = [2 * n for n in sample_sizes.values()]
@@ -54,20 +62,26 @@ def expected_sfs_moments(params_in_order: List[float],
         theta=theta,
     )
 
+
 # ------------------ IO utils ------------------
+
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text())
+
 
 def save_np(path: Path, arr: np.ndarray):
     path.parent.mkdir(parents=True, exist_ok=True)
     np.save(path, arr)
 
+
 def save_json_obj(path: Path, obj: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2))
 
+
 # ------------------ Fit loading (robust) ------------------
+
 
 def _maybe_load_pickle(path: Path) -> Any | None:
     try:
@@ -75,12 +89,16 @@ def _maybe_load_pickle(path: Path) -> Any | None:
     except Exception:
         return None
 
+
 def _best_idx_from_ll_list(ll_list: List[float]) -> int:
     if not ll_list:
         raise ValueError("Empty best_ll list.")
     return int(np.argmax(np.array(ll_list, dtype=float)))
 
-def load_best_params_from_inference(method_dir: Path, param_names: List[str]) -> Tuple[Dict[str, float], float | None]:
+
+def load_best_params_from_inference(
+    method_dir: Path, param_names: List[str]
+) -> Tuple[Dict[str, float], float | None]:
     """
     Accept:
       - fit_params.pkl with {'best_params': list[dict], 'best_ll': list[float]}
@@ -99,29 +117,40 @@ def load_best_params_from_inference(method_dir: Path, param_names: List[str]) ->
             pd = {p: pd[p] for p in param_names if p in pd}
             best_ll = None
             if "best_ll" in obj:
-                try: best_ll = float(obj["best_ll"])
-                except Exception: best_ll = None
+                try:
+                    best_ll = float(obj["best_ll"])
+                except Exception:
+                    best_ll = None
             return pd, best_ll
 
         if isinstance(obj.get("best_params"), list):
             bp = obj["best_params"]
             idx = 0
-            if "best_ll" in obj and isinstance(obj["best_ll"], list) and len(obj["best_ll"]) == len(bp):
+            if (
+                "best_ll" in obj
+                and isinstance(obj["best_ll"], list)
+                and len(obj["best_ll"]) == len(bp)
+            ):
                 idx = _best_idx_from_ll_list(obj["best_ll"])
             pd = {k: float(v) for k, v in bp[idx].items()}
             pd = {p: pd[p] for p in param_names if p in pd}
             best_ll = None
             if "best_ll" in obj and isinstance(obj["best_ll"], list):
-                try: best_ll = float(obj["best_ll"][idx])
-                except Exception: best_ll = None
+                try:
+                    best_ll = float(obj["best_ll"][idx])
+                except Exception:
+                    best_ll = None
             return pd, best_ll
 
     raise FileNotFoundError(f"No fit params found under {method_dir}")
 
+
 # ------------------ Misc helpers ------------------
+
 
 def compute_residuals(obs_sfs, fit_sfs) -> np.ndarray:
     return np.asarray(obs_sfs) - np.asarray(fit_sfs)
+
 
 def _load_model_callable(model_spec: str):
     if ":" not in model_spec:
@@ -133,12 +162,15 @@ def _load_model_callable(model_spec: str):
         module_path = base / module_file
         if not module_path.exists():
             module_path = base / (mod_name.split(".")[-1] + ".py")
-        spec = importlib.util.spec_from_file_location(mod_name.split(".")[-1], module_path)
+        spec = importlib.util.spec_from_file_location(
+            mod_name.split(".")[-1], module_path
+        )
         module = importlib.util.module_from_spec(spec)
         assert spec and spec.loader
         spec.loader.exec_module(module)
         return getattr(module, func_name)
     return getattr(importlib.import_module(mod_name), func_name)
+
 
 def _diploid_sample_sizes_from_cfg(cfg: dict) -> "OrderedDict[str,int]":
     if "sample_sizes" in cfg and isinstance(cfg["sample_sizes"], dict):
@@ -148,41 +180,45 @@ def _diploid_sample_sizes_from_cfg(cfg: dict) -> "OrderedDict[str,int]":
     else:
         raise KeyError("Config must provide 'sample_sizes' or 'num_samples'.")
     # preserve order
-    return type(d)((str(k), int(v)) for k,v in d.items())
+    return type(d)((str(k), int(v)) for k, v in d.items())
+
 
 def _auto_pts_from_samples(sample_sizes: "OrderedDict[str,int]") -> List[int]:
     n_max_hap = max(2 * n for n in sample_sizes.values())
     return [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60]
 
+
 def collapse_sfs_bins(sfs: np.ndarray, n_bins: int) -> np.ndarray:
     """
     Collapse SFS into fewer bins by summing adjacent entries.
-    
+
     Args:
         sfs: Original SFS array (any shape)
         n_bins: Target number of bins for the collapsed SFS
-        
+
     Returns:
         Collapsed SFS with approximately n_bins entries
     """
     sfs_flat = sfs.ravel()
     original_bins = len(sfs_flat)
-    
+
     if n_bins >= original_bins:
         return sfs  # No need to collapse
-    
+
     # Create bin edges for collapsing
     bin_edges = np.linspace(0, original_bins, n_bins + 1, dtype=int)
     collapsed = np.zeros(n_bins)
-    
+
     for i in range(n_bins):
         start_idx = bin_edges[i]
         end_idx = bin_edges[i + 1]
         collapsed[i] = np.sum(sfs_flat[start_idx:end_idx])
-    
+
     return collapsed
 
+
 # ------------------ CLI ------------------
+
 
 def parse_args():
     ap = argparse.ArgumentParser("Residuals (Observed − Fitted) for dadi/moments/both")
@@ -192,11 +228,17 @@ def parse_args():
     ap.add_argument("--observed-sfs", type=Path, required=True)
     ap.add_argument("--inference-dir", type=Path, required=True)
     ap.add_argument("--outdir", type=Path, required=True)
-    ap.add_argument("--n-bins", type=int, default=None, 
-                    help="Number of bins to collapse SFS into (default: no collapsing)")
+    ap.add_argument(
+        "--n-bins",
+        type=int,
+        default=None,
+        help="Number of bins to collapse SFS into (default: no collapsing)",
+    )
     return ap.parse_args()
 
+
 # ------------------ Main ------------------
+
 
 def main():
     args = parse_args()
@@ -225,19 +267,25 @@ def main():
     modes = ["dadi", "moments"] if args.mode == "both" else [args.mode]
 
     for mode in modes:
-        mode_outdir = (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
+        mode_outdir = (
+            (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
+        )
         mode_outdir.mkdir(parents=True, exist_ok=True)
 
         method_dir = args.inference_dir / mode
-        best_params_dict, best_ll = load_best_params_from_inference(method_dir, param_names)
+        best_params_dict, best_ll = load_best_params_from_inference(
+            method_dir, param_names
+        )
 
         # Fill any missing params with prior midpoint
         def prior_mid(p: str) -> float:
             lo, hi = priors[p]
             return (float(lo) + float(hi)) / 2.0
 
-        full_best = {p: (float(best_params_dict[p]) if p in best_params_dict else prior_mid(p))
-                     for p in param_names}
+        full_best = {
+            p: (float(best_params_dict[p]) if p in best_params_dict else prior_mid(p))
+            for p in param_names
+        }
         best_vec = [full_best[p] for p in param_names]
 
         # Build fitted SFS
@@ -245,9 +293,13 @@ def main():
             pts = cfg.get("pts", None)
             if pts is None:
                 pts = _auto_pts_from_samples(sample_sizes)
-            fitted = expected_sfs_dadi(best_vec, param_names, sample_sizes, demo_func, mu, L, pts)
+            fitted = expected_sfs_dadi(
+                best_vec, param_names, sample_sizes, demo_func, mu, L, pts
+            )
         else:
-            fitted = expected_sfs_moments(best_vec, param_names, sample_sizes, demo_func, mu, L)
+            fitted = expected_sfs_moments(
+                best_vec, param_names, sample_sizes, demo_func, mu, L
+            )
 
         if np.asarray(observed).shape != np.asarray(fitted).shape:
             raise ValueError(
@@ -261,37 +313,45 @@ def main():
         if args.n_bins is not None:
             obs_to_use = collapse_sfs_bins(observed, args.n_bins)
             fit_to_use = collapse_sfs_bins(fitted, args.n_bins)
-            print(f"[{mode}] Collapsed SFS from {np.asarray(observed).size} to {len(obs_to_use)} bins")
+            print(
+                f"[{mode}] Collapsed SFS from {np.asarray(observed).size} to {len(obs_to_use)} bins"
+            )
 
         residuals = compute_residuals(obs_to_use, fit_to_use)  # Observed − Fitted
         residuals_flat = residuals.ravel()
 
-        print(f"[{mode}] sum(Fitted)={float(np.sum(fitted)):.6g}  "
-              f"sum(Observed)={float(np.sum(observed)):.6g}  "
-              f"sum(Residuals)={float(np.sum(residuals)):.6g}")
+        print(
+            f"[{mode}] sum(Fitted)={float(np.sum(fitted)):.6g}  "
+            f"sum(Observed)={float(np.sum(observed)):.6g}  "
+            f"sum(Residuals)={float(np.sum(residuals)):.6g}"
+        )
 
         # QC plot
         plt.figure(figsize=(8, 6))
         plt.hist(residuals_flat, bins=50, alpha=0.7)
         plt.title(f"Residuals Histogram ({mode})")
-        plt.xlabel("Observed − Fitted"); plt.ylabel("Frequency")
+        plt.xlabel("Observed − Fitted")
+        plt.ylabel("Frequency")
         plt.savefig(mode_outdir / "residuals_histogram.png")
         plt.close()
 
         # Save
         save_np(mode_outdir / "residuals.npy", residuals)
         save_np(mode_outdir / "residuals_flat.npy", residuals_flat)
-        save_json_obj(mode_outdir / "meta.json", {
-            "mode": mode,
-            "shape": list(residuals.shape),
-            "param_order": param_names,
-            "best_params": full_best,
-            "best_ll": best_ll,
-            "observed_source": str(args.observed_sfs),
-            "n_bins": args.n_bins,
-            "original_sfs_shape": list(np.asarray(observed).shape),
-            "notes": "Residuals = Observed − Fitted",
-        })
+        save_json_obj(
+            mode_outdir / "meta.json",
+            {
+                "mode": mode,
+                "shape": list(residuals.shape),
+                "param_order": param_names,
+                "best_params": full_best,
+                "best_ll": best_ll,
+                "observed_source": str(args.observed_sfs),
+                "n_bins": args.n_bins,
+                "original_sfs_shape": list(np.asarray(observed).shape),
+                "notes": "Residuals = Observed − Fitted",
+            },
+        )
 
         print(f"[{mode}] wrote → {mode_outdir}")
 

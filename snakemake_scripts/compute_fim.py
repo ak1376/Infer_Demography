@@ -23,6 +23,7 @@ from fisher_info_sfs import observed_fim_theta
 
 # ------------------ Model import helpers ------------------
 
+
 def _load_module_func(mod_name: str, func_name: str):
     """Import a function; support `src.*` path-to-file loading."""
     if mod_name.startswith("src."):
@@ -31,7 +32,9 @@ def _load_module_func(mod_name: str, func_name: str):
         module_path = base / module_file
         if not module_path.exists():
             module_path = base / (mod_name.split(".")[-1] + ".py")
-        spec = importlib.util.spec_from_file_location(mod_name.split(".")[-1], module_path)
+        spec = importlib.util.spec_from_file_location(
+            mod_name.split(".")[-1], module_path
+        )
         module = importlib.util.module_from_spec(spec)
         assert spec and spec.loader, f"Cannot load module: {module_path}"
         spec.loader.exec_module(module)
@@ -50,6 +53,7 @@ def _model_import_from_cfg(cfg: dict):
 
 
 # ------------------ Fit-parsing helpers ------------------
+
 
 def _param_order_from_cfg(cfg: dict) -> list[str]:
     # JSON preserves insertion order ⇒ use priors key order
@@ -75,7 +79,11 @@ def _best_params_from_fit_any(fit_blob: dict, param_order: list[str]) -> np.ndar
     # Case A: list with (optional) best_ll list
     if isinstance(fit_blob.get("best_params"), list):
         params_list = fit_blob["best_params"]
-        if "best_ll" in fit_blob and isinstance(fit_blob["best_ll"], list) and len(fit_blob["best_ll"]) == len(params_list):
+        if (
+            "best_ll" in fit_blob
+            and isinstance(fit_blob["best_ll"], list)
+            and len(fit_blob["best_ll"]) == len(params_list)
+        ):
             idx = int(np.argmax(np.array(fit_blob["best_ll"], dtype=float)))
         else:
             idx = 0
@@ -87,12 +95,15 @@ def _best_params_from_fit_any(fit_blob: dict, param_order: list[str]) -> np.ndar
 
 # ------------------ SFS helpers ------------------
 
+
 def _diploid_sample_sizes_from_cfg(cfg: dict) -> Dict[str, int]:
     if "sample_sizes" in cfg and isinstance(cfg["sample_sizes"], dict):
         return {str(k): int(v) for k, v in cfg["sample_sizes"].items()}
     if "num_samples" in cfg and isinstance(cfg["num_samples"], dict):
         return {str(k): int(v) for k, v in cfg["num_samples"].items()}
-    raise KeyError("Config must provide 'sample_sizes' or 'num_samples' (diploid per deme).")
+    raise KeyError(
+        "Config must provide 'sample_sizes' or 'num_samples' (diploid per deme)."
+    )
 
 
 def _auto_pts_from_samples(sample_sizes: Dict[str, int]) -> List[int]:
@@ -105,17 +116,22 @@ def _auto_pts_from_samples(sample_sizes: Dict[str, int]) -> List[int]:
 
 # ------------------ CLI ------------------
 
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", required=True, choices=["dadi","moments"])
+    ap.add_argument("--engine", required=True, choices=["dadi", "moments"])
     ap.add_argument("--fit-pkl", required=True, type=Path)
     ap.add_argument("--sfs", required=True, type=Path)
     ap.add_argument("--config", required=True, type=Path)
     ap.add_argument("--fim-npy", required=True, type=Path)
     ap.add_argument("--summary-json", required=True, type=Path)
     ap.add_argument("--rel-step", type=float, default=1e-4)
-    ap.add_argument("--pts", type=str, default="auto",
-                    help='For dadi: "n1,n2,n3" or "auto" (default). Ignored for moments.')
+    ap.add_argument(
+        "--pts",
+        type=str,
+        default="auto",
+        help='For dadi: "n1,n2,n3" or "auto" (default). Ignored for moments.',
+    )
     args = ap.parse_args()
 
     # Load inputs
@@ -123,13 +139,16 @@ def main():
     sfs = pickle.load(args.sfs.open("rb"))
     cfg = json.loads(args.config.read_text())
     mu = float(cfg["mutation_rate"])
-    L  = int(cfg["genome_length"])
+    L = int(cfg["genome_length"])
 
     # Resolve model and wrap to pass config if supported
     orig_model = _model_import_from_cfg(cfg)
+
     def model_func(pdict):
         try:
-            return orig_model(pdict, cfg)  # our src.simulation functions accept (params, config)
+            return orig_model(
+                pdict, cfg
+            )  # our src.simulation functions accept (params, config)
         except TypeError:
             return orig_model(pdict)
 
@@ -158,7 +177,7 @@ def main():
         engine=args.engine,
         pts=pts,
         fixed_params=None,
-        rel_step=args.rel_step
+        rel_step=args.rel_step,
     )
 
     # Save outputs
@@ -183,9 +202,12 @@ def main():
     summary["diag"] = {param_order[i]: float(diag[k]) for k, i in enumerate(free_idx)}
 
     def _sanitize(o):
-        if isinstance(o, dict): return {k: _sanitize(v) for k,v in o.items()}
-        if isinstance(o, list): return [_sanitize(v) for v in o]
-        if isinstance(o, float) and (math.isnan(o) or math.isinf(o)): return None
+        if isinstance(o, dict):
+            return {k: _sanitize(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [_sanitize(v) for v in o]
+        if isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
+            return None
         return o
 
     (args.summary_json).write_text(json.dumps(_sanitize(summary), indent=2))

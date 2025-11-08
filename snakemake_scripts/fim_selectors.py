@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from typing import Dict, List, Optional
 
+
 def pick_best_params_from_blob(tool_blob: dict) -> Optional[dict]:
     """
     Accepts one sub-blob like data['dadi'] or data['moments'] or data['momentsLD'].
@@ -20,7 +21,7 @@ def pick_best_params_from_blob(tool_blob: dict) -> Optional[dict]:
 
     # dadi/moments format (lists of dicts + list of lls)
     bplist = tool_blob.get("best_params")
-    blls   = tool_blob.get("best_ll")
+    blls = tool_blob.get("best_ll")
     if isinstance(bplist, list) and bplist:
         if isinstance(blls, list) and len(blls) == len(bplist):
             i = int(np.nanargmax(np.asarray(blls, dtype=float)))
@@ -30,7 +31,9 @@ def pick_best_params_from_blob(tool_blob: dict) -> Optional[dict]:
     return None
 
 
-def best_theta_for_engine(all_inf: dict, engine: str, param_order: List[str]) -> Optional[List[float]]:
+def best_theta_for_engine(
+    all_inf: dict, engine: str, param_order: List[str]
+) -> Optional[List[float]]:
     """
     engine: 'dadi' or 'moments' (or 'momentsLD')
     Returns theta (list of floats) in the given param_order, or None.

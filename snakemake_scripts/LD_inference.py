@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 # >>> make src importable <<<
-ROOT = Path(__file__).resolve().parents[1]   # project root
+ROOT = Path(__file__).resolve().parents[1]  # project root
 SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -24,21 +24,41 @@ from MomentsLD_inference import (
     DEFAULT_R_BINS,
 )
 
+
 def _parse_args():
-    p = argparse.ArgumentParser("Aggregate LD stats, make comparison PDF, run Moments-LD optimisation")
-    p.add_argument("--run-dir",      required=True, type=Path, help="experiments/<MODEL>/simulations/<sid>")
-    p.add_argument("--output-root",  required=True, type=Path, help="experiments/<MODEL>/inferences/sim_<sid>/MomentsLD")
-    p.add_argument("--config-file",  required=True, type=Path)
-    p.add_argument("--r-bins",       type=str, default=None,
-                   help="Comma-separated r-bin edges. If omitted, uses DEFAULT_R_BINS")
-    p.add_argument("-v","--verbose", action="count", default=0)
+    p = argparse.ArgumentParser(
+        "Aggregate LD stats, make comparison PDF, run Moments-LD optimisation"
+    )
+    p.add_argument(
+        "--run-dir",
+        required=True,
+        type=Path,
+        help="experiments/<MODEL>/simulations/<sid>",
+    )
+    p.add_argument(
+        "--output-root",
+        required=True,
+        type=Path,
+        help="experiments/<MODEL>/inferences/sim_<sid>/MomentsLD",
+    )
+    p.add_argument("--config-file", required=True, type=Path)
+    p.add_argument(
+        "--r-bins",
+        type=str,
+        default=None,
+        help="Comma-separated r-bin edges. If omitted, uses DEFAULT_R_BINS",
+    )
+    p.add_argument("-v", "--verbose", action="count", default=0)
     return p.parse_args()
+
 
 def main():
     a = _parse_args()
     logging.basicConfig(
-        level=logging.WARNING - 10*min(a.verbose,2),
-        format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+        level=logging.WARNING - 10 * min(a.verbose, 2),
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     cfg = load_config(a.config_file)
     sampled_params = load_sampled_params(a.run_dir)
@@ -61,6 +81,7 @@ def main():
 
     # 3) custom NLopt L-BFGS optimisation (skips if best_fit.pkl exists)
     run_momentsld_inference(cfg, empirical_data, a.output_root, r_vec, sampled_params)
+
 
 if __name__ == "__main__":
     main()

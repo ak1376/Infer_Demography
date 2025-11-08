@@ -7,6 +7,7 @@ import pickle
 from pathlib import Path
 import dadi
 
+
 def parse_args():
     p = argparse.ArgumentParser("Construct SFS from VCF and popfile")
     p.add_argument("--input-vcf", type=Path, required=True)
@@ -14,6 +15,7 @@ def parse_args():
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--output-sfs", type=Path, required=True)
     return p.parse_args()
+
 
 def parse_popfile(popfile_path):
     pop_names = []
@@ -26,11 +28,13 @@ def parse_popfile(popfile_path):
     # Remove duplicates, preserve order
     return list(dict.fromkeys(pop_names))
 
+
 def main():
     args = parse_args()
     pop_names = parse_popfile(args.popfile)
     # Count samples per population
     from collections import Counter
+
     pop_list = []
     with open(args.popfile) as pf:
         for line in pf:
@@ -47,6 +51,7 @@ def main():
     with open(args.output_sfs, "wb") as f:
         pickle.dump(sfs, f)
     print(f"Saved SFS to {args.output_sfs}")
+
 
 if __name__ == "__main__":
     main()

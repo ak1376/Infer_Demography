@@ -20,10 +20,15 @@ from MomentsLD_inference import (
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 
+
 def main():
     cli = argparse.ArgumentParser("moments‑LD optimise one run (modular)")
-    cli.add_argument("--run-dir", type=Path, required=True,
-                     help="existing experiments/.../run_XXXX folder")
+    cli.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="existing experiments/.../run_XXXX folder",
+    )
     cli.add_argument("--config-file", type=Path, required=True)
     cli.add_argument("--output-root", type=Path, required=True)
     args = cli.parse_args()
@@ -34,7 +39,9 @@ def main():
     try:
         run_idx = int(args.run_dir.name.split("_")[-1])
     except (IndexError, ValueError):
-        logging.error("Could not parse run index from directory name: %s", args.run_dir.name)
+        logging.error(
+            "Could not parse run index from directory name: %s", args.run_dir.name
+        )
         return
 
     sim_dir = args.output_root / f"sim_{run_idx:04d}"

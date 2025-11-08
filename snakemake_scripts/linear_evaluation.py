@@ -12,15 +12,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.plotting_helpers import visualizing_results   # keep using your plotting util
+from src.plotting_helpers import visualizing_results  # keep using your plotting util
 
 
 # ---------- minimal helpers ----------
+
 
 def mean_squared_error(y_true, y_pred):
     yt = np.asarray(y_true)
     yp = np.asarray(y_pred)
     return float(np.mean((yt - yp) ** 2))
+
 
 def _load_array(path):
     p = Path(path)
@@ -41,9 +43,11 @@ def _load_array(path):
     else:
         raise ValueError(f"Unsupported extension for {path} (use .npy or .pkl).")
 
+
 def _build_default_model_dir(exp_cfg, regression_type):
     base = Path(f"experiments/{exp_cfg['demographic_model']}/modeling")
     return base / f"linear_{regression_type}"
+
 
 def _pick_model(regression_type, alpha, l1_ratio):
     if regression_type == "ridge":
@@ -54,7 +58,10 @@ def _pick_model(regression_type, alpha, l1_ratio):
         return ElasticNet(alpha=alpha, l1_ratio=l1_ratio, max_iter=10000)
     if regression_type == "standard":
         return LinearRegression()
-    raise ValueError("regression_type must be one of: standard, ridge, lasso, elasticnet")
+    raise ValueError(
+        "regression_type must be one of: standard, ridge, lasso, elasticnet"
+    )
+
 
 def _fit_and_predict(model, X_train, y_train, X_val, y_val):
     # Fit on train if available, else fit on val (rare case)
@@ -65,24 +72,30 @@ def _fit_and_predict(model, X_train, y_train, X_val, y_val):
     else:
         raise ValueError("No data provided to fit the model.")
 
-    train_preds = (model.predict(X_train).reshape(X_train.shape[0], -1)
-                   if X_train is not None else None)
-    val_preds   = (model.predict(X_val).reshape(X_val.shape[0], -1)
-                   if X_val is not None else None)
+    train_preds = (
+        model.predict(X_train).reshape(X_train.shape[0], -1)
+        if X_train is not None
+        else None
+    )
+    val_preds = (
+        model.predict(X_val).reshape(X_val.shape[0], -1) if X_val is not None else None
+    )
     return train_preds, val_preds
+
 
 def _organize_results(data_dict, train_preds, val_preds, model):
     out = {"model": model, "training": {}, "validation": {}}
     if "training" in data_dict:
         out["training"]["predictions"] = train_preds
-        out["training"]["targets"]     = np.asarray(data_dict["training"]["targets"])
+        out["training"]["targets"] = np.asarray(data_dict["training"]["targets"])
     if "validation" in data_dict:
         out["validation"]["predictions"] = val_preds
-        out["validation"]["targets"]     = np.asarray(data_dict["validation"]["targets"])
+        out["validation"]["targets"] = np.asarray(data_dict["validation"]["targets"])
     return out
 
 
 # ---------- main ----------
+
 
 def linear_evaluation(
     X_train_path=None,
@@ -97,7 +110,7 @@ def linear_evaluation(
     regression_type="standard",
     alpha=0.0,
     l1_ratio=0.5,
-    do_grid_search=False
+    do_grid_search=False,
 ):
     # configs
     if experiment_config_path is None:
@@ -118,23 +131,31 @@ def linear_evaluation(
 
     # colors
     color_shades = pickle.load(open(color_shades_path, "rb"))
-    main_colors  = pickle.load(open(main_colors_path, "rb"))
+    main_colors = pickle.load(open(main_colors_path, "rb"))
 
     # data
     X_train = _load_array(X_train_path) if X_train_path else None
     y_train = _load_array(y_train_path) if y_train_path else None
-    X_val   = _load_array(X_val_path)   if X_val_path   else None
-    y_val   = _load_array(y_val_path)   if y_val_path   else None
+    X_val = _load_array(X_val_path) if X_val_path else None
+    y_val = _load_array(y_val_path) if y_val_path else None
 
     if X_train is None and X_val is None:
         raise ValueError("Provide at least train or val split.")
     if (X_train is None) ^ (y_train is None):
-        raise ValueError("If you give X_train_path, also give y_train_path (and vice versa).")
+        raise ValueError(
+            "If you give X_train_path, also give y_train_path (and vice versa)."
+        )
     if (X_val is None) ^ (y_val is None):
-        raise ValueError("If you give X_val_path, also give y_val_path (and vice versa).")
+        raise ValueError(
+            "If you give X_val_path, also give y_val_path (and vice versa)."
+        )
 
     # optional grid search
-    if regression_type in ["ridge", "lasso", "elasticnet"] and do_grid_search and X_train is not None:
+    if (
+        regression_type in ["ridge", "lasso", "elasticnet"]
+        and do_grid_search
+        and X_train is not None
+    ):
         if regression_type == "ridge":
             base = Ridge()
             grid = {"alpha": [0.1, 1.0, 10.0, 100.0]}
@@ -147,7 +168,7 @@ def linear_evaluation(
         gs = GridSearchCV(base, grid, scoring="neg_mean_squared_error", cv=5)
         gs.fit(X_train, y_train)
         print(f"[INFO] Best params: {gs.best_params_}")
-        alpha    = gs.best_params_.get("alpha", alpha)
+        alpha = gs.best_params_.get("alpha", alpha)
         l1_ratio = gs.best_params_.get("l1_ratio", l1_ratio)
 
     # fit + predict
@@ -162,13 +183,19 @@ def linear_evaluation(
         features_and_targets["validation"] = {"features": X_val, "targets": y_val}
 
     linear_obj = _organize_results(features_and_targets, train_preds, val_preds, model)
-    linear_obj["param_names"] = list(exp_cfg["priors"].keys()) if "priors" in exp_cfg else []
+    linear_obj["param_names"] = (
+        list(exp_cfg["priors"].keys()) if "priors" in exp_cfg else []
+    )
 
     # errors
     # --- MSEs (overall + per-parameter) ----------------------------------------
     param_names = linear_obj["param_names"]
-    rrmse = {"training": None, "validation": None,
-            "training_mse": {}, "validation_mse": {}}
+    rrmse = {
+        "training": None,
+        "validation": None,
+        "training_mse": {},
+        "validation_mse": {},
+    }
 
     def _fill_rrmse(y_true, y_pred, split_key):
         if y_true is None or y_pred is None:
@@ -180,14 +207,16 @@ def linear_evaluation(
             rrmse[f"{split_key}_mse"][name] = float(np.mean((yt[:, i] - yp[:, i]) ** 2))
 
     _fill_rrmse(y_train, train_preds, "training")
-    _fill_rrmse(y_val,   val_preds,   "validation")
+    _fill_rrmse(y_val, val_preds, "validation")
 
     # save artifacts
     with open(model_directory / f"linear_mdl_obj_{regression_type}.pkl", "wb") as f:
         pickle.dump(linear_obj, f)
     with open(model_directory / f"linear_model_error_{regression_type}.json", "w") as f:
         json.dump(rrmse, f, indent=4)
-    joblib.dump(model, model_directory / f"linear_regression_model_{regression_type}.pkl")
+    joblib.dump(
+        model, model_directory / f"linear_regression_model_{regression_type}.pkl"
+    )
 
     # plots
     visualizing_results(
@@ -196,7 +225,7 @@ def linear_evaluation(
         save_loc=model_directory,
         stages=[s for s in ["training", "validation"] if s in features_and_targets],
         color_shades=color_shades,
-        main_colors=main_colors
+        main_colors=main_colors,
     )
     print("[INFO] Linear model complete.")
 
@@ -209,21 +238,25 @@ if __name__ == "__main__":
     # Data
     p.add_argument("--X_train_path", type=str, default=None)
     p.add_argument("--y_train_path", type=str, default=None)
-    p.add_argument("--X_val_path",   type=str, default=None)
-    p.add_argument("--y_val_path",   type=str, default=None)
+    p.add_argument("--X_val_path", type=str, default=None)
+    p.add_argument("--y_val_path", type=str, default=None)
 
     # Configs
     p.add_argument("--experiment_config_path", type=str, required=True)
-    p.add_argument("--model_config_path",      type=str, default=None)
-    p.add_argument("--color_shades_file",      type=str, required=True)
-    p.add_argument("--main_colors_file",       type=str, required=True)
+    p.add_argument("--model_config_path", type=str, default=None)
+    p.add_argument("--color_shades_file", type=str, required=True)
+    p.add_argument("--main_colors_file", type=str, required=True)
 
     # Model
     p.add_argument("--model_directory", type=str, default=None)
-    p.add_argument("--regression_type", type=str, default="standard",
-                   choices=["standard", "ridge", "lasso", "elasticnet"])
-    p.add_argument("--alpha",     type=float, default=0.0)
-    p.add_argument("--l1_ratio",  type=float, default=0.5)
+    p.add_argument(
+        "--regression_type",
+        type=str,
+        default="standard",
+        choices=["standard", "ridge", "lasso", "elasticnet"],
+    )
+    p.add_argument("--alpha", type=float, default=0.0)
+    p.add_argument("--l1_ratio", type=float, default=0.5)
     p.add_argument("--do_grid_search", action="store_true")
 
     args = p.parse_args()
@@ -241,5 +274,5 @@ if __name__ == "__main__":
         regression_type=args.regression_type,
         alpha=args.alpha,
         l1_ratio=args.l1_ratio,
-        do_grid_search=args.do_grid_search
+        do_grid_search=args.do_grid_search,
     )
