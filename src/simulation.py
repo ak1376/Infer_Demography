@@ -428,47 +428,10 @@ def simulation(
     sampled_params: Dict[str, float],
     model_type: str,
     experiment_config: Dict,
-    sampled_coverage: float,
+    sampled_coverage: Optional[float] = None,
 ) -> Tuple[tskit.TreeSequence, demes.Graph]:
-    """
-    This needs to be the most general as possible. This should support both neutral 
-    and BGS simulations. The user can toggle this through the "engine" feature in the 
-    config file. The sampled parameters should go to a demes graph. If engine = slim 
-    then I will pass this demes graph to stdpopsim. If engine = msprime then I will 
-    not pass it to anything.
-    """
 
-    """
-    Background selection only. Uses your demes graph + stdpopsim SLiM engine.
-
-    Config expects:
-      - num_samples (keys must match deme names, e.g. {"YRI":10,"CEU":10})
-      - mutation_rate, recombination_rate, genome_length (for synthetic contigs)
-      - seed
-      - selection:
-          enabled: true
-          species: "HomSap"
-          dfe_id: "Gamma_K17"
-          # (optional real chromosome window)
-          chromosome: "chr21"
-          left: 0
-          right: 1e6
-          genetic_map: "HapMapII_GRCh37"   # recommended for real chr
-          # BGS tiling
-          coverage_fraction: 0.2  # or coverage_percent: 20.0
-          exon_bp: 200
-          jitter_bp: 0
-          # OR fixed spacing:
-          # tile_bp: 5000
-          # SLiM rescaling
-          slim_scaling: 10.0
-          slim_burn_in: 5.0
-    """
-    sel = experiment_config.get("selection") or {}
-    if not sel.get("enabled", False):
-        raise ValueError("This file only runs BGS. Set selection.enabled=true.")
-
-    # 1) Build demes graph (kept for plotting/metadata)
+    # Build demes graph (kept for plotting/metadata)
     if model_type == "bottleneck":
         g = bottleneck_model(sampled_params, experiment_config)
     elif model_type == "split_isolation":
@@ -480,14 +443,22 @@ def simulation(
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
 
-    engine = experiment_config['engine']
+    engine = str(experiment_config.get("engine", "")).lower()
+    sel = experiment_config.get("selection") or {}
 
     if engine == "msprime":
+        # Neutral path: no BGS, no coverage needed/used
         return msprime_simulation(g, experiment_config)
-    elif engine == "slim": 
+
+    if engine == "slim":
+        # BGS path: require selection.enabled and a coverage
+        if not sel.get("enabled", False):
+            raise ValueError("engine='slim' requires selection.enabled=true in your config.")
+        if sampled_coverage is None:
+            raise ValueError("engine='slim' requires a non-None sampled_coverage (percent or fraction).")
         return stdpopsim_slim_simulation(g, experiment_config, sampled_coverage, model_type, sampled_params)
-    else:
-        raise ValueError("engine must be 'slim' or 'msprime'.")
+
+    raise ValueError("engine must be 'slim' or 'msprime'.")
 
 # ──────────────────────────────────
 # SFS utility

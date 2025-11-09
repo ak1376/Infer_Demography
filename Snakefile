@@ -93,21 +93,21 @@ rule all:
         # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # # # LD artifacts
-        # expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
         # expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
         # expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
 
-        # # FIM (always computed)
-        # expand(
-        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-        #     sid=SIM_IDS, engine=FIM_ENGINES
-        # ),
+        # FIM (always computed)
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+            sid=SIM_IDS, engine=FIM_ENGINES
+        ),
 
-        # # Residuals (always computed)
-        # expand(
-        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-        #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-        # ),
+        # Residuals (always computed)
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
+            sid=SIM_IDS, engine=RESIDUAL_ENGINES
+        ),
 
         # # Combined per-sim inference blobs (include FIM/residuals payloads)
         # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
