@@ -28,6 +28,8 @@
   "use_residuals": true,
   "residual_engines": "moments",
   "use_residuals_gs": false,
-  "sfs_n_bins": 5
+  "sfs_n_bins": 5,
+
+  "use_gpu_ld": true
 
 }

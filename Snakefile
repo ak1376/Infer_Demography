@@ -94,7 +94,8 @@ rule all:
 
         # # # LD artifacts
         expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
-        # expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/windows/window_{{win}}.trees",         sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
         # expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
 
         # FIM (always computed)
@@ -304,7 +305,8 @@ rule simulate_window:
         metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
-        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
+        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
+        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"
     params:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
@@ -327,6 +329,7 @@ rule simulate_window:
 rule ld_window:
     input:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
+        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"  # Needed for GPU acceleration
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
@@ -336,14 +339,16 @@ rule ld_window:
 
     threads: 4
     resources:
-        ld_cores=4
+        ld_cores=4,
+        gpu_mem=1  # Limit concurrent GPU jobs
     shell:
         """
         python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
-            --r-bins       "{params.bins}"
+            --r-bins       "{params.bins}" \
+            --use-gpu
         """
 
 ##############################################################################

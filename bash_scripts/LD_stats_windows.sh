@@ -6,7 +6,8 @@
 #SBATCH --time=18:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=12G
-#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --gres=gpu:1
+#SBATCH --partition=kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -14,6 +15,10 @@
 #SBATCH --verbose
 
 set -euo pipefail
+
+# Load required modules for GPU support
+module load cuda/12.2 || echo "CUDA module not found, continuing..."
+module load python/3.12 || echo "Python 3.12 module not found, using system python"
 
 # -------- batching knobs ---------------------------------------------------
 BATCH_SIZE=50     # number of (sim,window) jobs per array task
@@ -51,6 +56,7 @@ for IDX in $(seq "$START" "$END"); do
               --nolock                  \
               --latency-wait 120        \
               --rerun-incomplete        \
+              --resources gpu_mem=1     \
               -j "$SLURM_CPUS_PER_TASK" \
               "$TARGET" || { echo "Failed for SID=$SID WIN=$WIN"; exit 1; }
 done
