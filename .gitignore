@@ -10,3 +10,9 @@ Snakefile.simple
 experiments/
 OOA/
 real_data_analysis/
+test_scripts/
+scripts/
+moments-opt-example.py
+graham_schmidt.ipynb
+preserved_experiments/
+logs/
