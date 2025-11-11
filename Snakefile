@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_migration.json"
+EXP_CFG      = "config_files/experiment_config_bottleneck.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -343,7 +343,7 @@ rule ld_window:
         gpu_mem=1  # Limit concurrent GPU jobs
     shell:
         """
-        python "{LD_SCRIPT}" \
+        ~/miniforge3/envs/snakemake-env/bin/python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \

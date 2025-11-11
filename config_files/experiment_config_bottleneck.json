@@ -5,12 +5,12 @@
     "demographic_model": "bottleneck",
     "log_dir": "bottleneck/inferences/moments/logs",
     "num_samples": {
-        "N0": 10
+        "ANC": 10
     }, 
     "seed": 42, 
     "num_optimizations": 100, 
     "top_k": 5, 
-    "num_draws": 1000,
+    "num_draws": 5000,
     "priors": {
     "N0"                : [2000, 20000],
     "N_bottleneck"      : [100, 1999],
@@ -18,14 +18,21 @@
     "t_bottleneck_start": [1701, 3000],
     "t_bottleneck_end"  : [ 100,  1700]
     }, 
-    "dadi_analysis": true, 
-    "moments_analysis": true,
-    "moments_ld_analysis": true, 
-    "training_percentage": 0.8,
+    
     "fixed_parameters": {
         "N0": "sampled",
         "N_bottleneck": "sampled"
     }, 
-    "use_FIM": true,
-    "fim_engines": ["moments"]
+    "selection": {
+    "enabled": true,
+    "species": "HomSap",
+    "dfe_id": "Gamma_K17",
+    "coverage_percent": [0, 95]
+    },
+    "use_fim_features": false,
+    "fim_engines": ["moments"],
+    "use_residuals": false,
+    "residual_engines": "moments", 
+    "engine": "slim", 
+    "use_gpu_ld": false
 }

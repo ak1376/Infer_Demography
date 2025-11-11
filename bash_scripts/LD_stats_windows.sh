@@ -5,8 +5,9 @@
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=18:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=12G
-#SBATCH --gres=gpu:1
+#SBATCH --mem=64G
+#SBATCH --gres=gpu:nvidia_h100_80gb_hbm3:1
+#SBATCH --exclusive
 #SBATCH --partition=kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -17,11 +18,15 @@
 set -euo pipefail
 
 # Load required modules for GPU support
-module load cuda/12.2 || echo "CUDA module not found, continuing..."
-module load python/3.12 || echo "Python 3.12 module not found, using system python"
+module load cuda/12.4.1 || echo "CUDA module not found, continuing..."
+module load python3/3.11.4 || echo "Python 3.11 module not found, using system python"
+
+# Activate conda environment with snakemake
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate snakemake-env
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=50     # number of (sim,window) jobs per array task
+BATCH_SIZE=1     # number of (sim,window) jobs per array task - reduced for GPU memory
 # ----------------------------------------------------------------------------
 
 # -------- config & constants -----------------------------------------------
