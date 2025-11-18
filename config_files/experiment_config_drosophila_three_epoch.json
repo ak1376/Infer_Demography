@@ -10,9 +10,9 @@
     },
   
     "seed": 42,
-    "num_optimizations": 100,
-    "top_k": 5,
-    "num_draws": 1000,
+    "num_optimizations": 1,
+    "top_k": 1,
+    "num_draws": 5000,
   
     "priors": {
       "N0"            :  [5000,  20000],    
@@ -24,8 +24,17 @@
       "T_AFR_EUR_split" : [10000,  49000],   
       "T_EUR_expansion" : [   500,   9000]    
     }, 
-    "fixed_parameters": {
-        "T_AFR_expansion": "sampled"
-      }
-  }
+    "selection": {
+    "enabled": true,
+    "species": "HomSap",
+    "dfe_id": "Gamma_K17",
+    "coverage_percent": [1, 95]
+    },
+    "use_fim_features": false,
+    "fim_engines": ["moments"],
+    "use_residuals": false,
+    "residual_engines": "moments", 
+    "engine": "slim", 
+    "use_gpu_ld": true
+}
   

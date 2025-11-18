@@ -124,6 +124,65 @@ class _Bottleneck(sps.DemographicModel):
             generation_time=1,
         )
 
+class _DrosophilaThreeEpoch(sps.DemographicModel):
+    """
+    Two-pop Drosophila-style three-epoch model.
+
+    ANC (size N0) splits at T_AFR_EUR_split into:
+      - AFR: constant size AFR (AFR_recover in your priors)
+      - EUR: bottleneck of size EUR_bottleneck until T_EUR_expansion,
+             then recovery to EUR_recover up to the present.
+
+    Populations are added leaf-first so p0/p1 are AFR/EUR (not ANC),
+    which plays nicely with SLiM’s population ordering.
+    """
+
+    def __init__(
+        self,
+        N0,
+        AFR,
+        EUR_bottleneck,
+        EUR_recover,
+        T_AFR_EUR_split,
+        T_EUR_expansion,
+    ):
+        T_split = float(T_AFR_EUR_split)
+        T_exp   = float(T_EUR_expansion)
+
+        dem = msprime.Demography()
+
+        # Leaf-first: extant pops first, then ANC
+        dem.add_population(name="AFR", initial_size=float(AFR))
+        dem.add_population(name="EUR", initial_size=float(EUR_bottleneck))
+        dem.add_population(name="ANC", initial_size=float(N0))
+
+        # EUR expansion (bottleneck -> recovery) at T_EUR_expansion
+        dem.add_population_parameters_change(
+            time=T_exp,
+            population="EUR",
+            initial_size=float(EUR_recover),
+        )
+
+        # Split backward in time at T_AFR_EUR_split: AFR/EUR merge into ANC
+        dem.add_population_split(
+            time=T_split,
+            ancestral="ANC",
+            derived=["AFR", "EUR"],
+        )
+
+        super().__init__(
+            id="drosophila_three_epoch",
+            description="Drosophila-style three-epoch AFR/EUR model",
+            long_description=(
+                "ANC (N0) until T_AFR_EUR_split, then split into AFR and EUR. "
+                "AFR stays at AFR; EUR has a bottleneck (EUR_bottleneck) and "
+                "expands at T_EUR_expansion to EUR_recover."
+            ),
+            model=dem,
+            generation_time=1,
+        )
+
+
 # ──────────────────────────────────
 # NEW: interval helpers for coverage-based tiling
 # ──────────────────────────────────
@@ -394,11 +453,27 @@ def define_sps_model(model_type: str, g: demes.Graph, sampled_params: Dict[str, 
         m21 = float(sampled_params.get("m_CEU_YRI", sampled_params.get("m21", sampled_params.get("m", 0.0))))
         return _IM_Asymmetric(N0, N1, N2, T, m12, m21)
     
+    elif model_type == "drosophila_three_epoch":
+        # Two-pop Drosophila three-epoch model
+        N0             = float(sampled_params["N0"])
+        AFR            = float(sampled_params["AFR"])
+        EUR_bottleneck = float(sampled_params["EUR_bottleneck"])
+        EUR_recover    = float(sampled_params["EUR_recover"])
+        T_split        = float(sampled_params["T_AFR_EUR_split"])
+        T_EUR_exp      = float(sampled_params["T_EUR_expansion"])
+
+        return _DrosophilaThreeEpoch(
+            N0,
+            AFR,
+            EUR_bottleneck,
+            EUR_recover,
+            T_split,
+            T_EUR_exp,
+        )
+
     else:
-        # For bottleneck, drosophila_three_epoch, use generic wrapper
+        # For bottleneck or any other demes-based custom model
         return _ModelFromDemes(g, model_id=f"custom_{model_type}", desc="custom demes")
-
-
 
 # ──────────────────────────────────
 # Main entry: BGS only (SLiM via stdpopsim)
