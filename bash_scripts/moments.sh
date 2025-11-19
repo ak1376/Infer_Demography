@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=moments_infer
-#SBATCH --array=0-499
+#SBATCH --array=0-299
 #SBATCH --output=logs/moments_%A_%a.out
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=8:00:00
@@ -20,7 +20,7 @@ BATCH_SIZE=1   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

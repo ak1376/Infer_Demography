@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-BATCH_SIZE=50
+BATCH_SIZE=1
 
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"

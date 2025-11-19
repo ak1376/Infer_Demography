@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer
-#SBATCH --array=0-499
+#SBATCH --array=0-299
 #SBATCH --output=logs/dadi_%A_%a.out
 #SBATCH --error=logs/dadi_%A_%a.err
 #SBATCH --time=8:00:00
@@ -23,7 +23,7 @@ ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
 # Prefer CFG_PATH if exported; otherwise default to a specific file.
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json}"
 
 # Export so the Snakefile picks it up (Snakefile should read os.environ['EXP_CFG'])
 export EXP_CFG="$CFG"

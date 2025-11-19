@@ -361,29 +361,17 @@ rule cleanup_optimization_runs:
         moments_lls  = list(moments_data.get("best_ll", []))
         moments_opts = list(moments_data.get("opt_index", []))
 
-        # Initialize per-opt best LLs with -inf
-        per_opt_best = {opt: -np.inf for opt in range(NUM_OPTIMS)}
-
-        # Update with dadi contributions
-        for ll, opt in zip(dadi_lls, dadi_opts):
-            if opt in per_opt_best:
-                per_opt_best[opt] = max(per_opt_best[opt], ll)
-
-        # Update with moments contributions
-        for ll, opt in zip(moments_lls, moments_opts):
-            if opt in per_opt_best:
-                per_opt_best[opt] = max(per_opt_best[opt], ll)
-
-        # Rank optimization indices by their best LL across dadi+moments
-        all_opts = list(range(NUM_OPTIMS))
-        ranked_opts = sorted(all_opts, key=lambda o: per_opt_best[o])[::-1]
-
-        # Keep top-K optimization indices
-        keep_indices = set(ranked_opts[:TOP_K])
+        # Get top-K optimization indices from each engine separately
+        dadi_keep = set(dadi_opts[:TOP_K]) if dadi_opts else set()
+        moments_keep = set(moments_opts[:TOP_K]) if moments_opts else set()
+        
+        # Union: keep optimization directories used by either engine's top-K
+        keep_indices = dadi_keep | moments_keep
 
         print(f"🗑️  Starting cleanup for simulation {sid}")
-        print(f"📊 per_opt_best LLs: {per_opt_best}")
-        print(f"📊 Top-{TOP_K} optimization indices to keep: {sorted(keep_indices)}")
+        print(f"📊 dadi top-{TOP_K} optimizations: {sorted(dadi_keep)}")
+        print(f"📊 moments top-{TOP_K} optimizations: {sorted(moments_keep)}")
+        print(f"📊 Combined optimizations to keep: {sorted(keep_indices)}")
 
         # Clean up non-top-K optimization directories
         cleaned_count = 0
@@ -402,8 +390,9 @@ rule cleanup_optimization_runs:
         pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
         with open(output.cleanup_done, "w") as f:
             f.write(f"Cleanup completed for simulation {sid}\n")
-            f.write(f"per_opt_best: {per_opt_best}\n")
-            f.write(f"Kept optimizations: {sorted(keep_indices)}\n")
+            f.write(f"dadi_top_{TOP_K}: {sorted(dadi_keep)}\n")
+            f.write(f"moments_top_{TOP_K}: {sorted(moments_keep)}\n")
+            f.write(f"Combined_kept: {sorted(keep_indices)}\n")
             f.write(f"Removed {cleaned_count} optimization directories\n")
 
         print(f"✅ Cleanup complete for sim {sid}: kept {len(keep_indices)} optimizations, removed {cleaned_count}")

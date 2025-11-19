@@ -14,7 +14,7 @@
 set -euo pipefail
 
 # --- paths & config ---
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
@@ -33,13 +33,15 @@ echo "aggregate_opts (both engines): sid=$sid"
 # Both engine outputs for this sim:
 TGT_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
 TGT_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
+# Add cleanup target
+CLEANUP_TGT="experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
 
-# Only allow the aggregate rule so Snakemake won’t try to run infer_*.
+# Only allow the aggregate and cleanup rules
 snakemake -j "$SLURM_CPUS_PER_TASK" \
   --snakefile "$SNAKEFILE" \
   --directory "$ROOT" \
   --rerun-incomplete \
   --nolock \
-  --allowed-rules aggregate_opts_dadi aggregate_opts_moments \
+  --allowed-rules aggregate_opts_dadi aggregate_opts_moments cleanup_optimization_runs \
   --keep-going \
-  "$TGT_MOM" "$TGT_DADI"
+  "$TGT_MOM" "$TGT_DADI" "$CLEANUP_TGT"
