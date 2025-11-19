@@ -279,12 +279,14 @@ def compute_likelihood_profile(
                         sample_sizes[f"pop{i}"] = (n - 1) // 2
 
                 expected = dadi_inference.diffusion_sfs_dadi(
-                    test_params,
-                    sample_sizes,
-                    demo_func,
-                    config["mutation_rate"],
-                    config["genome_length"],
+                    params_vec=test_params,
+                    param_names=param_names,
+                    sample_sizes=sample_sizes,
+                    demo_model=demo_func,
+                    mutation_rate=config["mutation_rate"],
+                    sequence_length=config["genome_length"],
                     pts=[50, 60, 70],  # Standard grid
+                    config=config,
                 )
 
             elif mode == "moments":

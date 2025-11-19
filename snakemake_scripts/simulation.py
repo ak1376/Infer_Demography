@@ -85,14 +85,25 @@ def run_simulation(
     engine = cfg["engine"]  # "msprime" or "slim"
 
     sel_cfg = cfg.get("selection") or {}
-    rng = np.random.default_rng()
-
+    
     # decide destination folder name
     if simulation_number is None:
         existing = {int(p.name) for p in simulation_dir.glob("[0-9]*") if p.is_dir()}
         simulation_number = f"{max(existing, default=0) + 1:04d}"
     out_dir = simulation_dir / simulation_number
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique seed for this simulation
+    base_seed = cfg.get("seed")
+    if base_seed is not None:
+        # Create a unique seed for each simulation using base_seed + simulation_number
+        simulation_seed = int(base_seed) + int(simulation_number)
+        print(f"• Using seed {simulation_seed} (base: {base_seed} + sim: {simulation_number})")
+        rng = np.random.default_rng(simulation_seed)
+    else:
+        simulation_seed = None
+        rng = np.random.default_rng()
+        print("• No seed specified, using random state")
 
     # Sample demographic params
     sampled_params = sample_params(cfg["priors"], rng=rng)
@@ -113,7 +124,12 @@ def run_simulation(
         raise ValueError("engine must be 'slim' or 'msprime'.")
 
     # Run simulation via src/simulation.simulation(...)
-    ts, g = simulation(sampled_params, model_type, cfg, sampled_coverage)
+    # Create modified config with the specific simulation seed
+    sim_cfg = dict(cfg)
+    if simulation_seed is not None:
+        sim_cfg["seed"] = simulation_seed
+    
+    ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
 
     # Build SFS from result
     sfs = create_SFS(ts)
@@ -182,7 +198,8 @@ def run_simulation(
         slim_burn_in=(float(sel_cfg.get("slim_burn_in", 5.0)) if is_bgs else None),
         # misc
         num_samples={k: int(v) for k, v in (cfg.get("num_samples") or {}).items()},
-        seed=(None if cfg.get("seed") is None else int(cfg.get("seed"))),
+        base_seed=(None if cfg.get("seed") is None else int(cfg.get("seed"))),
+        simulation_seed=simulation_seed,
         sequence_length=float(ts.sequence_length),
         tree_sequence=str(ts_path),
         # sampled priors

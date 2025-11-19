@@ -14,7 +14,7 @@ and reuses those functions directly (no re-implementation here).
 from __future__ import annotations
 import argparse, json, pickle, sys, gzip, shutil
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 import msprime
 import demes
@@ -71,19 +71,53 @@ def simulate_window(
     cfg: Dict[str, Any],
     sampled_cov: Optional[float],
     sampled_params: Dict[str, float],
-) -> msprime.TreeSequence:
+    rep_index: int,
+) -> Tuple[msprime.TreeSequence, Dict]:
     """
     Delegate to the same engine-specific code paths as simulation.py:
       - engine == "msprime" → msprime_simulation(...)
       - engine == "slim"    → stdpopsim_slim_simulation(...)
+    
+    Returns:
+        tuple: (TreeSequence, window_metadata_dict)
     """
     engine = cfg["engine"]
     model_type = cfg["demographic_model"]
     sel_cfg = cfg.get("selection") or {}
 
+    # Create a modified config with unique seed for this window
+    window_cfg = cfg.copy()
+    base_seed = cfg.get("seed")
+    window_seed = None
+    if base_seed is not None:
+        # Generate unique seed for this replicate: base_seed + rep_index * 10000
+        # The * 10000 ensures seeds don't overlap between simulations and windows
+        window_seed = int(base_seed) + rep_index * 10000
+        window_cfg["seed"] = window_seed
+        print(f"• Window {rep_index}: using seed {window_seed} (base: {base_seed} + {rep_index} * 10000)")
+    else:
+        print(f"• Window {rep_index}: no seed specified, using random state")
+
+    # Create window metadata for storage
+    window_metadata = {
+        "window_index": rep_index,
+        "engine": engine,
+        "model_type": model_type,
+        "base_seed": base_seed,
+        "window_seed": window_seed,
+        "genome_length": float(cfg["genome_length"]),
+        "mutation_rate": float(cfg["mutation_rate"]),
+        "recombination_rate": float(cfg["recombination_rate"]),
+        "num_samples": {k: int(v) for k, v in cfg["num_samples"].items()},
+        "sampled_params": sampled_params,
+        "sampled_coverage": sampled_cov,
+        "selection_enabled": bool(sel_cfg.get("enabled", False)) if engine == "slim" else False,
+    }
+
     if engine == "msprime":
-        ts, _ = msprime_simulation(graph, cfg)
-        return ts
+        ts, _ = msprime_simulation(graph, window_cfg)
+        window_metadata["sequence_length"] = float(ts.sequence_length)
+        return ts, window_metadata
 
     if engine == "slim":
         if not bool(sel_cfg.get("enabled", False)):
@@ -92,12 +126,24 @@ def simulate_window(
             raise RuntimeError("engine='slim' requires a coverage value (from meta).")
         ts, _ = stdpopsim_slim_simulation(
             g=graph,
-            experiment_config=cfg,
+            experiment_config=window_cfg,
             sampled_coverage=sampled_cov,   # fraction (<=1) or percent (>1) are both supported by your code
             model_type=model_type,
             sampled_params=sampled_params,
         )
-        return ts
+        
+        # Add BGS-specific metadata
+        sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
+        window_metadata.update({
+            "sequence_length": float(ts.sequence_length),
+            "species": str(sel_cfg.get("species", "HomSap")),
+            "dfe_id": str(sel_cfg.get("dfe_id", "Gamma_K17")),
+            "selected_bp": int(sel_summary.get("selected_bp", 0)),
+            "selected_frac": float(sel_summary.get("selected_frac", 0.0)),
+            "slim_scaling": float(sel_cfg.get("slim_scaling", 10.0)),
+            "slim_burn_in": float(sel_cfg.get("slim_burn_in", 5.0)),
+        })
+        return ts, window_metadata
 
     raise ValueError("engine must be 'slim' or 'msprime'.")
 
@@ -136,6 +182,7 @@ def write_outputs(
     genome_length: int,
     recomb_rate: float,
     samples_cfg: Dict[str, int],
+    window_metadata: Dict,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -159,8 +206,12 @@ def write_outputs(
         out_dir=out_dir,
     )
 
+    # window metadata (includes seed information for reproducibility)
+    window_meta_file = out_dir / f"window_{rep_index}.meta.json"
+    window_meta_file.write_text(json.dumps(window_metadata, indent=2))
+
     rel = ts_file.relative_to(out_dir.parent.parent) if out_dir.parent.parent in ts_file.parents else ts_file.name
-    print(f"✓ replicate {rep_index:04d} → {rel}")
+    print(f"✓ replicate {rep_index:04d} → {rel} + metadata")
 
 
 def main() -> None:
@@ -183,11 +234,12 @@ def main() -> None:
     sampled_cov = load_sampled_coverage_from_meta(args.meta_file) if cfg["engine"] == "slim" else None
 
     # Simulate via engine switch (reusing simulation.py functions)
-    ts = simulate_window(
+    ts, window_metadata = simulate_window(
         graph=graph,
         cfg=cfg,
         sampled_cov=sampled_cov,
         sampled_params=samp,
+        rep_index=args.rep_index,
     )
 
     # Persist outputs
@@ -198,6 +250,7 @@ def main() -> None:
         genome_length=int(cfg["genome_length"]),
         recomb_rate=float(cfg["recombination_rate"]),
         samples_cfg={k: int(v) for k, v in cfg["num_samples"].items()},
+        window_metadata=window_metadata,
     )
 
 

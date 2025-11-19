@@ -94,14 +94,44 @@ def build_sample_sets(ts: tskit.TreeSequence):
     pid_d0 = next((pid for pid, nm in pop_names.items() if nm == "deme0"), None)
     pid_d1 = next((pid for pid, nm in pop_names.items() if nm == "deme1"), None)
     
+    # Check for ANC population (single population models like bottleneck)
+    pid_anc = next((pid for pid, nm in pop_names.items() if nm == "ANC"), None)
+    
     if pid_d0 is None or pid_d1 is None:
-        nonempty = [(pid, s) for pid, s in samples_by_pid.items() if len(s) > 0]
-        nonempty.sort(key=lambda x: x[0])
-        if len(nonempty) < 2:
-            raise ValueError("Need two non-empty pops in the tree sequence.")
-        pid_d0, pid_d1 = nonempty[0][0], nonempty[1][0]
-
-    ss = {"deme0": samples_by_pid[pid_d0], "deme1": samples_by_pid[pid_d1]}
+        # Check if we have ANC population - for single population models
+        if pid_anc is not None and len(samples_by_pid[pid_anc]) > 0:
+            # For single population, split samples into two groups for LD analysis
+            all_samples = samples_by_pid[pid_anc]
+            mid = len(all_samples) // 2
+            ss = {
+                "deme0": all_samples[:mid],
+                "deme1": all_samples[mid:]
+            }
+            if len(ss["deme0"]) == 0 or len(ss["deme1"]) == 0:
+                raise ValueError("Not enough samples in ANC population to split into two groups")
+            return ss
+        else:
+            # Fall back to using first two non-empty populations
+            nonempty = [(pid, s) for pid, s in samples_by_pid.items() if len(s) > 0]
+            nonempty.sort(key=lambda x: x[0])
+            if len(nonempty) < 1:
+                raise ValueError("No non-empty populations in the tree sequence.")
+            elif len(nonempty) == 1:
+                # Single population - split samples
+                all_samples = nonempty[0][1]
+                mid = len(all_samples) // 2
+                ss = {
+                    "deme0": all_samples[:mid],
+                    "deme1": all_samples[mid:]
+                }
+            else:
+                # Two or more populations
+                pid_d0, pid_d1 = nonempty[0][0], nonempty[1][0]
+                ss = {"deme0": samples_by_pid[pid_d0], "deme1": samples_by_pid[pid_d1]}
+    else:
+        # Found deme0 and deme1 explicitly
+        ss = {"deme0": samples_by_pid[pid_d0], "deme1": samples_by_pid[pid_d1]}
+    
     if len(ss["deme0"]) == 0 or len(ss["deme1"]) == 0:
         raise ValueError("Empty sample set(s)")
     return ss

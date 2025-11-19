@@ -90,13 +90,16 @@ rule all:
 
         # # # Aggregated optimizer results
         [final_pkl(sid, "moments") for sid in SIM_IDS],
-        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
-        # # # LD artifacts
-        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/windows/window_{{win}}.trees",         sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
-        # expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
+        # Cleanup completion markers
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
+
+        # # # LD artifacts (commented out since files are deleted after processing for cleanup)
+        # expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
+        # expand(f"{LD_ROOT}/windows/window_{{win}}.trees",         sid=SIM_IDS, win=WINDOWS),
+        # expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
 
         # FIM (always computed)
         expand(
@@ -110,39 +113,39 @@ rule all:
             sid=SIM_IDS, engine=RESIDUAL_ENGINES
         ),
 
-        # # Combined per-sim inference blobs (include FIM/residuals payloads)
-        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
+        # Combined per-sim inference blobs (include FIM/residuals payloads)
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
-        # # Modeling datasets
-        # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        # Modeling datasets
+        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
 
-        # # Colors
-        # f"experiments/{MODEL}/modeling/color_shades.pkl",
-        # f"experiments/{MODEL}/modeling/main_colors.pkl",
+        # Colors
+        f"experiments/{MODEL}/modeling/color_shades.pkl",
+        f"experiments/{MODEL}/modeling/main_colors.pkl",
 
-        # # Models
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+        # Models
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
 
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
 
 ##############################################################################
@@ -261,18 +264,38 @@ rule aggregate_opts_moments:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-        def _as_list(x): 
+
+        def _as_list(x):
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-        params, lls = [], []
-        for pkl in input.mom:
+
+        params, lls, opt_ids = [], [], []
+
+        # Read all the data; track which opt each entry came from
+        for opt_idx, pkl in enumerate(input.mom):
             d = pickle.load(open(pkl, "rb"))
-            params.extend(_as_list(d["best_params"]))
-            lls.extend(_as_list(d["best_ll"]))
+            this_params = _as_list(d["best_params"])
+            this_lls    = _as_list(d["best_ll"])
+
+            params.extend(this_params)
+            lls.extend(this_lls)
+            opt_ids.extend([opt_idx] * len(this_lls))
+
+        # Choose top-K by LL
         keep = np.argsort(lls)[::-1][:TOP_K]
-        best = {"best_params": [params[i] for i in keep],
-                "best_ll":      [lls[i]    for i in keep]}
+
+        best = {
+            "best_params": [params[i] for i in keep],
+            "best_ll":     [lls[i]    for i in keep],
+            # record which optimization index each kept entry came from
+            "opt_index":   [opt_ids[i] for i in keep],
+        }
+
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.mom, "wb"))
+
+        print(f"✅ Aggregated {len(params)} moments optimization results → {output.mom}")
+        print(f"✅ Kept top-{TOP_K} moments optimizations (opts={sorted(set(best['opt_index']))})")
+
 
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
 rule aggregate_opts_dadi:
@@ -282,18 +305,108 @@ rule aggregate_opts_dadi:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-        def _as_list(x): 
+
+        def _as_list(x):
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-        params, lls = [], []
-        for pkl in input.dadi:
+
+        params, lls, opt_ids = [], [], []
+
+        # Read all the data; track which opt each entry came from
+        for opt_idx, pkl in enumerate(input.dadi):
             d = pickle.load(open(pkl, "rb"))
-            params.extend(_as_list(d["best_params"]))
-            lls.extend(_as_list(d["best_ll"]))
+            this_params = _as_list(d["best_params"])
+            this_lls    = _as_list(d["best_ll"])
+
+            params.extend(this_params)
+            lls.extend(this_lls)
+            opt_ids.extend([opt_idx] * len(this_lls))
+
+            # NOTE: opt_idx == the optimization index (0..NUM_OPTIMS-1)
+
+        # Choose top-K by LL
         keep = np.argsort(lls)[::-1][:TOP_K]
-        best = {"best_params": [params[i] for i in keep],
-                "best_ll":      [lls[i]    for i in keep]}
+
+        best = {
+            "best_params": [params[i] for i in keep],
+            "best_ll":     [lls[i]    for i in keep],
+            "opt_index":   [opt_ids[i] for i in keep],
+        }
+
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.dadi, "wb"))
+
+        print(f"✅ Aggregated {len(params)} dadi optimization results → {output.dadi}")
+        print(f"✅ Kept top-{TOP_K} dadi optimizations (opts={sorted(set(best['opt_index']))})")
+
+
+
+# ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
+rule cleanup_optimization_runs:
+    input:
+        dadi_agg    = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
+        moments_agg = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+    output:
+        cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
+    run:
+        import pickle, numpy as np, pathlib, shutil
+
+        sid = wildcards.sid
+
+        # Load aggregated results
+        dadi_data    = pickle.load(open(input.dadi_agg, "rb"))
+        moments_data = pickle.load(open(input.moments_agg, "rb"))
+
+        dadi_lls   = list(dadi_data.get("best_ll", []))
+        dadi_opts  = list(dadi_data.get("opt_index", []))
+        moments_lls  = list(moments_data.get("best_ll", []))
+        moments_opts = list(moments_data.get("opt_index", []))
+
+        # Initialize per-opt best LLs with -inf
+        per_opt_best = {opt: -np.inf for opt in range(NUM_OPTIMS)}
+
+        # Update with dadi contributions
+        for ll, opt in zip(dadi_lls, dadi_opts):
+            if opt in per_opt_best:
+                per_opt_best[opt] = max(per_opt_best[opt], ll)
+
+        # Update with moments contributions
+        for ll, opt in zip(moments_lls, moments_opts):
+            if opt in per_opt_best:
+                per_opt_best[opt] = max(per_opt_best[opt], ll)
+
+        # Rank optimization indices by their best LL across dadi+moments
+        all_opts = list(range(NUM_OPTIMS))
+        ranked_opts = sorted(all_opts, key=lambda o: per_opt_best[o])[::-1]
+
+        # Keep top-K optimization indices
+        keep_indices = set(ranked_opts[:TOP_K])
+
+        print(f"🗑️  Starting cleanup for simulation {sid}")
+        print(f"📊 per_opt_best LLs: {per_opt_best}")
+        print(f"📊 Top-{TOP_K} optimization indices to keep: {sorted(keep_indices)}")
+
+        # Clean up non-top-K optimization directories
+        cleaned_count = 0
+        for opt in range(NUM_OPTIMS):
+            if opt not in keep_indices:
+                run_dir = pathlib.Path(f"experiments/{MODEL}/runs/run_{sid}_{opt}")
+                if run_dir.exists():
+                    try:
+                        print(f"🗑️  Removing optimization {opt}: {run_dir}")
+                        shutil.rmtree(run_dir)
+                        cleaned_count += 1
+                    except (FileNotFoundError, PermissionError) as e:
+                        print(f"⚠️  Could not remove {run_dir}: {e}")
+
+        # Write completion marker
+        pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.cleanup_done, "w") as f:
+            f.write(f"Cleanup completed for simulation {sid}\n")
+            f.write(f"per_opt_best: {per_opt_best}\n")
+            f.write(f"Kept optimizations: {sorted(keep_indices)}\n")
+            f.write(f"Removed {cleaned_count} optimization directories\n")
+
+        print(f"✅ Cleanup complete for sim {sid}: kept {len(keep_indices)} optimizations, removed {cleaned_count}")
 
 
 ##############################################################################
@@ -340,15 +453,31 @@ rule ld_window:
     threads: 4
     resources:
         ld_cores=4,
-        gpu_mem=1  # Limit concurrent GPU jobs
+        gpu_mem=40000,  # Reserve 40GB of GPU memory per job
+        gpu=1           # Reserve 1 GPU per job
     shell:
         """
-        ~/miniforge3/envs/snakemake-env/bin/python "{LD_SCRIPT}" \
+        # Run the LD computation and capture exit code
+        python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
             --use-gpu
+        
+        EXIT_CODE=$?
+        
+        # If successful, clean up intermediate files
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
+            echo "🧹 Cleanup completed for window {wildcards.win}"
+        else
+            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
+            exit $EXIT_CODE
+        fi
         """
 
 ##############################################################################
