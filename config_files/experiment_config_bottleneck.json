@@ -1,5 +1,5 @@
 {
-    "genome_length": 1e6,
+    "genome_length": 1e8,
     "mutation_rate": 1.5e-08,
     "recombination_rate": 1.5e-08,
     "demographic_model": "bottleneck",
@@ -8,9 +8,9 @@
         "ANC": 10
     }, 
     "seed": 42, 
-    "num_optimizations": 3, 
-    "top_k": 2, 
-    "num_draws": 100,
+    "num_optimizations": 100, 
+    "top_k": 5, 
+    "num_draws": 5000,
     "priors": {
     "N0"                : [2000, 20000],
     "N_bottleneck"      : [100, 1999],
@@ -29,10 +29,10 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [0, 95]
     },
-    "use_fim_features": false,
+    "use_fim_features": true,
     "fim_engines": ["moments"],
-    "use_residuals": false,
+    "use_residuals": true,
     "residual_engines": "moments", 
-    "engine": "msprime", 
+    "engine": "slim", 
     "use_gpu_ld": false
 }

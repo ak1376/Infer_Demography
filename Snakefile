@@ -431,7 +431,7 @@ rule simulate_window:
 rule ld_window:
     input:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"  # Needed for GPU acceleration
+        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
@@ -441,9 +441,7 @@ rule ld_window:
 
     threads: 4
     resources:
-        ld_cores=4,
-        gpu_mem=40000,  # Reserve 40GB of GPU memory per job
-        gpu=1           # Reserve 1 GPU per job
+        ld_cores=4
     shell:
         """
         # Run the LD computation and capture exit code
@@ -451,8 +449,7 @@ rule ld_window:
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
-            --r-bins       "{params.bins}" \
-            --use-gpu
+            --r-bins       "{params.bins}"
         
         EXIT_CODE=$?
         

@@ -2,7 +2,7 @@
 #SBATCH --job-name=combine_inf
 #SBATCH --output=logs/combine_%A_%a.out
 #SBATCH --error=logs/combine_%A_%a.err
-#SBATCH --time=06:00:00
+#SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
@@ -14,7 +14,7 @@
 # 0. paths & experiment constants
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
