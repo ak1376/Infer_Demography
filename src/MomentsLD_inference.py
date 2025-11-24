@@ -33,11 +33,17 @@ CONVERGENCE_TOL = 1e-8
 # =============================================================================
 
 
-def load_sampled_params(sim_dir):
+def load_sampled_params(sim_dir, required=True):
     """Load sampled parameters from simulation directory."""
     pkl_file = sim_dir / "sampled_params.pkl"
     if not pkl_file.exists():
-        raise FileNotFoundError(f"sampled_params.pkl missing in {pkl_file.parent}")
+        if required:
+            raise FileNotFoundError(f"sampled_params.pkl missing in {pkl_file.parent}")
+        logging.info(
+            "sampled_params.pkl not found in %s; continuing without true parameters",
+            pkl_file.parent,
+        )
+        return None
 
     with pkl_file.open("rb") as f:
         return pickle.load(f)
@@ -417,9 +423,13 @@ def handle_fixed_parameters(config, sampled_params, param_names):
             fixed_values[i] = float(fixed_spec)
         elif isinstance(fixed_spec, str) and fixed_spec.lower() in ["sampled", "true"]:
             if sampled_params is None or param_name not in sampled_params:
-                raise ValueError(
-                    f"Cannot fix {param_name} to sampled value: not available"
+                logging.warning(
+                    "Config requested %s be fixed to '%s', but sampled_params are unavailable. "
+                    "Leaving this parameter free instead.",
+                    param_name,
+                    fixed_spec,
                 )
+                continue  # leave fixed_values[i] = None → parameter remains free
             fixed_values[i] = float(sampled_params[param_name])
         else:
             raise ValueError(
@@ -806,7 +816,7 @@ def run_momentsld_inference(
     logging.info(f"Results saved → {results_file}")
 
     # Create comparison plot if sampled parameters are available
-    if sampled_params:
+    if sampled_params is not None:
         plot_file = results_dir / "empirical_vs_theoretical_comparison.pdf"
         create_comparison_plot(
             config, sampled_params, empirical_data, r_bins, plot_file

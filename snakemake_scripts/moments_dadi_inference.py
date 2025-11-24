@@ -48,7 +48,8 @@ def _parse_args():
     p.add_argument(
         "--ground-truth",
         type=Path,
-        help="Pickle or JSON file with ground truth simulation parameters",
+        default=None,
+        help="Optional: Pickle or JSON file with ground truth simulation parameters",
     )
     p.add_argument(
         "--generate-profiles",
@@ -498,9 +499,14 @@ def run_inference_mode(
         import moments
 
         if not isinstance(sfs, moments.Spectrum):
-            # Convert if needed
+            # Convert if needed, preserving pop_ids
             if hasattr(sfs, "shape"):
-                sfs = moments.Spectrum(np.array(sfs))
+                # Preserve pop_ids if they exist
+                pop_ids = getattr(sfs, "pop_ids", None)
+                sfs_data = np.array(sfs)
+                sfs = moments.Spectrum(sfs_data)
+                if pop_ids is not None:
+                    sfs.pop_ids = pop_ids
             else:
                 raise ValueError(f"Cannot convert SFS to moments.Spectrum: {type(sfs)}")
 
@@ -582,11 +588,16 @@ def main():
 
     # Load ground truth parameters if available
     sampled_params = None
-    if args.ground_truth:
+    if args.ground_truth and args.ground_truth.exists():
         try:
             sampled_params = load_ground_truth(args.ground_truth)
+            print(f"[INFO] Loaded ground truth parameters from {args.ground_truth}")
         except Exception as e:
             print(f"[WARN] Could not load ground truth: {e}")
+    elif args.ground_truth:
+        print(f"[WARN] Ground truth file specified but not found: {args.ground_truth}")
+    else:
+        print("[INFO] No ground truth file provided - running inference without ground truth reference")
 
     # Load demographic model function
     if ":" in args.model_py:

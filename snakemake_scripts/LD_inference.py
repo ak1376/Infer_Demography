@@ -61,7 +61,7 @@ def main():
     )
 
     cfg = load_config(a.config_file)
-    sampled_params = load_sampled_params(a.run_dir)
+    sampled_params = load_sampled_params(sim_dir, required=False)
 
     # r-bins to use for both comparison PDF and optimisation
     if a.r_bins:

@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+########################################
+# Settings — edit if needed
+########################################
+
+CHR=22                     # small chromosome
+POP1="CEU"
+POP2="YRI"
+
+OUTDIR="/sietch_colab/akapoor/Infer_Demography/experiments/split_isolation/real_data_analysis/data_chr${CHR}_${POP1}_${POP2}"
+mkdir -p "${OUTDIR}"
+
+FTP_BASE="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502"
+VCF_BASENAME="ALL.chr${CHR}.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz"
+PANEL_FILE="integrated_call_samples_v3.20130502.ALL.panel"
+
+echo "Output directory: ${OUTDIR}"
+cd "${OUTDIR}"
+
+########################################
+# 1. Download VCF + index + panel
+########################################
+
+if [[ ! -f "${VCF_BASENAME}" ]]; then
+    echo "Downloading chr${CHR} VCF..."
+    wget "${FTP_BASE}/${VCF_BASENAME}"
+fi
+
+if [[ ! -f "${VCF_BASENAME}.tbi" ]]; then
+    echo "Downloading TBI index..."
+    wget "${FTP_BASE}/${VCF_BASENAME}.tbi"
+fi
+
+if [[ ! -f "${PANEL_FILE}" ]]; then
+    echo "Downloading panel file..."
+    wget "${FTP_BASE}/${PANEL_FILE}"
+fi
+
+########################################
+# 2. Create sample lists
+########################################
+
+echo "Extracting ${POP1} and ${POP2} sample IDs..."
+
+grep -P "\t${POP1}\t" "${PANEL_FILE}" | cut -f1 > "${POP1}.samples"
+grep -P "\t${POP2}\t" "${PANEL_FILE}" | cut -f1 > "${POP2}.samples"
+
+echo "Sample counts:"
+wc -l "${POP1}.samples" "${POP2}.samples"
+
+cat "${POP1}.samples" "${POP2}.samples" > "merged.samples"
+
+########################################
+# 3. Extract chr22 region with bcftools
+########################################
+
+MERGED_VCF="CEU_YRI.chr${CHR}.vcf.gz"
+
+echo "Extracting chromosome ${CHR} for CEU and YRI..."
+
+bcftools view \
+    --samples-file merged.samples \
+    --regions ${CHR} \
+    -Oz \
+    -o "${MERGED_VCF}" \
+    "${VCF_BASENAME}"
+
+########################################
+# 4. Index merged VCF
+########################################
+
+echo "Indexing merged VCF..."
+tabix -p vcf "${MERGED_VCF}"
+
+########################################
+# 5. Create popfile for dadi/moments
+########################################
+
+echo "Creating population file..."
+
+POPFILE="${POP1}_${POP2}.popfile"
+
+# Create popfile with format: sample_id<tab>population_name
+awk -v pop="${POP1}" '{print $1 "\t" pop}' "${POP1}.samples" > "${POPFILE}"
+awk -v pop="${POP2}" '{print $1 "\t" pop}' "${POP2}.samples" >> "${POPFILE}"
+
+echo "Created popfile: ${POPFILE} ($(wc -l < ${POPFILE}) samples)"
+
+echo
+echo "DONE!"
+echo "Merged 2-population VCF ready:"
+echo "  ${OUTDIR}/${MERGED_VCF}"
+echo
+echo "Population file:"
+echo "  ${OUTDIR}/${POPFILE}"
+echo
+echo "You can now build the joint 2D SFS using:"
+echo
+echo "  python snakemake_scripts/real_data_sfs.py \\"
+echo "    --input-vcf ${OUTDIR}/${MERGED_VCF} \\"
+echo "    --popfile ${OUTDIR}/${POPFILE} \\"
+echo "    --config config_files/experiment_config_split_isolation.json \\"
+echo "    --output-sfs ${OUTDIR}/${POP1}_${POP2}.chr${CHR}.sfs.pkl"
+echo
+

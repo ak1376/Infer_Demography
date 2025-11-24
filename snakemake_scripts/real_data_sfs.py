@@ -43,7 +43,9 @@ def main():
                 continue
             pop_list.append(fields[1])
     pop_counter = Counter(pop_list)
-    sample_sizes = [pop_counter[pop] for pop in pop_names]
+    # dadi expects haploid sample sizes (number of chromosomes)
+    # For diploid organisms: haploid_count = 2 * diploid_individuals
+    sample_sizes = [2 * pop_counter[pop] for pop in pop_names]
     # Construct SFS from VCF
     dd = dadi.Misc.make_data_dict_vcf(str(args.input_vcf), str(args.popfile))
     sfs = dadi.Spectrum.from_data_dict(dd, pop_names, sample_sizes)
