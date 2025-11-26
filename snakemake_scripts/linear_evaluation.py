@@ -2,7 +2,7 @@
 import argparse, json, os, sys, pickle, joblib
 from pathlib import Path
 import numpy as np
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV  # unused now but harmless
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
 import yaml
 import pandas as pd
@@ -100,6 +100,8 @@ def _organize_results(data_dict, train_preds, val_preds, model):
 def linear_evaluation(
     X_train_path=None,
     y_train_path=None,
+    X_tune_path=None,
+    y_tune_path=None,
     X_val_path=None,
     y_val_path=None,
     experiment_config_path=None,
@@ -136,11 +138,14 @@ def linear_evaluation(
     # data
     X_train = _load_array(X_train_path) if X_train_path else None
     y_train = _load_array(y_train_path) if y_train_path else None
+    X_tune = _load_array(X_tune_path) if X_tune_path else None
+    y_tune = _load_array(y_tune_path) if y_tune_path else None
     X_val = _load_array(X_val_path) if X_val_path else None
     y_val = _load_array(y_val_path) if y_val_path else None
 
     if X_train is None and X_val is None:
         raise ValueError("Provide at least train or val split.")
+
     if (X_train is None) ^ (y_train is None):
         raise ValueError(
             "If you give X_train_path, also give y_train_path (and vice versa)."
@@ -149,29 +154,74 @@ def linear_evaluation(
         raise ValueError(
             "If you give X_val_path, also give y_val_path (and vice versa)."
         )
+    if (X_tune is None) ^ (y_tune is None):
+        raise ValueError(
+            "If you give X_tune_path, also give y_tune_path (and vice versa)."
+        )
 
-    # optional grid search
+    # optional grid search using TUNE set
     if (
         regression_type in ["ridge", "lasso", "elasticnet"]
         and do_grid_search
-        and X_train is not None
     ):
-        if regression_type == "ridge":
-            base = Ridge()
-            grid = {"alpha": [0.1, 1.0, 10.0, 100.0]}
-        elif regression_type == "lasso":
-            base = Lasso(max_iter=10000)
-            grid = {"alpha": [0.1, 1.0, 10.0, 100.0]}
-        else:  # elasticnet
-            base = ElasticNet(max_iter=10000)
-            grid = {"alpha": [0.1, 1.0, 10.0, 100.0], "l1_ratio": [0.1, 0.5, 0.9]}
-        gs = GridSearchCV(base, grid, scoring="neg_mean_squared_error", cv=5)
-        gs.fit(X_train, y_train)
-        print(f"[INFO] Best params: {gs.best_params_}")
-        alpha = gs.best_params_.get("alpha", alpha)
-        l1_ratio = gs.best_params_.get("l1_ratio", l1_ratio)
+        if X_train is None or y_train is None:
+            raise ValueError(
+                "Grid search requested but training data is missing."
+            )
+        if X_tune is None or y_tune is None:
+            raise ValueError(
+                "Grid search requested but tune data is missing. "
+                "Pass --X_tune_path and --y_tune_path."
+            )
 
-    # fit + predict
+        # Simple manual grid search: train on TRAIN, evaluate on TUNE
+        print("[INFO] Performing grid search using TRAIN for fit and TUNE for evaluation.")
+        if regression_type == "ridge":
+            alpha_grid = [0.1, 1.0, 10.0, 100.0]
+            l1_grid = [None]
+        elif regression_type == "lasso":
+            alpha_grid = [0.1, 1.0, 10.0, 100.0]
+            l1_grid = [None]
+        else:  # elasticnet
+            alpha_grid = [0.1, 1.0, 10.0, 100.0]
+            l1_grid = [0.1, 0.5, 0.9]
+
+        best_mse = np.inf
+        best_alpha = alpha
+        best_l1 = l1_ratio
+
+        for a in alpha_grid:
+            if regression_type == "elasticnet":
+                for l1 in l1_grid:
+                    model = _pick_model(regression_type, a, l1)
+                    model.fit(X_train, y_train)
+                    preds = model.predict(X_tune)
+                    mse = mean_squared_error(y_tune, preds)
+                    print(f"[GRID] alpha={a}, l1_ratio={l1}, tune MSE={mse:.6f}")
+                    if mse < best_mse:
+                        best_mse = mse
+                        best_alpha = a
+                        best_l1 = l1
+            else:
+                model = _pick_model(regression_type, a, l1_ratio)
+                model.fit(X_train, y_train)
+                preds = model.predict(X_tune)
+                mse = mean_squared_error(y_tune, preds)
+                print(f"[GRID] alpha={a}, tune MSE={mse:.6f}")
+                if mse < best_mse:
+                    best_mse = mse
+                    best_alpha = a
+
+        alpha = best_alpha
+        if regression_type == "elasticnet":
+            l1_ratio = best_l1
+
+        print(
+            f"[INFO] Best hyperparameters from TUNE set: "
+            f"alpha={alpha}, l1_ratio={l1_ratio} (tune MSE={best_mse:.6f})"
+        )
+
+    # fit + predict (final model)
     model = _pick_model(regression_type, alpha, l1_ratio)
     train_preds, val_preds = _fit_and_predict(model, X_train, y_train, X_val, y_val)
 
@@ -188,7 +238,6 @@ def linear_evaluation(
     )
 
     # errors
-    # --- MSEs (overall + per-parameter) ----------------------------------------
     param_names = linear_obj["param_names"]
     rrmse = {
         "training": None,
@@ -238,6 +287,8 @@ if __name__ == "__main__":
     # Data
     p.add_argument("--X_train_path", type=str, default=None)
     p.add_argument("--y_train_path", type=str, default=None)
+    p.add_argument("--X_tune_path", type=str, default=None)
+    p.add_argument("--y_tune_path", type=str, default=None)
     p.add_argument("--X_val_path", type=str, default=None)
     p.add_argument("--y_val_path", type=str, default=None)
 
@@ -264,6 +315,8 @@ if __name__ == "__main__":
     linear_evaluation(
         X_train_path=args.X_train_path,
         y_train_path=args.y_train_path,
+        X_tune_path=args.X_tune_path,
+        y_tune_path=args.y_tune_path,
         X_val_path=args.X_val_path,
         y_val_path=args.y_val_path,
         experiment_config_path=args.experiment_config_path,

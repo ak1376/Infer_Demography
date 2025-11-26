@@ -10,9 +10,7 @@ import matplotlib.pyplot as plt
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import mean_squared_error as sk_mse
-from sklearn.metrics import make_scorer
 
 
 # ------------------------ helpers ------------------------
@@ -41,30 +39,6 @@ def load_df_pickle(path):
     cols = [f"col_{i}" for i in range(arr.shape[1])]
     df = pd.DataFrame(arr, columns=cols)
     return df, cols
-
-
-def overall_and_per_param_mse(y_true, y_pred, param_names):
-    """Return dict with overall MSE + per-parameter MSE."""
-    out = {
-        "training": None,
-        "validation": None,
-        "training_mse": {},
-        "validation_mse": {},
-    }
-    if y_true is not None and y_pred is not None:
-        out["training"] = float(np.mean((y_true - y_pred) ** 2))
-        for i, p in enumerate(param_names):
-            out["training_mse"][p] = float(np.mean((y_true[:, i] - y_pred[:, i]) ** 2))
-    return out
-
-
-def update_validation_mses(rrmse_dict, y_true_val, y_pred_val, param_names):
-    if y_true_val is not None and y_pred_val is not None:
-        rrmse_dict["validation"] = float(np.mean((y_true_val - y_pred_val) ** 2))
-        for i, p in enumerate(param_names):
-            rrmse_dict["validation_mse"][p] = float(
-                np.mean((y_true_val[:, i] - y_pred_val[:, i]) ** 2)
-            )
 
 
 def plot_feature_importances_grid(
@@ -114,28 +88,70 @@ def plot_feature_importances_grid(
     plt.close(fig)
 
 
-def randomized_search_rf(X, y, n_iter=20, random_state=42, n_jobs=-1):
-    """Run RandomizedSearchCV for RF hyperparams."""
-    param_dist = {
-        "n_estimators": [50, 100, 200, 300, 500],
-        "max_depth": [None, 10, 20, 30, 40],
-        "min_samples_split": [2, 5, 10, 15, 20],
-        "random_state": [42, 123, 2023, 295],
-    }
-    scorer = make_scorer(sk_mse, greater_is_better=False)
-    base = RandomForestRegressor()
-    rs = RandomizedSearchCV(
-        estimator=base,
-        param_distributions=param_dist,
-        n_iter=n_iter,
-        cv=3,
-        scoring=scorer,
-        random_state=random_state,
-        n_jobs=n_jobs,
-        verbose=1,
-    )
-    rs.fit(X, y)
-    return rs.best_params_
+def tune_rf_on_tune(
+    X_train,
+    y_train,
+    X_tune,
+    y_tune,
+    n_iter=20,
+    base_random_state=42,
+):
+    """
+    Manual random search over RF hyperparameters.
+
+    For each sampled hyperparameter set:
+      - fit RF on TRAIN
+      - evaluate MSE on TUNE
+    Return dict of best params.
+    """
+    rng = np.random.RandomState(base_random_state)
+
+    # Discrete grids (same as before)
+    n_estimators_grid = [50, 100, 200, 300, 500]
+    max_depth_grid = [None, 10, 20, 30, 40]
+    min_samples_split_grid = [2, 5, 10, 15, 20]
+    random_state_grid = [42, 123, 2023, 295]
+
+    best_mse = np.inf
+    best_params = None
+
+    for i in range(n_iter):
+        n_estimators = rng.choice(n_estimators_grid)
+        max_depth = rng.choice(max_depth_grid)
+        min_samples_split = rng.choice(min_samples_split_grid)
+        random_state = rng.choice(random_state_grid)
+
+        rf_single = RandomForestRegressor(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            random_state=random_state,
+            n_jobs=-1,
+        )
+        rf = MultiOutputRegressor(rf_single)
+        rf.fit(X_train, y_train)
+
+        preds_tune = rf.predict(X_tune)
+        mse_tune = sk_mse(y_tune, preds_tune)
+
+        print(
+            f"[RANDOM SEARCH] iter={i+1}/{n_iter} "
+            f"n_estimators={n_estimators}, max_depth={max_depth}, "
+            f"min_samples_split={min_samples_split}, random_state={random_state} "
+            f"-> tune MSE={mse_tune:.6f}"
+        )
+
+        if mse_tune < best_mse:
+            best_mse = mse_tune
+            best_params = {
+                "n_estimators": n_estimators,
+                "max_depth": max_depth,
+                "min_samples_split": min_samples_split,
+                "random_state": random_state,
+            }
+
+    print(f"[INFO] Best params from TUNE set: {best_params}, tune MSE={best_mse:.6f}")
+    return best_params
 
 
 # ------------------------ main functional pipeline ------------------------
@@ -161,6 +177,8 @@ def main(args):
     # Load data as dataframes to keep names
     X_train_df, feat_names = load_df_pickle(args.X_train_path)
     y_train_df, targ_names = load_df_pickle(args.y_train_path)
+    X_tune_df, _ = load_df_pickle(args.X_tune_path)
+    y_tune_df, _ = load_df_pickle(args.y_tune_path)
     X_val_df, _ = load_df_pickle(args.X_val_path)
     y_val_df, _ = load_df_pickle(args.y_val_path)
 
@@ -171,8 +189,17 @@ def main(args):
     # Convert to arrays
     X_train = X_train_df.values
     y_train = y_train_df.values
+    X_tune = X_tune_df.values
+    y_tune = y_tune_df.values
     X_val = X_val_df.values
     y_val = y_val_df.values
+
+    # Basic sanity checks for tune
+    if (X_tune is None) or (y_tune is None):
+        raise ValueError(
+            "X_tune and y_tune must be provided (via --X_tune_path / --y_tune_path) "
+            "for hyperparameter tuning."
+        )
 
     # Choose or search hyperparams
     user_specified = any(
@@ -184,14 +211,17 @@ def main(args):
             args.random_state,
         ]
     )
+
     if args.do_random_search or not user_specified:
-        best = randomized_search_rf(
+        base_rs = args.random_state if args.random_state is not None else 42
+        best = tune_rf_on_tune(
             X_train,
             y_train,
+            X_tune,
+            y_tune,
             n_iter=args.n_iter,
-            random_state=args.random_state if args.random_state is not None else 42,
+            base_random_state=base_rs,
         )
-        print(f"[INFO] RandomizedSearchCV best params: {best}")
         n_estimators = best.get("n_estimators", 200)
         max_depth = best.get("max_depth", None)
         min_samples_split = best.get("min_samples_split", 2)
@@ -202,7 +232,13 @@ def main(args):
         min_samples_split = args.min_samples_split or 2
         random_state = args.random_state or 42
 
-    # Build and fit multi-output RF
+    print(
+        f"[INFO] Final RF hyperparams: n_estimators={n_estimators}, "
+        f"max_depth={max_depth}, min_samples_split={min_samples_split}, "
+        f"random_state={random_state}"
+    )
+
+    # Build and fit multi-output RF on TRAIN (only)
     rf_single = RandomForestRegressor(
         n_estimators=n_estimators,
         max_depth=max_depth,
@@ -296,6 +332,8 @@ if __name__ == "__main__":
     # Data
     p.add_argument("--X_train_path", type=str, required=True)
     p.add_argument("--y_train_path", type=str, required=True)
+    p.add_argument("--X_tune_path", type=str, required=True)
+    p.add_argument("--y_tune_path", type=str, required=True)
     p.add_argument("--X_val_path", type=str, required=True)
     p.add_argument("--y_val_path", type=str, required=True)
 

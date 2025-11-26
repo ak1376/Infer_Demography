@@ -643,30 +643,73 @@ def main(
     feat_norm_df = normalise_df(feat_df, mu, sigma)
     targ_norm_df = normalise_df(targ_df, mu, sigma)
 
-    # ---------- train / val split ------------------------------------------
+    # ---------- train / tune / val split ------------------------------------
     n_rows = len(feat_df)
     if n_rows == 0:
         raise RuntimeError("All rows were dropped as outliers; nothing to write.")
 
-    perm = rng.permutation(n_rows)
-    n_train = int(round(train_pct * n_rows))
+    # indices of the kept rows (these are sim IDs)
     all_idx = feat_df.index.to_numpy()
-    train_idx = all_idx[perm[:n_train]]
-    val_idx = all_idx[perm[n_train:]]
+    perm = rng.permutation(n_rows)
 
+    n_train = int(0.70 * n_rows)
+    n_tune  = int(0.10 * n_rows)
+    n_val   = n_rows - n_train - n_tune  # whatever remains
+
+    train_idx = all_idx[perm[:n_train]]
+    tune_idx  = all_idx[perm[n_train : n_train + n_tune]]
+    val_idx   = all_idx[perm[n_train + n_tune : ]]
+
+    # ---------- raw (unnormalized) splits ----------------------------------
+    train_feats = feat_df.loc[train_idx]
+    train_targs = targ_df.loc[train_idx]
+    tune_feats  = feat_df.loc[tune_idx]
+    tune_targs  = targ_df.loc[tune_idx]
+    val_feats   = feat_df.loc[val_idx]
+    val_targs   = targ_df.loc[val_idx]
+
+    # ---------- normalized splits ------------------------------------------
     norm_train_feats = feat_norm_df.loc[train_idx]
     norm_train_targs = targ_norm_df.loc[train_idx]
-    norm_val_feats = feat_norm_df.loc[val_idx]
-    norm_val_targs = targ_norm_df.loc[val_idx]
+    norm_tune_feats  = feat_norm_df.loc[tune_idx]
+    norm_tune_targs  = targ_norm_df.loc[tune_idx]
+    norm_val_feats   = feat_norm_df.loc[val_idx]
+    norm_val_targs   = targ_norm_df.loc[val_idx]
+
+    # ---------- save split indices (sim IDs) --------------------------------
+    split_ids = {
+        "train_idx": train_idx.tolist(),
+        "tune_idx":  tune_idx.tolist(),
+        "val_idx":   val_idx.tolist(),
+    }
+    with open(datasets_dir / "split_indices.json", "w") as fh:
+        json.dump(split_ids, fh, indent=2)
 
     # ---------- outputs: DataFrames ----------------------------------------
+    # full (post-filtering) data
     (datasets_dir / "features_df.pkl").write_bytes(pickle.dumps(feat_df))
     (datasets_dir / "targets_df.pkl").write_bytes(pickle.dumps(targ_df))
+
+    # raw splits
+    (datasets_dir / "train_features.pkl").write_bytes(pickle.dumps(train_feats))
+    (datasets_dir / "train_targets.pkl").write_bytes(pickle.dumps(train_targs))
+    (datasets_dir / "tune_features.pkl").write_bytes(pickle.dumps(tune_feats))
+    (datasets_dir / "tune_targets.pkl").write_bytes(pickle.dumps(tune_targs))
+    (datasets_dir / "validation_features.pkl").write_bytes(pickle.dumps(val_feats))
+    (datasets_dir / "validation_targets.pkl").write_bytes(pickle.dumps(val_targs))
+
+    # normalized splits
     (datasets_dir / "normalized_train_features.pkl").write_bytes(
         pickle.dumps(norm_train_feats)
     )
     (datasets_dir / "normalized_train_targets.pkl").write_bytes(
         pickle.dumps(norm_train_targs)
+    )
+    (datasets_dir / "normalized_tune_features.pkl").write_bytes(
+        pickle.dumps(norm_tune_feats)
+    )
+    (datasets_dir / "normalized_tune_targets.pkl").write_bytes(
+        pickle.dumps(norm_tune_targs)
     )
     (datasets_dir / "normalized_validation_features.pkl").write_bytes(
         pickle.dumps(norm_val_feats)
@@ -674,6 +717,7 @@ def main(
     (datasets_dir / "normalized_validation_targets.pkl").write_bytes(
         pickle.dumps(norm_val_targs)
     )
+
 
     # ---------- plotting: scatter grid -------------------------------------
     plot_estimates_vs_truth_grid_multi_rep(

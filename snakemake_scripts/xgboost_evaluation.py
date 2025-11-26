@@ -10,8 +10,7 @@ matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
 
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.model_selection import RandomizedSearchCV
-from sklearn.metrics import make_scorer, mean_squared_error as mse_sklearn
+from sklearn.metrics import mean_squared_error as mse_sklearn
 from xgboost import XGBRegressor
 
 # ----- allow project root imports (for visualizing_results) -----
@@ -79,89 +78,6 @@ def _detect_outer_jobs(user, default=1):
     return int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or default))
 
 
-def _random_search_xgb(X_train, y_train, n_iter=6, random_state=42, cv_verbose=3):
-    """Fast RandomizedSearchCV on first target with rich logging and small space."""
-    start = time.perf_counter()
-
-    # Avoid oversubscription: sklearn parallelizes candidates/folds; XGB uses 1 thread.
-    base = XGBRegressor(
-        objective="reg:squarederror",
-        n_jobs=1,  # important: let sklearn own the parallelism
-        tree_method="hist",  # fast CPU algorithm
-        random_state=random_state,
-        verbosity=1,
-    )
-
-    # Small, sensible space
-    param_dist = {
-        "n_estimators": [150, 250],
-        "max_depth": [3, 5],
-        "learning_rate": [0.05, 0.10],
-        "subsample": [0.8, 1.0],
-        "colsample_bytree": [0.8, 1.0],
-        "min_child_weight": [1, 3],
-        "reg_lambda": [1.0, 5.0],
-        "reg_alpha": [0.0, 0.1],
-        "tree_method": ["hist"],
-    }
-
-    scorer = make_scorer(mse_sklearn, greater_is_better=False)
-    y_search = y_train[:, 0] if y_train.ndim > 1 and y_train.shape[1] > 1 else y_train
-
-    print(f"[CV] Shapes: X_train={X_train.shape}, y_search={y_search.shape}")
-    print(f"[CV] RandomizedSearchCV: {n_iter} candidates × 3-fold ≈ {n_iter*3} fits")
-
-    rs = RandomizedSearchCV(
-        estimator=base,
-        param_distributions=param_dist,
-        n_iter=n_iter,
-        cv=3,
-        scoring=scorer,
-        random_state=random_state,
-        n_jobs=-1,  # sklearn parallelism across folds/candidates
-        verbose=cv_verbose,  # >=3 prints folds and timings
-        pre_dispatch="2*n_jobs",
-        return_train_score=False,
-    )
-
-    rs.fit(X_train, y_search)
-
-    dur = time.perf_counter() - start
-    print(f"[CV] Elapsed: {dur:.1f}s")
-    print(f"[CV] Best score (neg-MSE): {rs.best_score_:.6g}")
-    print(f"[CV] Best params: {rs.best_params_}")
-
-    # Summarize top candidates
-    try:
-        import pandas as pd
-
-        cv = rs.cv_results_
-        df = (
-            pd.DataFrame(
-                {
-                    "rank": cv["rank_test_score"],
-                    "mean_test": cv["mean_test_score"],
-                    "std_test": cv["std_test_score"],
-                    "params": cv["params"],
-                    "fit_time": cv["mean_fit_time"],
-                    "score_time": cv["mean_score_time"],
-                }
-            )
-            .sort_values("rank")
-            .head(5)
-        )
-        print("[CV] Top candidates:")
-        for _, row in df.iterrows():
-            print(
-                f"  rank={int(row['rank'])}  mean={row['mean_test']:.6g}±{row['std_test']:.3g}  "
-                f"fit_time={row['fit_time']:.2f}s  params={row['params']}"
-            )
-    except Exception as e:
-        print(f"[CV] Could not print top candidates summary: {type(e).__name__}: {e}")
-
-    return rs.best_params_
-
-
 def _plot_feature_importances_grid(
     model, feature_names, target_names, save_path, top_k=None
 ):
@@ -206,10 +122,112 @@ def _plot_feature_importances_grid(
     plt.close(fig)
 
 
+def tune_xgb_on_tune(
+    X_train,
+    y_train,
+    X_tune,
+    y_tune,
+    n_iter=20,
+    random_state=42,
+):
+    """
+    Manual random search over XGB hyperparameters using TUNE set.
+
+    For each sampled hyperparameter set:
+      - fit single-output XGB on TRAIN (first target)
+      - evaluate MSE on TUNE (same target)
+    Returns dict of best params.
+    """
+    rng = np.random.RandomState(random_state)
+
+    # Discrete grids (same spirit as your old RandomizedSearchCV)
+    n_estimators_grid = [150, 250]
+    max_depth_grid = [3, 5]
+    learning_rate_grid = [0.05, 0.10]
+    subsample_grid = [0.8, 1.0]
+    colsample_bytree_grid = [0.8, 1.0]
+    min_child_weight_grid = [1, 3]
+    reg_lambda_grid = [1.0, 5.0]
+    reg_alpha_grid = [0.0, 0.1]
+    tree_method = "hist"
+
+    # single-output target (first column if multi-output)
+    y_tr = y_train[:, 0] if y_train.ndim > 1 else y_train
+    y_tu = y_tune[:, 0] if y_tune.ndim > 1 else y_tune
+
+    best_mse = np.inf
+    best_params = None
+
+    print(
+        f"[TUNE] Random search on TUNE set: n_iter={n_iter}, "
+        f"X_train={X_train.shape}, X_tune={X_tune.shape}"
+    )
+
+    for i in range(n_iter):
+        n_estimators = rng.choice(n_estimators_grid)
+        max_depth = rng.choice(max_depth_grid)
+        learning_rate = rng.choice(learning_rate_grid)
+        subsample = rng.choice(subsample_grid)
+        colsample_bytree = rng.choice(colsample_bytree_grid)
+        min_child_weight = rng.choice(min_child_weight_grid)
+        reg_lambda = rng.choice(reg_lambda_grid)
+        reg_alpha = rng.choice(reg_alpha_grid)
+
+        xgb = XGBRegressor(
+            objective="reg:squarederror",
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            subsample=subsample,
+            colsample_bytree=colsample_bytree,
+            min_child_weight=min_child_weight,
+            reg_lambda=reg_lambda,
+            reg_alpha=reg_alpha,
+            tree_method=tree_method,
+            n_jobs=1,  # avoid oversubscription
+            random_state=random_state,
+            verbosity=0,
+        )
+
+        t0 = time.perf_counter()
+        xgb.fit(X_train, y_tr)
+        preds = xgb.predict(X_tune)
+        mse = mse_sklearn(y_tu, preds)
+        dt = time.perf_counter() - t0
+
+        print(
+            f"[TUNE] iter={i+1}/{n_iter} "
+            f"n_estimators={n_estimators}, max_depth={max_depth}, "
+            f"learning_rate={learning_rate}, subsample={subsample}, "
+            f"colsample_bytree={colsample_bytree}, min_child_weight={min_child_weight}, "
+            f"reg_lambda={reg_lambda}, reg_alpha={reg_alpha} "
+            f"-> tune MSE={mse:.6f} (time={dt:.1f}s)"
+        )
+
+        if mse < best_mse:
+            best_mse = mse
+            best_params = {
+                "n_estimators": n_estimators,
+                "max_depth": max_depth,
+                "learning_rate": learning_rate,
+                "subsample": subsample,
+                "colsample_bytree": colsample_bytree,
+                "min_child_weight": min_child_weight,
+                "reg_lambda": reg_lambda,
+                "reg_alpha": reg_alpha,
+                "tree_method": tree_method,
+            }
+
+    print(f"[TUNE] Best params from TUNE set: {best_params}, tune MSE={best_mse:.6f}")
+    return best_params
+
+
 # ---------- main ----------
 def xgboost_evaluation(
     X_train_path=None,
     y_train_path=None,
+    X_tune_path=None,
+    y_tune_path=None,
     X_val_path=None,
     y_val_path=None,
     experiment_config_path=None,
@@ -231,8 +249,7 @@ def xgboost_evaluation(
     n_iter=20,
     random_state=42,
     top_k_features_plot=None,
-    # new controls
-    cv_verbose=3,
+    # perf controls
     outer_n_jobs=None,
     xgb_n_jobs=1,
     tree_method="hist",
@@ -267,6 +284,8 @@ def xgboost_evaluation(
     y_train, targ_names_train = (
         _load_df_and_array(y_train_path) if y_train_path else (None, None)
     )
+    X_tune, _ = _load_df_and_array(X_tune_path) if X_tune_path else (None, None)
+    y_tune, _ = _load_df_and_array(y_tune_path) if y_tune_path else (None, None)
     X_val, _ = _load_df_and_array(X_val_path) if X_val_path else (None, None)
     y_val, _ = _load_df_and_array(y_val_path) if y_val_path else (None, None)
 
@@ -284,12 +303,15 @@ def xgboost_evaluation(
         targ_names_train if targ_names_train is not None else _get_param_names(exp_cfg)
     )
 
-    if X_train is None and X_val is None:
-        raise ValueError("Provide at least a training or validation split.")
+    # sanity checks
+    if X_train is None:
+        raise ValueError("X_train_path / y_train_path are required.")
     if (X_train is None) ^ (y_train is None):
         raise ValueError("Need both X_train & y_train (or neither).")
     if (X_val is None) ^ (y_val is None):
         raise ValueError("Need both X_val & y_val (or neither).")
+    if (X_tune is None) ^ (y_tune is None):
+        raise ValueError("Need both X_tune & y_tune (or neither).")
 
     # decide hyperparams:
     user_provided = any(
@@ -306,14 +328,15 @@ def xgboost_evaluation(
         ]
     )
 
-    if not user_provided and do_random_search and X_train is not None:
-        print("[INFO] Running RandomizedSearchCV for XGBoost …")
-        best = _random_search_xgb(
+    if (do_random_search or not user_provided) and X_tune is not None:
+        print("[INFO] Running random search on TUNE set for XGBoost …")
+        best = tune_xgb_on_tune(
             X_train,
             y_train,
+            X_tune,
+            y_tune,
             n_iter=n_iter,
             random_state=random_state,
-            cv_verbose=cv_verbose,
         )
         n_estimators = best.get("n_estimators", n_estimators)
         max_depth = best.get("max_depth", max_depth)
@@ -324,7 +347,7 @@ def xgboost_evaluation(
         reg_lambda = best.get("reg_lambda", reg_lambda)
         reg_alpha = best.get("reg_alpha", reg_alpha)
         tree_method = best.get("tree_method", tree_method)
-        print(f"[INFO] Best params applied.")
+        print(f"[INFO] Best params applied from TUNE search.")
 
     # Environment hints to avoid oversubscription
     os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -360,13 +383,13 @@ def xgboost_evaluation(
     )
     print(
         f"[INFO] Data shapes: "
-        f"X_train={None if X_train is None else X_train.shape}, "
-        f"y_train={None if y_train is None else y_train.shape}, "
-        f"X_val={None if X_val is None else X_val.shape}, "
-        f"y_val={None if y_val is None else y_val.shape}"
+        f"X_train={X_train.shape}, y_train={y_train.shape}, "
+        f"X_tune={None if X_tune is None else X_tune.shape}, "
+        f"y_tune={None if y_tune is None else y_tune.shape}, "
+        f"X_val={X_val.shape}, y_val={y_val.shape}"
     )
 
-    # fit
+    # fit final multi-output model on TRAIN only
     def _fit_multioutput_with_es(X_tr, Y_tr, X_va, Y_va):
         est_list = []
         n_out = Y_tr.shape[1]
@@ -389,7 +412,7 @@ def xgboost_evaluation(
                     dict(
                         eval_set=[(X_va, Y_va[:, i])],
                         early_stopping_rounds=early_stopping_rounds,
-                        verbose=True,  # per-iteration metric
+                        verbose=True,
                     )
                 )
             est.fit(X_tr, Y_tr[:, i], **fit_kwargs)
@@ -400,12 +423,7 @@ def xgboost_evaluation(
             est_list.append(est)
         return est_list
 
-    if (
-        early_stopping_rounds is not None
-        and X_val is not None
-        and y_train is not None
-        and y_train.ndim == 2
-    ):
+    if early_stopping_rounds is not None:
         print(f"[INFO] Using early stopping: {early_stopping_rounds} rounds.")
         est_list = _fit_multioutput_with_es(X_train, y_train, X_val, y_val)
         model = MultiOutputRegressor(xgb_base, n_jobs=outer_jobs)
@@ -413,42 +431,34 @@ def xgboost_evaluation(
     else:
         model = MultiOutputRegressor(xgb_base, n_jobs=outer_jobs)
         t0 = time.perf_counter()
-        model.fit(
-            X_train if X_train is not None else X_val,
-            y_train if y_train is not None else y_val,
-        )
+        model.fit(X_train, y_train)
         print(f"[INFO] MultiOutputRegressor.fit elapsed: {time.perf_counter()-t0:.1f}s")
 
-    train_preds = model.predict(X_train) if X_train is not None else None
-    val_preds = model.predict(X_val) if X_val is not None else None
-    if train_preds is not None and train_preds.ndim == 1:
+    train_preds = model.predict(X_train)
+    val_preds = model.predict(X_val)
+    if train_preds.ndim == 1:
         train_preds = train_preds.reshape(-1, 1)
-    if val_preds is not None and val_preds.ndim == 1:
+    if val_preds.ndim == 1:
         val_preds = val_preds.reshape(-1, 1)
 
     # package container
-    features_and_targets = {}
-    if X_train is not None:
-        features_and_targets["training"] = {"features": X_train, "targets": y_train}
-    if X_val is not None:
-        features_and_targets["validation"] = {"features": X_val, "targets": y_val}
+    features_and_targets = {
+        "training": {"features": X_train, "targets": y_train},
+        "validation": {"features": X_val, "targets": y_val},
+    }
 
     xgb_obj = {
         "model": model,
-        "training": {},
-        "validation": {},
+        "training": {
+            "predictions": train_preds,
+            "targets": y_train,
+        },
+        "validation": {
+            "predictions": val_preds,
+            "targets": y_val,
+        },
         "param_names": target_names,
     }
-    if "training" in features_and_targets:
-        xgb_obj["training"]["predictions"] = train_preds
-        xgb_obj["training"]["targets"] = np.asarray(
-            features_and_targets["training"]["targets"]
-        )
-    if "validation" in features_and_targets:
-        xgb_obj["validation"]["predictions"] = val_preds
-        xgb_obj["validation"]["targets"] = np.asarray(
-            features_and_targets["validation"]["targets"]
-        )
 
     # errors
     rrmse = {
@@ -467,16 +477,8 @@ def xgboost_evaluation(
         for i, pname in enumerate(target_names):
             rrmse[f"{split}_mse"][pname] = float(np.mean((yt[:, i] - yp[:, i]) ** 2))
 
-    _fill_err(
-        xgb_obj["training"].get("targets"),
-        xgb_obj["training"].get("predictions"),
-        "training",
-    )
-    _fill_err(
-        xgb_obj["validation"].get("targets"),
-        xgb_obj["validation"].get("predictions"),
-        "validation",
-    )
+    _fill_err(y_train, train_preds, "training")
+    _fill_err(y_val, val_preds, "validation")
 
     # save artifacts
     with open(model_directory / "xgb_mdl_obj.pkl", "wb") as f:
@@ -490,7 +492,7 @@ def xgboost_evaluation(
         xgb_obj,
         analysis="xgb_results",
         save_loc=model_directory,
-        stages=[s for s in ["training", "validation"] if s in features_and_targets],
+        stages=["training", "validation"],
         color_shades=color_shades,
         main_colors=main_colors,
     )
@@ -498,8 +500,7 @@ def xgboost_evaluation(
     # Feature importances
     if feature_names is None:
         feature_names = [
-            f"feat_{i}"
-            for i in range((X_train if X_train is not None else X_val).shape[1])
+            f"feat_{i}" for i in range((X_train if X_train is not None else X_val).shape[1])
         ]
     _plot_feature_importances_grid(
         model,
@@ -517,10 +518,12 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="XGBoost multi-output evaluation script")
 
     # Data
-    p.add_argument("--X_train_path", type=str, default=None)
-    p.add_argument("--y_train_path", type=str, default=None)
-    p.add_argument("--X_val_path", type=str, default=None)
-    p.add_argument("--y_val_path", type=str, default=None)
+    p.add_argument("--X_train_path", type=str, required=True)
+    p.add_argument("--y_train_path", type=str, required=True)
+    p.add_argument("--X_tune_path", type=str, required=True)
+    p.add_argument("--y_tune_path", type=str, required=True)
+    p.add_argument("--X_val_path", type=str, required=True)
+    p.add_argument("--y_val_path", type=str, required=True)
 
     # Configs
     p.add_argument("--experiment_config_path", type=str, required=True)
@@ -556,12 +559,6 @@ if __name__ == "__main__":
 
     # Verbosity / performance controls
     p.add_argument(
-        "--cv-verbose",
-        type=int,
-        default=3,
-        help="Verbosity for RandomizedSearchCV (>=3 prints folds & timings).",
-    )
-    p.add_argument(
         "--outer-n-jobs",
         type=int,
         default=None,
@@ -592,6 +589,8 @@ if __name__ == "__main__":
     xgboost_evaluation(
         X_train_path=args.X_train_path,
         y_train_path=args.y_train_path,
+        X_tune_path=args.X_tune_path,
+        y_tune_path=args.y_tune_path,
         X_val_path=args.X_val_path,
         y_val_path=args.y_val_path,
         experiment_config_path=args.experiment_config_path,
@@ -611,7 +610,6 @@ if __name__ == "__main__":
         n_iter=args.n_iter,
         random_state=args.random_state,
         top_k_features_plot=args.top_k_features_plot,
-        cv_verbose=args.cv_verbose,
         outer_n_jobs=args.outer_n_jobs,
         xgb_n_jobs=args.xgb_n_jobs,
         tree_method=args.tree_method,
