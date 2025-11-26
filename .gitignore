@@ -16,3 +16,6 @@ moments-opt-example.py
 graham_schmidt.ipynb
 preserved_experiments/
 logs/
+old_experiments/
+neutral_experiments/
+experiments_BGS/
