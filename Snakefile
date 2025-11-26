@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_isolation.json"
+EXP_CFG      = "config_files/experiment_config_split_migration_growth.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -92,84 +92,84 @@ rule all:
         expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
         # Aggregated optimizer results (simulated)
-        [final_pkl(sid, "moments") for sid in SIM_IDS],
-        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        # [final_pkl(sid, "moments") for sid in SIM_IDS],
+        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # Cleanup completion markers (simulated)
-        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
+        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
         # LD artifacts (simulated; best-fit only)
-        expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+        # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
         # FIM (simulated)
-        expand(
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-            sid=SIM_IDS, engine=FIM_ENGINES
-        ),
+        # expand(
+        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+        #     sid=SIM_IDS, engine=FIM_ENGINES
+        # ),
 
         # Residuals (simulated)
-        expand(
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-            sid=SIM_IDS, engine=RESIDUAL_ENGINES
-        ),
+        # expand(
+        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
+        #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
+        # ),
 
         # Combined per-sim inference blobs (simulated)
-        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
+        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
         # ── MODELING (on simulated inferences) ─────────────────────────────
         # Datasets
-        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
 
         # Color scheme
-        f"experiments/{MODEL}/modeling/color_shades.pkl",
-        f"experiments/{MODEL}/modeling/main_colors.pkl",
+        # f"experiments/{MODEL}/modeling/color_shades.pkl",
+        # f"experiments/{MODEL}/modeling/main_colors.pkl",
 
         # Linear models
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
 
         # Random forest
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
         # XGBoost
-        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
         # ── REAL DATA: 1000G DOWNLOAD + POPFILES ───────────────────────────
-        "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
-        "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz.tbi",
-        "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU.samples",
-        "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/YRI.samples",
-        "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/.download_done",
-        "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz.tbi",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU.samples",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/YRI.samples",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/.download_done",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
 
         # Real-data SFS (this is your REAL_SFS constant)
-        REAL_SFS,
+        # REAL_SFS,
 
         # REAL DATA: aggregated SFS inferences (from runs/run_real_{opt})
-        REAL_FINAL_PKL("moments"),
-        REAL_FINAL_PKL("dadi"),
+        # REAL_FINAL_PKL("moments"),
+        # REAL_FINAL_PKL("dadi"),
 
         # REAL DATA: LD stats for each window
-        expand(
-            f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl",
-            i=WINDOWS,
-        )
+        # expand(
+        #     f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl",
+        #     i=WINDOWS,
+        # )
 
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS

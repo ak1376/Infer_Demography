@@ -241,6 +241,7 @@ def main():
             "split_isolation",
             "split_migration",
             "drosophila_three_epoch",
+            "split_migration_growth",
         ],
         help="Which demographic model to simulate",
     )

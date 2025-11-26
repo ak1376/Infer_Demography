@@ -183,6 +183,53 @@ class _DrosophilaThreeEpoch(sps.DemographicModel):
         )
 
 
+class _SplitMigrationGrowth(sps.DemographicModel):
+    """
+    Custom model: CO/FR split from ANC, with growth in FR and asymmetric migration.
+    """
+
+    def __init__(self, N_CO, N_FR1, G_FR, N_ANC, m_CO_FR, m_FR_CO, T):
+        # N_CO:    Effective population size of the Congolese population (constant).
+        # N_FR1:   Effective population size of the French population at present (time 0).
+        # G_FR:    Growth rate of the French population (exponential).
+        # N_ANC:   Ancestral population size (before split).
+        # m_CO_FR: Migration rate FROM Congolese TO French (forward time).
+        #          (Fraction of French population replaced by Congolese migrants per generation).
+        # m_FR_CO: Migration rate FROM French TO Congolese (forward time).
+        #          (Fraction of Congolese population replaced by French migrants per generation).
+        # T:       Time of split (generations ago).
+
+        demogr = msprime.Demography()
+        demogr.add_population(name="CO", initial_size=float(N_CO))
+        demogr.add_population(name="FR", initial_size=float(N_FR1), growth_rate=float(G_FR))
+        demogr.add_population(name="ANC", initial_size=float(N_ANC))
+        
+        # Migration Matrix M[j, k] is rate of lineages moving from j to k (backward time).
+        # Lineage j->k (backward) implies Gene Flow k->j (forward).
+        # We want m_CO_FR to be Forward CO->FR. This implies Lineages FR->CO.
+        # So M[FR, CO] should be m_CO_FR. (Indices: CO=0, FR=1, ANC=2).
+        # M[1, 0] = m_CO_FR.
+        #
+        # We want m_FR_CO to be Forward FR->CO. This implies Lineages CO->FR.
+        # So M[CO, FR] should be m_FR_CO.
+        # M[0, 1] = m_FR_CO.
+
+        demogr.migration_matrix = np.array([
+            [0,              float(m_FR_CO), 0],
+            [float(m_CO_FR), 0,              0],
+            [0,              0,              0]
+        ])
+        demogr.add_population_split(time=float(T), derived=["CO", "FR"], ancestral="ANC")
+
+        super().__init__(
+            id="split_migration_growth",
+            description="Split with migration and growth (CO/FR)",
+            long_description="Custom model with CO/FR split, FR growth, and asymmetric migration.",
+            model=demogr,
+            generation_time=1,
+        )
+
+
 # ──────────────────────────────────
 # NEW: interval helpers for coverage-based tiling
 # ──────────────────────────────────
@@ -430,6 +477,67 @@ def drosophila_three_epoch(
     )
     return b.resolve()
 
+
+def split_migration_growth_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    Split + asymmetric migration + growth in FR.
+    Deme names: 'CO' and 'FR'.
+    
+    Parameters:
+    - N_CO:    Size of CO population (constant).
+    - N_FR1:   Size of FR population at present (time 0).
+    - G_FR:    Growth rate of FR population.
+    - N_ANC:   Ancestral size.
+    - m_CO_FR: Migration rate CO -> FR (forward time).
+    - m_FR_CO: Migration rate FR -> CO (forward time).
+    - T:       Split time (generations ago).
+    """
+    N_CO = float(sampled.get("N_CO", sampled.get("N1")))
+    N_FR1 = float(sampled.get("N_FR1", sampled.get("N2")))
+    N_ANC = float(sampled.get("N_ANC", sampled.get("N0")))
+    m_CO_FR = float(sampled.get("m_CO_FR", 0.0))
+    m_FR_CO = float(sampled.get("m_FR_CO", 0.0))
+    T = float(sampled.get("T", sampled.get("T_split")))
+
+    # Handle growth rate or start/end sizes
+    # We need N_FR0 (size at split, time T) and N_FR1 (size at present, time 0)
+    if "G_FR" in sampled:
+        G_FR = float(sampled["G_FR"])
+        # N(T) = N(0) * exp(-rT)
+        N_FR0 = N_FR1 * np.exp(-G_FR * T)
+    elif "N_FR0" in sampled:
+        N_FR0 = float(sampled["N_FR0"])
+        # G_FR not strictly needed for demes if we have start/end sizes, 
+        # but good to have consistent logic if we wanted it.
+    else:
+        # Default no growth
+        N_FR0 = N_FR1
+
+    b = demes.Builder()
+    b.add_deme("ANC", epochs=[dict(start_size=N_ANC, end_time=T)])
+    b.add_deme("CO", ancestors=["ANC"], epochs=[dict(start_size=N_CO)])
+    b.add_deme(
+        "FR", 
+        ancestors=["ANC"], 
+        # Epoch goes from T (start) to 0 (end).
+        # start_size is size at T (N_FR0). end_size is size at 0 (N_FR1).
+        epochs=[dict(start_size=N_FR0, end_size=N_FR1)]
+    )
+
+    # Migration
+    # m_CO_FR: Forward CO -> FR.
+    # Demes uses forward-time semantics: source=Origin of genes, dest=Destination of genes.
+    if m_CO_FR > 0:
+        b.add_migration(source="CO", dest="FR", rate=m_CO_FR)
+    
+    # m_FR_CO: Forward FR -> CO.
+    if m_FR_CO > 0:
+        b.add_migration(source="FR", dest="CO", rate=m_FR_CO)
+
+    return b.resolve()
+
 def define_sps_model(model_type: str, g: demes.Graph, sampled_params: Dict[str, float]) -> sps.DemographicModel:
     """Create appropriate stdpopsim model for SLiM based on model type."""
     if model_type == "split_isolation":
@@ -469,7 +577,28 @@ def define_sps_model(model_type: str, g: demes.Graph, sampled_params: Dict[str, 
             EUR_recover,
             T_split,
             T_EUR_exp,
+            T_split,
+            T_EUR_exp,
         )
+
+    elif model_type == "split_migration_growth":
+        N_CO = float(sampled_params.get("N_CO", sampled_params.get("N1")))
+        N_FR1 = float(sampled_params.get("N_FR1", sampled_params.get("N2")))
+        N_ANC = float(sampled_params.get("N_ANC", sampled_params.get("N0")))
+        m_CO_FR = float(sampled_params.get("m_CO_FR", 0.0))
+        m_FR_CO = float(sampled_params.get("m_FR_CO", 0.0))
+        T = float(sampled_params.get("T", sampled_params.get("T_split")))
+
+        if "G_FR" in sampled_params:
+            G_FR = float(sampled_params["G_FR"])
+        elif "N_FR0" in sampled_params:
+            N_FR0 = float(sampled_params["N_FR0"])
+            # G = ln(N(0)/N(T)) / T
+            G_FR = np.log(N_FR1 / N_FR0) / T
+        else:
+            G_FR = 0.0
+
+        return _SplitMigrationGrowth(N_CO, N_FR1, G_FR, N_ANC, m_CO_FR, m_FR_CO, T)
 
     else:
         # For bottleneck or any other demes-based custom model
@@ -550,6 +679,8 @@ def simulation(
         g = split_migration_model(sampled_params)  # asymmetric
     elif model_type == "drosophila_three_epoch":
         g = drosophila_three_epoch(sampled_params, experiment_config)
+    elif model_type == "split_migration_growth":
+        g = split_migration_growth_model(sampled_params, experiment_config)
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
 

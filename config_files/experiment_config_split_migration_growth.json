@@ -1,0 +1,63 @@
+{
+    "genome_length": 1e8,
+    "mutation_rate": 1.45e-09,
+    "recombination_rate": 1.45e-09,
+    "demographic_model": "split_migration_growth",
+    "log_dir": "experiments/split_migration_growth/logs",
+    "num_samples": {
+        "CO": 20,
+        "FR": 20
+    },
+    "seed": 42,
+    "num_optimizations": 1,
+    "top_k": 1,
+    "num_draws": 50,
+    "priors": {
+        "N_ANC": [
+            3162,
+            3162278
+        ],
+        "N_CO": [
+            3162,
+            3162278
+        ],
+        "N_FR0": [
+            3162,
+            3162278
+        ],
+        "N_FR1": [
+            3162,
+            3162278
+        ],
+        "T": [
+            1000,
+            1000000
+        ],
+        "m_CO_FR": [
+            1e-8,
+            1e-3
+        ],
+        "m_FR_CO": [
+            1e-8,
+            1e-3
+        ]
+    },
+    "selection": {
+        "enabled": true,
+        "species": "HomSap",
+        "dfe_id": "Gamma_K17",
+        "coverage_percent": [
+            1,
+            95
+        ],
+        "slim_scaling": 2.0
+    },
+    "use_fim_features": false,
+    "fim_engines": [
+        "moments"
+    ],
+    "use_residuals": false,
+    "residual_engines": "moments",
+    "engine": "slim",
+    "use_gpu_ld": true
+}
