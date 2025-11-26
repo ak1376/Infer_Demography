@@ -762,7 +762,18 @@ rule linear_regression:
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         mdlcfg  = "config_files/model_config.yaml"
-    ...
+    output:
+        obj   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+        errjs = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
+        mdl   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
+        plot  = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png"
+    params:
+        script = "snakemake_scripts/linear_regression.py",
+        expcfg = EXP_CFG,
+        alpha  = lambda w: config["linear"]["alphas"].get(w.reg, 0.0),
+        l1_ratio = lambda w: config["linear"].get("l1_ratio", 0.5),
+        gridflag = lambda w: "--do_grid_search" if config["linear"].get("do_grid_search", False) else ""
+    threads: 1
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
@@ -782,8 +793,12 @@ rule linear_regression:
             --l1_ratio {params.l1_ratio} \
             {params.gridflag}
 
-        test -f "{output.obj}" && test -f "{output.errjs}" && test -f "{output.mdl}"
+        test -f "{output.obj}"   && \
+        test -f "{output.errjs}" && \
+        test -f "{output.mdl}"   && \
+        test -f "{output.plot}"
         """
+
 
 ##############################################################################
 # RULE random_forest                                                         #
