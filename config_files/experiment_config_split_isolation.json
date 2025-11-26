@@ -3,31 +3,51 @@
   "mutation_rate": 1.29e-8,
   "recombination_rate": 1.2e-8,
   "demographic_model": "split_isolation",
-  "num_samples": { "YRI": 10, "CEU": 10 },
+  "num_samples": {
+    "YRI": 10,
+    "CEU": 10
+  },
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 4000,
-
+  "num_draws": 5000,
   "priors": {
-    "N_anc":      [100, 30000],
-    "N_YRI":      [100, 30000],
-    "N_CEU":      [100, 30000],
-    "m_YRI_CEU":  [1e-8, 1e-4],
-    "T_split":    [500, 20000]
+    "N_anc": [
+      100,
+      30000
+    ],
+    "N_YRI": [
+      100,
+      30000
+    ],
+    "N_CEU": [
+      100,
+      30000
+    ],
+    "m_YRI_CEU": [
+      1e-8,
+      1e-4
+    ],
+    "T_split": [
+      500,
+      20000
+    ]
   },
-
   "selection": {
     "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
-    "coverage_percent": [0, 95]
-    },
-  "use_fim_features": false,
-  "fim_engines": ["moments"],
-  "use_residuals": false,
-  "residual_engines": "moments", 
-  "engine": "msprime", 
+    "coverage_percent": [
+      1,
+      95
+    ]
+  },
+  "use_fim_features": true,
+  "fim_engines": [
+    "moments"
+  ],
+  "use_residuals": true,
+  "residual_engines": "moments",
+  "engine": "msprime",
   "use_gpu_ld": true
-
 }

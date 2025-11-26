@@ -768,11 +768,11 @@ rule linear_regression:
         mdl   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
         plot  = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png"
     params:
-        script = "snakemake_scripts/linear_regression.py",
+        script = "snakemake_scripts/linear_evaluation.py",
         expcfg = EXP_CFG,
-        alpha  = lambda w: config["linear"]["alphas"].get(w.reg, 0.0),
-        l1_ratio = lambda w: config["linear"].get("l1_ratio", 0.5),
-        gridflag = lambda w: "--do_grid_search" if config["linear"].get("do_grid_search", False) else ""
+        alpha = lambda w: config.get('linear', {}).get(w.reg, {}).get('alpha', 1.0) if w.reg in ['ridge', 'lasso', 'elasticnet'] else 0.0,
+        l1_ratio = lambda w: config.get('linear', {}).get(w.reg, {}).get('l1_ratio', 0.5) if w.reg == 'elasticnet' else 0.5,
+        gridflag = lambda w: "--do_grid_search" if config.get('linear', {}).get(w.reg, {}).get('grid_search', False) else ""
     threads: 1
     shell:
         r"""

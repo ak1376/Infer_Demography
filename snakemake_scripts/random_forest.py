@@ -4,9 +4,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
+import sys
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# Make project root importable (so "src" works)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor

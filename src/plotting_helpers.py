@@ -4,15 +4,26 @@ import math
 import numpy as np
 
 
-def create_color_scheme(num_params):
 
+def create_color_scheme(num_params):
+    """
+    Create a professional, muted color scheme with softer tones.
+    Uses lower saturation and adjusted brightness for less jarring colors.
+    """
     main_colors = []
     color_shades = {}
 
     for i in range(num_params):
         # Generate main color using HSV color space
-        hue = i / num_params
-        rgb = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+        # Use golden ratio for better color distribution
+        hue = (i * 0.618033988749895) % 1.0  # golden ratio conjugate
+        
+        # Use softer saturation and value for less jarring colors
+        # Main color: moderate saturation, high but not max brightness
+        sat_main = 0.6  # reduced from 1.0 for softer colors
+        val_main = 0.85  # slightly reduced from 1.0 for less brightness
+        
+        rgb = colorsys.hsv_to_rgb(hue, sat_main, val_main)
 
         # Convert RGB to hex
         main_color = "#{:02x}{:02x}{:02x}".format(
@@ -20,12 +31,23 @@ def create_color_scheme(num_params):
         )
         main_colors.append(main_color)
 
-        # Generate shades
+        # Generate shades - create lighter and darker variants
         shades = []
         for j in range(3):
-            # Adjust saturation and value for shades
-            sat = 1.0 - (j * 0.3)
-            val = 1.0 - (j * 0.2)
+            # Create more subtle shade variations
+            if j == 0:
+                # Main shade (same as main color)
+                sat = sat_main
+                val = val_main
+            elif j == 1:
+                # Lighter shade
+                sat = sat_main * 0.5
+                val = min(1.0, val_main * 1.1)
+            else:
+                # Darker shade
+                sat = sat_main * 0.8
+                val = val_main * 0.7
+                
             shade_rgb = colorsys.hsv_to_rgb(hue, sat, val)
             shade = "#{:02x}{:02x}{:02x}".format(
                 int(shade_rgb[0] * 255),
