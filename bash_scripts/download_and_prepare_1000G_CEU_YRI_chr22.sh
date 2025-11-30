@@ -9,7 +9,11 @@ CHR=22                     # small chromosome
 POP1="CEU"
 POP2="YRI"
 
-OUTDIR="/sietch_colab/akapoor/Infer_Demography/experiments/split_isolation/real_data_analysis/data_chr${CHR}_${POP1}_${POP2}"
+if [ "$#" -ge 1 ]; then
+    OUTDIR="$1"
+else
+    OUTDIR="/sietch_colab/akapoor/Infer_Demography/test_real_data_analysis/split_migration_growth/data_chr${CHR}_${POP1}_${POP2}"
+fi
 mkdir -p "${OUTDIR}"
 
 FTP_BASE="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502"
@@ -39,6 +43,26 @@ if [[ ! -f "${PANEL_FILE}" ]]; then
 fi
 
 ########################################
+# 1b. Download GENCODE v19 GTF (hg19) for exon filtering
+########################################
+
+GTF_URL="ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_19/gencode.v19.annotation.gtf.gz"
+GTF_FILE="gencode.v19.annotation.gtf.gz"
+EXON_BED="chr${CHR}_exons.bed"
+
+if [[ ! -f "${GTF_FILE}" ]]; then
+    echo "Downloading GENCODE v19 GTF..."
+    wget "${GTF_URL}"
+fi
+
+if [[ ! -f "${EXON_BED}" ]]; then
+    echo "Extracting chr${CHR} exons to BED..."
+    # Extract chr22, filter for exons, convert to BED (0-based start), strip "chr" prefix from chrom name to match VCF
+    zgrep "^chr${CHR}\b" "${GTF_FILE}" | \
+    awk '$3=="exon" {print substr($1, 4) "\t" ($4-1) "\t" $5}' > "${EXON_BED}"
+fi
+
+########################################
 # 2. Create sample lists
 ########################################
 
@@ -53,16 +77,17 @@ wc -l "${POP1}.samples" "${POP2}.samples"
 cat "${POP1}.samples" "${POP2}.samples" > "merged.samples"
 
 ########################################
-# 3. Extract chr22 region with bcftools
+# 3. Extract chr22 region with bcftools (removing exons)
 ########################################
 
-MERGED_VCF="CEU_YRI.chr${CHR}.vcf.gz"
+MERGED_VCF="CEU_YRI.chr${CHR}.no_exons.vcf.gz"
 
-echo "Extracting chromosome ${CHR} for CEU and YRI..."
+echo "Extracting chromosome ${CHR} for CEU and YRI (excluding exons)..."
 
 bcftools view \
     --samples-file merged.samples \
     --regions ${CHR} \
+    --targets-file ^${EXON_BED} \
     -Oz \
     -o "${MERGED_VCF}" \
     "${VCF_BASENAME}"
@@ -102,6 +127,6 @@ echo "  python snakemake_scripts/real_data_sfs.py \\"
 echo "    --input-vcf ${OUTDIR}/${MERGED_VCF} \\"
 echo "    --popfile ${OUTDIR}/${POPFILE} \\"
 echo "    --config config_files/experiment_config_split_isolation.json \\"
-echo "    --output-sfs ${OUTDIR}/${POP1}_${POP2}.chr${CHR}.sfs.pkl"
+echo "    --output-sfs ${OUTDIR}/${POP1}_${POP2}.chr${CHR}.no_exons.sfs.pkl"
 echo
 

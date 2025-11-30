@@ -5,7 +5,7 @@ real_data_sfs.py: Parse VCF and popfile, construct SFS, and save as pickle.
 import argparse
 import pickle
 from pathlib import Path
-import dadi
+import moments
 
 
 def parse_args():
@@ -32,23 +32,16 @@ def parse_popfile(popfile_path):
 def main():
     args = parse_args()
     pop_names = parse_popfile(args.popfile)
-    # Count samples per population
-    from collections import Counter
-
-    pop_list = []
-    with open(args.popfile) as pf:
-        for line in pf:
-            fields = line.strip().split()
-            if len(fields) < 2:
-                continue
-            pop_list.append(fields[1])
-    pop_counter = Counter(pop_list)
-    # dadi expects haploid sample sizes (number of chromosomes)
-    # For diploid organisms: haploid_count = 2 * diploid_individuals
-    sample_sizes = [2 * pop_counter[pop] for pop in pop_names]
-    # Construct SFS from VCF
-    dd = dadi.Misc.make_data_dict_vcf(str(args.input_vcf), str(args.popfile))
-    sfs = dadi.Spectrum.from_data_dict(dd, pop_names, sample_sizes)
+    # Projecting to 20 chromosomes per population (yielding a 21x21 SFS)
+    # Using moments to parse VCF and project
+    sample_sizes_dict = {pop: 20 for pop in pop_names}
+    
+    # Construct SFS from VCF using moments
+    sfs = moments.Spectrum.from_vcf(
+        str(args.input_vcf),
+        pop_file=str(args.popfile),
+        sample_sizes=sample_sizes_dict
+    )
     # Save SFS as pickle
     with open(args.output_sfs, "wb") as f:
         pickle.dump(sfs, f)

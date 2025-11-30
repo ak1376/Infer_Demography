@@ -60,7 +60,7 @@ RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
 LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 REAL_LD_ROOT = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/MomentsLD"
 
-REAL_SFS       = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/data/CEU_YRI.chr22.sfs.pkl"
+REAL_SFS       = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.sfs.pkl"
 # runs/ helper for real data: run_real_{opt}
 REAL_RUN_DIR   = lambda opt: f"experiments/{MODEL}/real_data_analysis/data_chr22_CEU_YRI/runs/run_{opt}"
 # final aggregated outputs for real data
@@ -944,8 +944,8 @@ rule xgboost:
 ##############################################################################
 rule download_1000G_data:
     output:
-        vcf_gz       = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
-        vcf_idx      = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz.tbi",
+        vcf_gz       = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.vcf.gz",
+        vcf_idx      = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.vcf.gz.tbi",
         pop1_samples = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU.samples",
         pop2_samples = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/YRI.samples",
         popfile      = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
@@ -957,8 +957,8 @@ rule download_1000G_data:
         r"""
         set -euo pipefail
         
-        # Run the download and preparation script
-        bash "{params.script}"
+        # Run the download and preparation script, passing the output directory
+        bash "{params.script}" "$(dirname {output.vcf_gz})"
         
         # Verify all expected outputs exist
         test -f "{output.vcf_gz}" && \
@@ -978,11 +978,11 @@ rule download_1000G_data:
 ##############################################################################
 rule compute_real_data_sfs:
     input:
-        vcf     = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
+        vcf     = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.vcf.gz",
         popfile = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
         cfg     = EXP_CFG
     output:
-        sfs = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.sfs.pkl"
+        sfs = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.sfs.pkl"
     params:
         script = "snakemake_scripts/real_data_sfs.py"
     threads: 1
@@ -1165,7 +1165,7 @@ rule aggregate_opts_dadi_real:
 # One job per window: this is what parallelizes
 rule split_real_vcf_window:
     input:
-        vcf     = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/data/CEU_YRI.chr22.vcf.gz",
+        vcf     = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/data/CEU_YRI.chr22.no_exons.vcf.gz",
         popfile = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/data/CEU_YRI.popfile"
     output:
         vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
