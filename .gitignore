@@ -19,3 +19,5 @@ logs/
 old_experiments/
 neutral_experiments/
 experiments_BGS/
+debugging_scripts/
+check_trees_count.sh

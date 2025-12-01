@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_migration_growth.json"
+EXP_CFG      = "config_files/experiment_config_split_isolation.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -35,6 +35,8 @@ NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
+
+USE_GPU_LD = CFG.get("use_gpu_ld", False)
 
 def _normalize_residual_engines(val):
     # accepts "moments", "dadi", "both", list/tuple
@@ -456,23 +458,23 @@ rule ld_window:
     params:
         sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins    = R_BINS_STR,
-        cfg    = EXP_CFG
-
+        cfg     = EXP_CFG
     threads: 4
     resources:
         ld_cores=4
     shell:
-        """
-        # Run the LD computation and capture exit code
+        r"""
+        echo "CUDA_VISIBLE_DEVICES in Snakemake job: $CUDA_VISIBLE_DEVICES"
+
         python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
-            --r-bins       "{params.bins}"
-        
+            --r-bins       "{params.bins}" \
+            --use-gpu
+
         EXIT_CODE=$?
-        
-        # If successful, clean up intermediate files
+
         if [ $EXIT_CODE -eq 0 ]; then
             echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
             rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5

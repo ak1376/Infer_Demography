@@ -272,6 +272,11 @@ def main():
     r_per_bp = float(config.get("recombination_rate", 1e-8))
     use_gpu = args.use_gpu and _HAVE_GPU and config.get("use_gpu_ld", False)
 
+    print(f"[LD] window {idx}: args.use_gpu={args.use_gpu}, "
+        f"_HAVE_GPU={_HAVE_GPU}, "
+        f"use_gpu_ld_in_cfg={config.get('use_gpu_ld', False)}, "
+        f"→ use_gpu={use_gpu}")
+
     vcf_gz = sim_dir / "windows" / f"window_{idx}.vcf.gz"
     samples_t = sim_dir / "windows" / "samples.txt"
     rec_map_t = sim_dir / "windows" / "flat_map.txt"
