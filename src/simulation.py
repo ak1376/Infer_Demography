@@ -538,6 +538,88 @@ def split_migration_growth_model(
 
     return b.resolve()
 
+
+def OOA_three_pop_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    Minimal three-pop Out-of-Africa model (YRI–CEU–CHB), Gutenkunst-style.
+
+    Deme names:
+      - 'YRI' : African population (YRI-like)
+      - 'CEU' : European population
+      - 'CHB' : East Asian population
+      - internal ancestor demes: 'ANC', 'OOA'
+
+    Parameters expected in `sampled` (all in generations/Ne units):
+      - N_anc     / N0        : ancestral size
+      - N_YRI     / N1        : present-day YRI size
+      - N_OOA                 : size of the out-of-Africa bottleneck pop
+      - N_CEU     / N2        : present-day CEU size
+      - N_CHB                 : present-day CHB size
+      - T_AFR_OOA / T1        : time of AFR vs OOA split (YRI vs non-African)
+      - T_OOA_EU_AS / T2      : time of OOA -> (CEU, CHB) split
+
+    Any missing parameters fall back to simple, reasonable defaults.
+    """
+
+    # --- sizes ---
+    N_anc = float(sampled.get("N_anc", sampled.get("N0", 10_000.0)))
+    N_YRI = float(sampled.get("N_YRI", sampled.get("N1", 14_000.0)))
+    N_OOA = float(sampled.get("N_OOA", 2_000.0))
+    N_CEU = float(sampled.get("N_CEU", sampled.get("N2", 5_000.0)))
+    N_CHB = float(sampled.get("N_CHB", 5_000.0))
+
+    # --- times (generations backwards from present) ---
+    T_africa_ooa = float(
+        sampled.get("T_AFR_OOA", sampled.get("T1", 2_000.0))
+    )  # AFR vs OOA split
+    T_ooa_eu_as = float(
+        sampled.get("T_OOA_EU_AS", sampled.get("T2", 1_000.0))
+    )  # CEU vs CHB split from OOA
+
+    if not (T_africa_ooa > T_ooa_eu_as >= 0):
+        raise ValueError(
+            "Require T_AFR_OOA > T_OOA_EU_AS >= 0 for OutOfAfrica_3G09 model."
+        )
+
+    b = demes.Builder(time_units="generations", generation_time=1)
+
+    # Ancestral deme up to AFR/OOA split
+    b.add_deme(
+        "ANC",
+        epochs=[dict(start_size=N_anc, end_time=T_africa_ooa)],
+    )
+
+    # YRI (African) splits from ANC at T_africa_ooa and persists to present
+    b.add_deme(
+        "YRI",
+        ancestors=["ANC"],
+        epochs=[dict(start_size=N_YRI, end_time=0)],
+    )
+
+    # OOA deme (non-African ancestor) from AFR/OOA split to EU/AS split
+    b.add_deme(
+        "OOA",
+        ancestors=["ANC"],
+        epochs=[dict(start_size=N_OOA, end_time=T_ooa_eu_as)],
+    )
+
+    # CEU and CHB descend from OOA at T_ooa_eu_as and persist to present
+    b.add_deme(
+        "CEU",
+        ancestors=["OOA"],
+        epochs=[dict(start_size=N_CEU, end_time=0)],
+    )
+    b.add_deme(
+        "CHB",
+        ancestors=["OOA"],
+        epochs=[dict(start_size=N_CHB, end_time=0)],
+    )
+
+    return b.resolve()
+
+
 def define_sps_model(model_type: str, g: demes.Graph, sampled_params: Dict[str, float]) -> sps.DemographicModel:
     """Create appropriate stdpopsim model for SLiM based on model type."""
     if model_type == "split_isolation":
@@ -599,6 +681,14 @@ def define_sps_model(model_type: str, g: demes.Graph, sampled_params: Dict[str, 
             G_FR = 0.0
 
         return _SplitMigrationGrowth(N_CO, N_FR1, G_FR, N_ANC, m_CO_FR, m_FR_CO, T)
+
+    elif model_type == "OOA_three_pop":
+        # Use the demes graph we already built and just wrap it.
+        return _ModelFromDemes(
+            g,
+            model_id="OOA_three_pop",
+            desc="Three-pop Out-of-Africa (YRI–CEU–CHB, Gutenkunst-style)",
+        )
 
     else:
         # For bottleneck or any other demes-based custom model
@@ -681,6 +771,8 @@ def simulation(
         g = drosophila_three_epoch(sampled_params, experiment_config)
     elif model_type == "split_migration_growth":
         g = split_migration_growth_model(sampled_params, experiment_config)
+    elif model_type == "OOA_three_pop":
+        g = OOA_three_pop_model(sampled_params, experiment_config)
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
 

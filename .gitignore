@@ -19,5 +19,5 @@ logs/
 old_experiments/
 neutral_experiments/
 experiments_BGS/
-debugging_scripts/
-check_trees_count.sh
+add_fim_resids_to_all_inferences.py
+run_all_models.sh

@@ -1,0 +1,64 @@
+{
+    "genome_length": 1e7,
+    "mutation_rate": 1.5e-08,
+    "recombination_rate": 1.5e-08,
+    "demographic_model": "OOA_three_pop",
+    "log_dir": "OOA_three_pop/inferences/moments/logs",
+    "num_samples": {
+        "YRI": 10,
+        "CEU": 10,
+        "CHB": 10
+    },
+    "seed": 42,
+    "num_optimizations": 100,
+    "top_k": 5,
+    "num_draws": 100,
+    "priors": {
+        "N_anc": [
+            100,
+            30000
+        ],
+        "N_YRI": [
+            100,
+            30000
+        ],
+        "N_OOA": [
+            100,
+            30000
+        ],
+        "N_CEU": [
+            100,
+            30000
+        ],
+        "N_CHB": [
+            100,
+            30000
+        ],
+        "T_AFR_OOA": [
+            3000,
+            40000
+        ],
+        "T_OOA_EU_AS": [
+            200,
+            2000
+        ]
+    },
+    "selection": {
+        "enabled": true,
+        "species": "HomSap",
+        "dfe_id": "Gamma_K17",
+        "coverage_percent": [
+            0,
+            95
+        ]
+    },
+    "use_fim_features": false,
+    "fim_engines": [
+        "moments"
+    ],
+    "use_residuals": false,
+    "residual_engines": "moments",
+    "engine": "slim",
+    "use_gpu_ld": true,
+    "remove_exons": true
+}

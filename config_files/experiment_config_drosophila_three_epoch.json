@@ -1,40 +1,62 @@
 {
-    "genome_length": 1e8,
-    "mutation_rate": 1.45e-09,
-    "recombination_rate": 1.45e-09,
-    "demographic_model": "drosophila_three_epoch",
-    "log_dir": "bottleneck/inferences/moments/logs",
-    "num_samples": {
-      "AFR": 20,
-      "EUR": 20
-    },
-  
-    "seed": 42,
-    "num_optimizations": 1,
-    "top_k": 1,
-    "num_draws": 5000,
-  
-    "priors": {
-      "N0"            :  [5000,  20000],    
-      "AFR"           :  [5000,  30000],    
-      "EUR_bottleneck":  [200,     5000],    
-      "EUR_recover"   :  [1000,  20000],   
-  
-      "T_AFR_expansion" : [50000, 200000],   
-      "T_AFR_EUR_split" : [10000,  49000],   
-      "T_EUR_expansion" : [   500,   9000]    
-    }, 
-    "selection": {
+  "genome_length": 1e8,
+  "mutation_rate": 1.45e-09,
+  "recombination_rate": 1.45e-09,
+  "demographic_model": "drosophila_three_epoch",
+  "log_dir": "bottleneck/inferences/moments/logs",
+  "num_samples": {
+    "AFR": 20,
+    "EUR": 20
+  },
+  "seed": 42,
+  "num_optimizations": 1,
+  "top_k": 1,
+  "num_draws": 5000,
+  "priors": {
+    "N0": [
+      5000,
+      20000
+    ],
+    "AFR": [
+      5000,
+      30000
+    ],
+    "EUR_bottleneck": [
+      200,
+      5000
+    ],
+    "EUR_recover": [
+      1000,
+      20000
+    ],
+    "T_AFR_expansion": [
+      50000,
+      200000
+    ],
+    "T_AFR_EUR_split": [
+      10000,
+      49000
+    ],
+    "T_EUR_expansion": [
+      500,
+      9000
+    ]
+  },
+  "selection": {
     "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
-    "coverage_percent": [1, 95]
-    },
-    "use_fim_features": false,
-    "fim_engines": ["moments"],
-    "use_residuals": false,
-    "residual_engines": "moments", 
-    "engine": "slim", 
-    "use_gpu_ld": true
+    "coverage_percent": [
+      1,
+      95
+    ]
+  },
+  "use_fim_features": false,
+  "fim_engines": [
+    "moments"
+  ],
+  "use_residuals": false,
+  "residual_engines": "moments",
+  "engine": "slim",
+  "use_gpu_ld": true
 }
-  

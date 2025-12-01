@@ -23,13 +23,14 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_isolation.json"
+EXP_CFG      = "config_files/experiment_config_OOA_three_pop.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
 MODEL         = CFG["demographic_model"]
 NUM_DRAWS     = int(CFG["num_draws"])
 NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
+NUM_REAL_OPTIMS = 100
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 
@@ -60,13 +61,24 @@ WINDOWS  = range(NUM_WINDOWS)
 SIM_BASEDIR = f"experiments/{MODEL}/simulations"
 RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
 LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
-REAL_LD_ROOT = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/MomentsLD"
+# Real-data SFS stays in data/
+REAL_SFS = (
+    f"experiments/{MODEL}/real_data_analysis/data/"
+    f"data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.sfs.pkl"
+)
 
-REAL_SFS       = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.sfs.pkl"
-# runs/ helper for real data: run_real_{opt}
-REAL_RUN_DIR   = lambda opt: f"experiments/{MODEL}/real_data_analysis/data_chr22_CEU_YRI/runs/run_{opt}"
-# final aggregated outputs for real data
-REAL_FINAL_PKL = lambda tool: f"experiments/{MODEL}/real_data_analysis/data_chr22_CEU_YRI/inferences/{tool}/fit_params.pkl"
+# Real-data LD mirrors LD_ROOT but without sid
+REAL_LD_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD"
+
+# Real-data runs + final inferences
+REAL_RUN_DIR = lambda opt: (
+    f"experiments/{MODEL}/real_data_analysis/runs/run_{opt}"
+)
+
+REAL_FINAL_PKL = lambda tool: (
+    f"experiments/{MODEL}/real_data_analysis/inferences/{tool}/fit_params.pkl"
+)
+
 
 opt_pkl   = lambda sid, opt, tool: f"{RUN_DIR(sid, opt)}/inferences/{tool}/fit_params.pkl"
 final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/fit_params.pkl"
@@ -946,64 +958,60 @@ rule xgboost:
 ##############################################################################
 rule download_1000G_data:
     output:
-        vcf_gz       = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.vcf.gz",
-        vcf_idx      = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.vcf.gz.tbi",
-        pop1_samples = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU.samples",
-        pop2_samples = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/YRI.samples",
-        popfile      = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
-        done_marker  = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/.download_done"
-    params:
-        script = "bash_scripts/download_and_prepare_1000G_CEU_YRI_chr22.sh"
-    threads: 1
+        vcf      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz",
+        tbi      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz.tbi",
+        yri      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI.samples",
+        ceu      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/CEU.samples",
+        chb      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/CHB.samples",
+        popfile  = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
+        done     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/.download_done"
     shell:
         r"""
         set -euo pipefail
-        
+
         # Run the download and preparation script, passing the output directory
-        bash "{params.script}" "$(dirname {output.vcf_gz})"
-        
+        bash bash_scripts/download_and_prepare_1000G_YRI_CEU_CHB_chr22.sh \
+          "$(dirname {output.vcf})"
+
         # Verify all expected outputs exist
-        test -f "{output.vcf_gz}" && \
-        test -f "{output.vcf_idx}" && \
-        test -f "{output.pop1_samples}" && \
-        test -f "{output.pop2_samples}" && \
+        test -f "{output.vcf}" && \
+        test -f "{output.tbi}" && \
+        test -f "{output.yri}" && \
+        test -f "{output.ceu}" && \
+        test -f "{output.chb}" && \
         test -f "{output.popfile}"
-        
+
         # Create completion marker
-        touch "{output.done_marker}"
-        
+        touch "{output.done}"
+
         echo "✓ 1000 Genomes data download and preparation complete"
         """
 
+
+
 ##############################################################################
-# RULE compute_real_data_sfs – Create 2D joint SFS from real data           #
+# RULE compute_real_data_sfs – build 3D SFS from YRI/CEU/CHB VCF             #
 ##############################################################################
 rule compute_real_data_sfs:
     input:
-        vcf     = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.vcf.gz",
-        popfile = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
-        cfg     = EXP_CFG
+        vcf     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz",
+        popfile = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
     output:
-        sfs = "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.no_exons.sfs.pkl"
+        sfs = REAL_SFS
     params:
-        script = "snakemake_scripts/real_data_sfs.py"
-    threads: 1
+        config = "config_files/experiment_config_OOA_three_pop.json",
     shell:
         r"""
         set -euo pipefail
-        
-        PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
-            --input-vcf "{input.vcf}" \
-            --popfile "{input.popfile}" \
-            --config "{input.cfg}" \
-            --output-sfs "{output.sfs}"
-        
-        # Verify output exists
-        test -f "{output.sfs}"
-        
-        echo "✓ Created 2D joint SFS: {output.sfs}"
+
+        python snakemake_scripts/real_data_sfs.py \
+          --input-vcf {input.vcf} \
+          --popfile   {input.popfile} \
+          --config    {params.config} \
+          --output-sfs {output.sfs}
         """
+
+
 
 ##############################################################################
 # REAL DATA – NLopt Poisson SFS optimisation (moments)
@@ -1017,9 +1025,9 @@ rule infer_moments_real:
         sfs = REAL_SFS
     output:
         # One run directory per opt, mirroring simulations:
-        pkl = f"experiments/{MODEL}/runs/run_real_{{opt}}/inferences/moments/fit_params.pkl"
+        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl"
     params:
-        run_dir  = lambda w: REAL_RUN_DIR(w.opt),
+        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/runs/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
@@ -1055,9 +1063,9 @@ rule infer_dadi_real:
     input:
         sfs = REAL_SFS
     output:
-        pkl = f"experiments/{MODEL}/runs/run_real_{{opt}}/inferences/dadi/fit_params.pkl"
+        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/dadi/fit_params.pkl"
     params:
-        run_dir  = lambda w: REAL_RUN_DIR(w.opt),
+        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/runs/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
@@ -1084,10 +1092,10 @@ rule infer_dadi_real:
 # ── REAL DATA: MOMENTS ONLY ────────────────────────────────────────────────
 rule aggregate_opts_moments_real:
     input:
-        mom = [f"experiments/{MODEL}/runs/run_real_{o}/inferences/moments/fit_params.pkl"
-               for o in range(NUM_OPTIMS)]
+        mom = [f"experiments/{MODEL}/real_data_analysis/runs/run_{o}/inferences/moments/fit_params.pkl"
+               for o in range(NUM_REAL_OPTIMS)]
     output:
-        mom = REAL_FINAL_PKL("moments")  # → experiments/{MODEL}/inferences/real_data/moments/fit_params.pkl
+        mom = f"experiments/{MODEL}/real_data_analysis/inferences/moments/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
 
@@ -1123,10 +1131,10 @@ rule aggregate_opts_moments_real:
 # ── REAL DATA: DADI ONLY ───────────────────────────────────────────────────
 rule aggregate_opts_dadi_real:
     input:
-        dadi = [f"experiments/{MODEL}/runs/run_real_{o}/inferences/dadi/fit_params.pkl"
-                for o in range(NUM_OPTIMS)]
+        dadi = [f"experiments/{MODEL}/real_data_analysis/runs/run_{o}/inferences/dadi/fit_params.pkl"
+                for o in range(NUM_REAL_OPTIMS)]
     output:
-        dadi = REAL_FINAL_PKL("dadi")  # → experiments/{MODEL}/inferences/real_data/dadi/fit_params.pkl
+        dadi = f"experiments/{MODEL}/real_data_analysis/inferences/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
 
@@ -1164,11 +1172,11 @@ rule aggregate_opts_dadi_real:
 # REAL DATA LD ANALYSIS
 ##############################################################################
 
-# One job per window: this is what parallelizes
+# One job per window
 rule split_real_vcf_window:
     input:
-        vcf     = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/data/CEU_YRI.chr22.no_exons.vcf.gz",
-        popfile = "experiments/split_isolation/real_data_analysis/data_chr22_CEU_YRI/data/CEU_YRI.popfile"
+        vcf     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz",
+        popfile = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.popfile"
     output:
         vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
     params:
@@ -1186,11 +1194,9 @@ rule split_real_vcf_window:
             --window-index {wildcards.i}
         """
 
-# Aggregator: "phony" rule just to let you say `snakemake split_real_vcf`
 rule split_real_vcf:
     input:
         expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS)
-
 
 rule compute_ld_real:
     input:
@@ -1213,7 +1219,6 @@ rule compute_ld_real:
 rule real_ld:
     input:
         expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS)
-
 
 ##############################################################################
 # Wildcard Constraints                                                      #
