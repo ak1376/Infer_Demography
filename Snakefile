@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_migration_growth.json"
+EXP_CFG      = "config_files/experiment_config_split_isolation.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -454,25 +454,24 @@ rule ld_window:
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
-        sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        bins    = R_BINS_STR,
-        cfg    = EXP_CFG
-
+        sim_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
+        bins     = R_BINS_STR,
+        cfg      = EXP_CFG,
+        gpu_flag = "--use-gpu"   # always try; script + config decide if GPU is actually used
     threads: 4
     resources:
-        ld_cores=4
+        ld_cores = 4
     shell:
         """
-        # Run the LD computation and capture exit code
         python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
-            --r-bins       "{params.bins}"
+            --r-bins       "{params.bins}" \
+            {params.gpu_flag}
         
         EXIT_CODE=$?
         
-        # If successful, clean up intermediate files
         if [ $EXIT_CODE -eq 0 ]; then
             echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
             rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
@@ -484,6 +483,8 @@ rule ld_window:
             exit $EXIT_CODE
         fi
         """
+
+
 
 ##############################################################################
 # RULE optimize_momentsld – aggregate windows & optimise momentsLD          #
