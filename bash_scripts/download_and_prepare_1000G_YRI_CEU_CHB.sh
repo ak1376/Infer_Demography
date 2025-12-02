@@ -5,14 +5,20 @@ set -euo pipefail
 # Settings — edit if needed
 ########################################
 
-CHR=22                     # small chromosome
-POP1="CEU"
-POP2="YRI"
+CHR=1                     # small chromosome
+
+# Three populations
+POP1="YRI"
+POP2="CEU"
+POP3="CHB"
+
+# Toggle: set to "true" to remove exons; "false" to keep everything
+REMOVE_EXONS="true"
 
 if [ "$#" -ge 1 ]; then
     OUTDIR="$1"
 else
-    OUTDIR="/sietch_colab/akapoor/Infer_Demography/test_real_data_analysis/split_migration_growth/data_chr${CHR}_${POP1}_${POP2}"
+    OUTDIR="/sietch_colab/akapoor/Infer_Demography/test_real_data_analysis/OOA_three_pop/data_chr${CHR}_${POP1}_${POP2}_${POP3}"
 fi
 mkdir -p "${OUTDIR}"
 
@@ -43,51 +49,70 @@ if [[ ! -f "${PANEL_FILE}" ]]; then
 fi
 
 ########################################
-# 1b. Download GENCODE v19 GTF (hg19) for exon filtering
+# 1b. (Optional) Download GENCODE v19 GTF (hg19) for exon filtering
 ########################################
 
 GTF_URL="ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_19/gencode.v19.annotation.gtf.gz"
 GTF_FILE="gencode.v19.annotation.gtf.gz"
 EXON_BED="chr${CHR}_exons.bed"
 
-if [[ ! -f "${GTF_FILE}" ]]; then
-    echo "Downloading GENCODE v19 GTF..."
-    wget "${GTF_URL}"
-fi
+if [[ "${REMOVE_EXONS}" == "true" ]]; then
+    if [[ ! -f "${GTF_FILE}" ]]; then
+        echo "Downloading GENCODE v19 GTF..."
+        wget "${GTF_URL}"
+    fi
 
-if [[ ! -f "${EXON_BED}" ]]; then
-    echo "Extracting chr${CHR} exons to BED..."
-    # Extract chr22, filter for exons, convert to BED (0-based start), strip "chr" prefix from chrom name to match VCF
-    zgrep "^chr${CHR}\b" "${GTF_FILE}" | \
-    awk '$3=="exon" {print substr($1, 4) "\t" ($4-1) "\t" $5}' > "${EXON_BED}"
+    if [[ ! -f "${EXON_BED}" ]]; then
+        echo "Extracting chr${CHR} exons to BED..."
+        # Extract chr22, filter for exons, convert to BED (0-based start), strip "chr" prefix from chrom name to match VCF
+        zgrep "^chr${CHR}\b" "${GTF_FILE}" | \
+        awk '$3=="exon" {print substr($1, 4) "\t" ($4-1) "\t" $5}' > "${EXON_BED}"
+    fi
+else
+    echo "REMOVE_EXONS=false -> skipping GENCODE download and exon BED creation."
 fi
 
 ########################################
-# 2. Create sample lists
+# 2. Create sample lists (YRI, CEU, CHB)
 ########################################
 
-echo "Extracting ${POP1} and ${POP2} sample IDs..."
+echo "Extracting ${POP1}, ${POP2}, and ${POP3} sample IDs..."
 
 grep -P "\t${POP1}\t" "${PANEL_FILE}" | cut -f1 > "${POP1}.samples"
 grep -P "\t${POP2}\t" "${PANEL_FILE}" | cut -f1 > "${POP2}.samples"
+grep -P "\t${POP3}\t" "${PANEL_FILE}" | cut -f1 > "${POP3}.samples"
 
 echo "Sample counts:"
-wc -l "${POP1}.samples" "${POP2}.samples"
+wc -l "${POP1}.samples" "${POP2}.samples" "${POP3}.samples"
 
-cat "${POP1}.samples" "${POP2}.samples" > "merged.samples"
+cat "${POP1}.samples" "${POP2}.samples" "${POP3}.samples" > "merged.samples"
 
 ########################################
-# 3. Extract chr22 region with bcftools (removing exons)
+# 3. Extract chr22 region with bcftools (optionally removing exons)
 ########################################
 
-MERGED_VCF="CEU_YRI.chr${CHR}.no_exons.vcf.gz"
+# File naming: add .no_exons if we excluded exons
+SUFFIX=""
+if [[ "${REMOVE_EXONS}" == "true" ]]; then
+    SUFFIX=".no_exons"
+fi
 
-echo "Extracting chromosome ${CHR} for CEU and YRI (excluding exons)..."
+MERGED_VCF="${POP1}_${POP2}_${POP3}.chr${CHR}${SUFFIX}.vcf.gz"
+
+echo "Extracting chromosome ${CHR} for ${POP1}, ${POP2}, ${POP3}..."
+
+EXCLUDE_ARGS=()
+if [[ "${REMOVE_EXONS}" == "true" ]]; then
+    echo "Excluding exons using BED: ${EXON_BED}"
+    EXCLUDE_ARGS=(--targets-file "^${EXON_BED}")
+else
+    echo "Keeping all sites (no exon filtering)."
+fi
 
 bcftools view \
     --samples-file merged.samples \
     --regions ${CHR} \
-    --targets-file ^${EXON_BED} \
+    "${EXCLUDE_ARGS[@]}" \
     -Oz \
     -o "${MERGED_VCF}" \
     "${VCF_BASENAME}"
@@ -105,28 +130,28 @@ tabix -p vcf "${MERGED_VCF}"
 
 echo "Creating population file..."
 
-POPFILE="${POP1}_${POP2}.popfile"
+POPFILE="${POP1}_${POP2}_${POP3}.popfile"
 
 # Create popfile with format: sample_id<tab>population_name
 awk -v pop="${POP1}" '{print $1 "\t" pop}' "${POP1}.samples" > "${POPFILE}"
 awk -v pop="${POP2}" '{print $1 "\t" pop}' "${POP2}.samples" >> "${POPFILE}"
+awk -v pop="${POP3}" '{print $1 "\t" pop}' "${POP3}.samples" >> "${POPFILE}"
 
 echo "Created popfile: ${POPFILE} ($(wc -l < ${POPFILE}) samples)"
 
 echo
 echo "DONE!"
-echo "Merged 2-population VCF ready:"
+echo "Merged 3-population VCF ready:"
 echo "  ${OUTDIR}/${MERGED_VCF}"
 echo
 echo "Population file:"
 echo "  ${OUTDIR}/${POPFILE}"
 echo
-echo "You can now build the joint 2D SFS using:"
+echo "You can now build the joint 3D SFS using something like:"
 echo
 echo "  python snakemake_scripts/real_data_sfs.py \\"
 echo "    --input-vcf ${OUTDIR}/${MERGED_VCF} \\"
 echo "    --popfile ${OUTDIR}/${POPFILE} \\"
-echo "    --config config_files/experiment_config_split_isolation.json \\"
-echo "    --output-sfs ${OUTDIR}/${POP1}_${POP2}.chr${CHR}.no_exons.sfs.pkl"
+echo "    --config config_files/experiment_config_OOA_three_pop.json \\"
+echo "    --output-sfs ${OUTDIR}/${POP1}_${POP2}_${POP3}.chr${CHR}${SUFFIX}.sfs.pkl"
 echo
-
