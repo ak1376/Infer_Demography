@@ -49,5 +49,5 @@
   "use_residuals": true,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": true
+  "use_gpu_ld": false
 }

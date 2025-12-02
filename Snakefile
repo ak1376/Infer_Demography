@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_OOA_three_pop.json"
+EXP_CFG      = "config_files/experiment_config_split_migration.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -476,7 +476,7 @@ rule ld_window:
         ld_cores=4
     shell:
         r"""
-        echo "CUDA_VISIBLE_DEVICES in Snakemake job: $CUDA_VISIBLE_DEVICES"
+        echo "CUDA_VISIBLE_DEVICES in Snakemake job: ${{CUDA_VISIBLE_DEVICES:-not_set}}"
 
         python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
@@ -498,6 +498,7 @@ rule ld_window:
             exit $EXIT_CODE
         fi
         """
+
 
 ##############################################################################
 # RULE optimize_momentsld – aggregate windows & optimise momentsLD          #

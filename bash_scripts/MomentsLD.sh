@@ -60,6 +60,7 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
               --directory "$ROOT" \
               --rerun-incomplete \
               --nolock \
+              --allowed-rules optimize_momentsld \
               -j "$SLURM_CPUS_PER_TASK" \
               "$TARGET" \
               || { echo "Snakemake failed for SID=$SID"; exit 1; }

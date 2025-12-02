@@ -345,14 +345,8 @@ def main():
     print(f"🐌 window {idx}: computing with traditional moments LD")
     # ----------------------------------------- grab every unique pop ID
     # read unique pop IDs from the samples file
-    with samples_t.open() as fh:
-        pops = sorted(
-            {
-                line.split()[1]
-                for line in fh
-                if line.strip() and not line.startswith("sample")
-            }
-        )
+    pops = list(config["num_samples"].keys())  # e.g. ["YRI", "CEU"]
+    print(f'Pops found in samples.txt: {pops}')
 
     # compute LD statistics ----------------------------------------
     import time
