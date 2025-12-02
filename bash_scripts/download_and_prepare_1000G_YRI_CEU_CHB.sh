@@ -36,16 +36,22 @@ cd "${OUTDIR}"
 if [[ ! -f "${VCF_BASENAME}" ]]; then
     echo "Downloading chr${CHR} VCF..."
     wget "${FTP_BASE}/${VCF_BASENAME}"
+else
+    echo "VCF ${VCF_BASENAME} already exists, skipping download."
 fi
 
 if [[ ! -f "${VCF_BASENAME}.tbi" ]]; then
     echo "Downloading TBI index..."
     wget "${FTP_BASE}/${VCF_BASENAME}.tbi"
+else
+    echo "Index ${VCF_BASENAME}.tbi already exists, skipping download."
 fi
 
 if [[ ! -f "${PANEL_FILE}" ]]; then
     echo "Downloading panel file..."
     wget "${FTP_BASE}/${PANEL_FILE}"
+else
+    echo "Panel file ${PANEL_FILE} already exists, skipping download."
 fi
 
 ########################################
@@ -60,13 +66,17 @@ if [[ "${REMOVE_EXONS}" == "true" ]]; then
     if [[ ! -f "${GTF_FILE}" ]]; then
         echo "Downloading GENCODE v19 GTF..."
         wget "${GTF_URL}"
+    else
+        echo "GTF ${GTF_FILE} already exists, skipping download."
     fi
 
     if [[ ! -f "${EXON_BED}" ]]; then
         echo "Extracting chr${CHR} exons to BED..."
-        # Extract chr22, filter for exons, convert to BED (0-based start), strip "chr" prefix from chrom name to match VCF
+        # Extract chr${CHR}, filter for exons, convert to BED (0-based start), strip "chr"
         zgrep "^chr${CHR}\b" "${GTF_FILE}" | \
         awk '$3=="exon" {print substr($1, 4) "\t" ($4-1) "\t" $5}' > "${EXON_BED}"
+    else
+        echo "Exon BED ${EXON_BED} already exists, skipping creation."
     fi
 else
     echo "REMOVE_EXONS=false -> skipping GENCODE download and exon BED creation."
@@ -76,19 +86,31 @@ fi
 # 2. Create sample lists (YRI, CEU, CHB)
 ########################################
 
-echo "Extracting ${POP1}, ${POP2}, and ${POP3} sample IDs..."
+echo "Ensuring ${POP1}, ${POP2}, and ${POP3} sample ID files exist..."
 
-grep -P "\t${POP1}\t" "${PANEL_FILE}" | cut -f1 > "${POP1}.samples"
-grep -P "\t${POP2}\t" "${PANEL_FILE}" | cut -f1 > "${POP2}.samples"
-grep -P "\t${POP3}\t" "${PANEL_FILE}" | cut -f1 > "${POP3}.samples"
+if [[ ! -f "${POP1}.samples" ]]; then
+    grep -P "\t${POP1}\t" "${PANEL_FILE}" | cut -f1 > "${POP1}.samples"
+fi
+
+if [[ ! -f "${POP2}.samples" ]]; then
+    grep -P "\t${POP2}\t" "${PANEL_FILE}" | cut -f1 > "${POP2}.samples"
+fi
+
+if [[ ! -f "${POP3}.samples" ]]; then
+    grep -P "\t${POP3}\t" "${PANEL_FILE}" | cut -f1 > "${POP3}.samples"
+fi
 
 echo "Sample counts:"
 wc -l "${POP1}.samples" "${POP2}.samples" "${POP3}.samples"
 
-cat "${POP1}.samples" "${POP2}.samples" "${POP3}.samples" > "merged.samples"
+if [[ ! -f "merged.samples" ]]; then
+    cat "${POP1}.samples" "${POP2}.samples" "${POP3}.samples" > "merged.samples"
+else
+    echo "merged.samples already exists, skipping."
+fi
 
 ########################################
-# 3. Extract chr22 region with bcftools (optionally removing exons)
+# 3. Extract chr region with bcftools (optionally removing exons)
 ########################################
 
 # File naming: add .no_exons if we excluded exons
@@ -99,7 +121,7 @@ fi
 
 MERGED_VCF="${POP1}_${POP2}_${POP3}.chr${CHR}${SUFFIX}.vcf.gz"
 
-echo "Extracting chromosome ${CHR} for ${POP1}, ${POP2}, ${POP3}..."
+echo "Preparing merged VCF name: ${MERGED_VCF}"
 
 EXCLUDE_ARGS=()
 if [[ "${REMOVE_EXONS}" == "true" ]]; then
@@ -109,35 +131,51 @@ else
     echo "Keeping all sites (no exon filtering)."
 fi
 
-bcftools view \
-    --samples-file merged.samples \
-    --regions ${CHR} \
-    "${EXCLUDE_ARGS[@]}" \
-    -Oz \
-    -o "${MERGED_VCF}" \
-    "${VCF_BASENAME}"
+if [[ ! -f "${MERGED_VCF}" ]]; then
+    echo "Extracting chromosome ${CHR} for ${POP1}, ${POP2}, ${POP3}..."
+    bcftools view \
+        --samples-file merged.samples \
+        --regions ${CHR} \
+        "${EXCLUDE_ARGS[@]}" \
+        -Oz \
+        -o "${MERGED_VCF}" \
+        "${VCF_BASENAME}"
+else
+    echo "Merged VCF ${MERGED_VCF} already exists, skipping bcftools view."
+fi
 
 ########################################
 # 4. Index merged VCF
 ########################################
 
-echo "Indexing merged VCF..."
-tabix -p vcf "${MERGED_VCF}"
+if [[ -f "${MERGED_VCF}" ]]; then
+    if [[ ! -f "${MERGED_VCF}.tbi" && ! -f "${MERGED_VCF}.csi" ]]; then
+        echo "Indexing merged VCF..."
+        tabix -p vcf "${MERGED_VCF}"
+    else
+        echo "Index for ${MERGED_VCF} already exists, skipping tabix."
+    fi
+else
+    echo "WARNING: ${MERGED_VCF} not found, cannot index."
+fi
 
 ########################################
 # 5. Create popfile for dadi/moments
 ########################################
 
-echo "Creating population file..."
+echo "Ensuring population file exists..."
 
 POPFILE="${POP1}_${POP2}_${POP3}.popfile"
 
-# Create popfile with format: sample_id<tab>population_name
-awk -v pop="${POP1}" '{print $1 "\t" pop}' "${POP1}.samples" > "${POPFILE}"
-awk -v pop="${POP2}" '{print $1 "\t" pop}' "${POP2}.samples" >> "${POPFILE}"
-awk -v pop="${POP3}" '{print $1 "\t" pop}' "${POP3}.samples" >> "${POPFILE}"
-
-echo "Created popfile: ${POPFILE} ($(wc -l < ${POPFILE}) samples)"
+if [[ ! -f "${POPFILE}" ]]; then
+    # Create popfile with format: sample_id<tab>population_name
+    awk -v pop="${POP1}" '{print $1 "\t" pop}' "${POP1}.samples" > "${POPFILE}"
+    awk -v pop="${POP2}" '{print $1 "\t" pop}' "${POP2}.samples" >> "${POPFILE}"
+    awk -v pop="${POP3}" '{print $1 "\t" pop}' "${POP3}.samples" >> "${POPFILE}"
+    echo "Created popfile: ${POPFILE} ($(wc -l < ${POPFILE}) samples)"
+else
+    echo "Popfile ${POPFILE} already exists, skipping creation."
+fi
 
 echo
 echo "DONE!"
@@ -154,4 +192,3 @@ echo "    --input-vcf ${OUTDIR}/${MERGED_VCF} \\"
 echo "    --popfile ${OUTDIR}/${POPFILE} \\"
 echo "    --config config_files/experiment_config_OOA_three_pop.json \\"
 echo "    --output-sfs ${OUTDIR}/${POP1}_${POP2}_${POP3}.chr${CHR}${SUFFIX}.sfs.pkl"
-echo
