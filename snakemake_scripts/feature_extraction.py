@@ -374,8 +374,8 @@ def main(
     n_sims = int(cfg["num_draws"])
 
     # fractions of total data
-    train_pct = float(cfg.get("training_percentage", 0.8))   # e.g. 0.8
-    tune_pct = float(cfg.get("tune_percentage", 0.1))        # default 0.1
+    train_pct = float(cfg.get("training_percentage", 0.8))  # e.g. 0.8
+    tune_pct = float(cfg.get("tune_percentage", 0.1))  # default 0.1
     if train_pct + tune_pct >= 1.0:
         raise ValueError(
             f"training_percentage ({train_pct}) + tune_percentage ({tune_pct}) "
@@ -687,7 +687,6 @@ def main(
     norm_val_feats = feat_norm_df.loc[val_idx]
     norm_val_targs = targ_norm_df.loc[val_idx]
 
-
     # ---------- outputs: DataFrames ----------------------------------------
     (datasets_dir / "features_df.pkl").write_bytes(pickle.dumps(feat_df))
     (datasets_dir / "targets_df.pkl").write_bytes(pickle.dumps(targ_df))
@@ -715,7 +714,6 @@ def main(
     (datasets_dir / "normalized_validation_targets.pkl").write_bytes(
         pickle.dumps(norm_val_targs)
     )
-
 
     # ---------- plotting: scatter grid -------------------------------------
     plot_estimates_vs_truth_grid_multi_rep(

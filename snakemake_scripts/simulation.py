@@ -30,15 +30,20 @@ import numpy as np
 # ------------------------------------------------------------------
 # project paths & local imports
 # ------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+from pathlib import Path
+import sys
 
-from simulation import (  # noqa: E402
-    simulation,   # engine-aware (msprime = neutral; slim = BGS)
-    create_SFS,   # builds a moments.Spectrum from the ts
+# Add project root (/sietch_colab/akapoor/Infer_Demography) to sys.path
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+from src.simulation import (  # noqa: E402
+    simulation,  # engine-aware (msprime = neutral; slim = BGS)
+    create_SFS,  # builds a moments.Spectrum from the ts
 )
+
 
 # ------------------------------------------------------------------
 # parameter sampling helpers
@@ -85,7 +90,7 @@ def run_simulation(
     engine = cfg["engine"]  # "msprime" or "slim"
 
     sel_cfg = cfg.get("selection") or {}
-    
+
     # decide destination folder name
     if simulation_number is None:
         existing = {int(p.name) for p in simulation_dir.glob("[0-9]*") if p.is_dir()}
@@ -98,7 +103,9 @@ def run_simulation(
     if base_seed is not None:
         # Create a unique seed for each simulation using base_seed + simulation_number
         simulation_seed = int(base_seed) + int(simulation_number)
-        print(f"• Using seed {simulation_seed} (base: {base_seed} + sim: {simulation_number})")
+        print(
+            f"• Using seed {simulation_seed} (base: {base_seed} + sim: {simulation_number})"
+        )
         rng = np.random.default_rng(simulation_seed)
     else:
         simulation_seed = None
@@ -111,10 +118,16 @@ def run_simulation(
     # Decide coverage based on engine
     if engine == "slim":
         if not sel_cfg.get("enabled", False):
-            raise ValueError("engine='slim' requires selection.enabled=true in your config.")
+            raise ValueError(
+                "engine='slim' requires selection.enabled=true in your config."
+            )
         if "coverage_percent" not in sel_cfg:
-            raise ValueError("engine='slim' requires selection.coverage_percent=[low, high].")
-        sampled_coverage = sample_coverage_percent(sel_cfg, rng=rng)  # percent, e.g. 37.4
+            raise ValueError(
+                "engine='slim' requires selection.coverage_percent=[low, high]."
+            )
+        sampled_coverage = sample_coverage_percent(
+            sel_cfg, rng=rng
+        )  # percent, e.g. 37.4
         print(f"• engine=slim → sampled coverage: {sampled_coverage:.2f}%")
     elif engine == "msprime":
         # Neutral path: NO BGS and NO coverage sampling
@@ -128,7 +141,7 @@ def run_simulation(
     sim_cfg = dict(cfg)
     if simulation_seed is not None:
         sim_cfg["seed"] = simulation_seed
-    
+
     ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
 
     # Build SFS from result
@@ -152,7 +165,7 @@ def run_simulation(
     sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
 
     # Only include BGS / selection knobs if we actually ran SLiM
-    is_bgs = (engine == "slim")
+    is_bgs = engine == "slim"
     meta = dict(
         engine=str(engine),
         model_type=str(model_type),
@@ -172,26 +185,49 @@ def run_simulation(
         recombination_rate=float(cfg.get("recombination_rate")),
         # BGS tiling / coverage knobs from config (only if SLiM)
         coverage_fraction=(
-            None if not is_bgs else
-            (None if sel_cfg.get("coverage_fraction") is None else float(sel_cfg["coverage_fraction"]))
+            None
+            if not is_bgs
+            else (
+                None
+                if sel_cfg.get("coverage_fraction") is None
+                else float(sel_cfg["coverage_fraction"])
+            )
         ),
         coverage_percent=(
-            None if not is_bgs else
-            (None if sel_cfg.get("coverage_percent") is None else
-             [float(sel_cfg["coverage_percent"][0]), float(sel_cfg["coverage_percent"][1])])
+            None
+            if not is_bgs
+            else (
+                None
+                if sel_cfg.get("coverage_percent") is None
+                else [
+                    float(sel_cfg["coverage_percent"][0]),
+                    float(sel_cfg["coverage_percent"][1]),
+                ]
+            )
         ),
         exon_bp=(int(sel_cfg.get("exon_bp", 200)) if is_bgs else None),
         jitter_bp=(int(sel_cfg.get("jitter_bp", 0)) if is_bgs else None),
-        tile_bp=(int(sel_cfg["tile_bp"]) if is_bgs and sel_cfg.get("tile_bp") is not None else None),
+        tile_bp=(
+            int(sel_cfg["tile_bp"])
+            if is_bgs and sel_cfg.get("tile_bp") is not None
+            else None
+        ),
         # Realized selection span (after interval building; zeroes for neutral)
         selected_bp=(int(sel_summary.get("selected_bp", 0)) if is_bgs else 0),
         selected_frac=(float(sel_summary.get("selected_frac", 0.0)) if is_bgs else 0.0),
         # Persist the actual sampled coverage (percent) only for SLiM
-        sampled_coverage_percent=(float(sampled_coverage) if is_bgs and sampled_coverage is not None else None),
+        sampled_coverage_percent=(
+            float(sampled_coverage) if is_bgs and sampled_coverage is not None else None
+        ),
         # Also a fraction version (helpful for window scripts)
         target_coverage_frac=(
-            (float(sampled_coverage) / 100.0) if is_bgs and sampled_coverage is not None and float(sampled_coverage) > 1.0
-            else (float(sampled_coverage) if is_bgs and sampled_coverage is not None else None)
+            (float(sampled_coverage) / 100.0)
+            if is_bgs and sampled_coverage is not None and float(sampled_coverage) > 1.0
+            else (
+                float(sampled_coverage)
+                if is_bgs and sampled_coverage is not None
+                else None
+            )
         ),
         # SLiM options
         slim_scaling=(float(sel_cfg.get("slim_scaling", 10.0)) if is_bgs else None),
@@ -210,7 +246,7 @@ def run_simulation(
 
     # friendly path for log
     try:
-        rel = out_dir.relative_to(PROJECT_ROOT)
+        rel = out_dir.relative_to(ROOT)
     except ValueError:
         rel = out_dir
     print(f"✓ simulation written to {rel}")
@@ -220,7 +256,9 @@ def run_simulation(
 # argparse entry-point
 # ------------------------------------------------------------------
 def main():
-    cli = argparse.ArgumentParser(description="Generate one simulation (neutral or BGS, engine-aware)")
+    cli = argparse.ArgumentParser(
+        description="Generate one simulation (neutral or BGS, engine-aware)"
+    )
     cli.add_argument(
         "--simulation-dir",
         type=Path,
@@ -242,6 +280,7 @@ def main():
             "split_migration",
             "drosophila_three_epoch",
             "split_migration_growth",
+            "OOA_three_pop"
         ],
         help="Which demographic model to simulate",
     )

@@ -160,14 +160,9 @@ def linear_evaluation(
         )
 
     # optional grid search using TUNE set
-    if (
-        regression_type in ["ridge", "lasso", "elasticnet"]
-        and do_grid_search
-    ):
+    if regression_type in ["ridge", "lasso", "elasticnet"] and do_grid_search:
         if X_train is None or y_train is None:
-            raise ValueError(
-                "Grid search requested but training data is missing."
-            )
+            raise ValueError("Grid search requested but training data is missing.")
         if X_tune is None or y_tune is None:
             raise ValueError(
                 "Grid search requested but tune data is missing. "
@@ -175,7 +170,9 @@ def linear_evaluation(
             )
 
         # Simple manual grid search: train on TRAIN, evaluate on TUNE
-        print("[INFO] Performing grid search using TRAIN for fit and TUNE for evaluation.")
+        print(
+            "[INFO] Performing grid search using TRAIN for fit and TUNE for evaluation."
+        )
         if regression_type == "ridge":
             alpha_grid = [0.1, 1.0, 10.0, 100.0]
             l1_grid = [None]

@@ -11,51 +11,73 @@ import argparse
 import subprocess
 from pathlib import Path
 
+
 def run_command(cmd):
     print(f"Running: {cmd}")
     subprocess.check_call(cmd, shell=True)
+
 
 def get_vcf_bounds(vcf_path):
     """Get the start and end positions from the VCF using bcftools."""
     # Get first position
     cmd_first = f"bcftools query -f '%POS\n' '{vcf_path}' | head -n 1"
     first_pos = int(subprocess.check_output(cmd_first, shell=True).strip())
-    
+
     # Get last position
     cmd_last = f"bcftools query -f '%POS\n' '{vcf_path}' | tail -n 1"
     last_pos = int(subprocess.check_output(cmd_last, shell=True).strip())
-    
+
     return first_pos, last_pos
+
 
 def get_chrom_name(vcf_path):
     """Get the chromosome name."""
     cmd = f"bcftools query -f '%CHROM\n' '{vcf_path}' | head -n 1"
     return subprocess.check_output(cmd, shell=True).strip().decode()
 
+
 def main():
     p = argparse.ArgumentParser(description="Split VCF into overlapping windows")
-    p.add_argument("--input-vcf", required=True, type=Path, help="Input VCF file (bgzipped)")
-    p.add_argument("--popfile", required=True, type=Path, help="Population file (sampleID popID)")
-    p.add_argument("--out-dir", required=True, type=Path, help="Output directory for windows")
-    p.add_argument("--window-size", type=int, default=1000000, help="Window size in bp (default 1MB)")
-    p.add_argument("--num-windows", type=int, default=100, help="Number of windows to generate")
-    p.add_argument("--recomb-rate", type=float, default=1e-8, help="Recombination rate per bp")
+    p.add_argument(
+        "--input-vcf", required=True, type=Path, help="Input VCF file (bgzipped)"
+    )
+    p.add_argument(
+        "--popfile", required=True, type=Path, help="Population file (sampleID popID)"
+    )
+    p.add_argument(
+        "--out-dir", required=True, type=Path, help="Output directory for windows"
+    )
+    p.add_argument(
+        "--window-size",
+        type=int,
+        default=1000000,
+        help="Window size in bp (default 1MB)",
+    )
+    p.add_argument(
+        "--num-windows", type=int, default=100, help="Number of windows to generate"
+    )
+    p.add_argument(
+        "--recomb-rate", type=float, default=1e-8, help="Recombination rate per bp"
+    )
     p.add_argument(
         "--window-index",
         type=int,
         default=None,
         help="If provided, only generate this window (0-based index)",
     )
-    
+
     args = p.parse_args()
-    
+
     if not args.input_vcf.exists():
         raise FileNotFoundError(f"Input VCF not found: {args.input_vcf}")
-    
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Ensure VCF is indexed
-    if not Path(str(args.input_vcf) + ".tbi").exists() and not Path(str(args.input_vcf) + ".csi").exists():
+    if (
+        not Path(str(args.input_vcf) + ".tbi").exists()
+        and not Path(str(args.input_vcf) + ".csi").exists()
+    ):
         print("Indexing VCF...")
         run_command(f"bcftools index -t '{args.input_vcf}'")
 
@@ -63,12 +85,16 @@ def main():
     print("Getting VCF bounds...")
     start_pos, end_pos = get_vcf_bounds(args.input_vcf)
     chrom = get_chrom_name(args.input_vcf)
-    print(f"VCF covers {chrom}:{start_pos}-{end_pos} (Length: {end_pos - start_pos + 1} bp)")
-    
+    print(
+        f"VCF covers {chrom}:{start_pos}-{end_pos} (Length: {end_pos - start_pos + 1} bp)"
+    )
+
     # Calculate window positions
     total_span = end_pos - start_pos
     if total_span < args.window_size:
-        print(f"Warning: VCF span ({total_span}) is smaller than window size ({args.window_size}). Creating single window.")
+        print(
+            f"Warning: VCF span ({total_span}) is smaller than window size ({args.window_size}). Creating single window."
+        )
         step_size = 0
         actual_num_windows = 1
     else:
@@ -105,13 +131,13 @@ def main():
     for i in window_indices:
         w_start = int(start_pos + i * step_size)
         w_end = w_start + args.window_size
-        
+
         # Ensure we don't go beyond VCF end (allow small buffer)
         if w_end > end_pos + 1000:
             w_end = end_pos
-            
+
         print(f"Generating window {i}: {chrom}:{w_start}-{w_end}")
-        
+
         win_vcf = args.out_dir / f"window_{i}.vcf.gz"
         cmd = f"bcftools view -r {chrom}:{w_start}-{w_end} -O z -o '{win_vcf}' '{args.input_vcf}'"
         run_command(cmd)
@@ -131,6 +157,7 @@ def main():
         print(f"Created global map: {map_out}")
     else:
         print(f"{map_out} already exists, skipping creation")
+
 
 if __name__ == "__main__":
     main()

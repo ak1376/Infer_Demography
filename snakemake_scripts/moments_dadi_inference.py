@@ -597,7 +597,9 @@ def main():
     elif args.ground_truth:
         print(f"[WARN] Ground truth file specified but not found: {args.ground_truth}")
     else:
-        print("[INFO] No ground truth file provided - running inference without ground truth reference")
+        print(
+            "[INFO] No ground truth file provided - running inference without ground truth reference"
+        )
 
     # Load demographic model function
     if ":" in args.model_py:

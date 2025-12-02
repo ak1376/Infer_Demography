@@ -35,12 +35,10 @@ def main():
     # Projecting to 20 chromosomes per population (yielding a 21x21 SFS)
     # Using moments to parse VCF and project
     sample_sizes_dict = {pop: 20 for pop in pop_names}
-    
+
     # Construct SFS from VCF using moments
     sfs = moments.Spectrum.from_vcf(
-        str(args.input_vcf),
-        pop_file=str(args.popfile),
-        sample_sizes=sample_sizes_dict
+        str(args.input_vcf), pop_file=str(args.popfile), sample_sizes=sample_sizes_dict
     )
     # Save SFS as pickle
     with open(args.output_sfs, "wb") as f:

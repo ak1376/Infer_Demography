@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_isolation.json"
+EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -106,29 +106,29 @@ rule all:
         expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
         # Aggregated optimizer results (simulated)
-        # [final_pkl(sid, "moments") for sid in SIM_IDS],
-        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        [final_pkl(sid, "moments") for sid in SIM_IDS],
+        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # Cleanup completion markers (simulated)
-        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
         # LD artifacts (simulated; best-fit only)
         expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
         # FIM (simulated)
-        # expand(
-        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-        #     sid=SIM_IDS, engine=FIM_ENGINES
-        # ),
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+            sid=SIM_IDS, engine=FIM_ENGINES
+        ),
 
         # Residuals (simulated)
-        # expand(
-        #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-        #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-        # ),
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
+            sid=SIM_IDS, engine=RESIDUAL_ENGINES
+        ),
 
         # Combined per-sim inference blobs (simulated)
-        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
         # ── MODELING (on simulated inferences) ─────────────────────────────
         # Datasets
@@ -959,19 +959,19 @@ rule xgboost:
 ##############################################################################
 rule download_1000G_data:
     output:
-        vcf      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz",
-        tbi      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz.tbi",
-        yri      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI.samples",
-        ceu      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/CEU.samples",
-        chb      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/CHB.samples",
-        popfile  = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
-        done     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/.download_done"
+        vcf      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
+        tbi      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz.tbi",
+        yri      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI.samples",
+        ceu      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/CEU.samples",
+        chb      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/CHB.samples",
+        popfile  = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
+        done     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/.download_done"
     shell:
         r"""
         set -euo pipefail
 
         # Run the download and preparation script, passing the output directory
-        bash bash_scripts/download_and_prepare_1000G_YRI_CEU_CHB_chr22.sh \
+        bash bash_scripts/download_and_prepare_1000G_YRI_CEU_CHB.sh \
           "$(dirname {output.vcf})"
 
         # Verify all expected outputs exist

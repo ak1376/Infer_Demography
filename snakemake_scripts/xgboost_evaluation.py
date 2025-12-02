@@ -500,7 +500,8 @@ def xgboost_evaluation(
     # Feature importances
     if feature_names is None:
         feature_names = [
-            f"feat_{i}" for i in range((X_train if X_train is not None else X_val).shape[1])
+            f"feat_{i}"
+            for i in range((X_train if X_train is not None else X_val).shape[1])
         ]
     _plot_feature_importances_grid(
         model,

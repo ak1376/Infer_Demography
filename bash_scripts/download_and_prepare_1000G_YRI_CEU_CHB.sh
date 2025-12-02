@@ -2,6 +2,17 @@
 set -euo pipefail
 
 ########################################
+# Basic sanity checks  # CHANGED
+########################################
+
+for cmd in wget bcftools tabix zgrep awk; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "ERROR: Required command '$cmd' not found in PATH." >&2
+        exit 1
+    fi
+done
+
+########################################
 # Settings — edit if needed
 ########################################
 
@@ -15,6 +26,7 @@ POP3="CHB"
 # Toggle: set to "true" to remove exons; "false" to keep everything
 REMOVE_EXONS="true"
 
+# Allow OUTDIR override via first arg
 if [ "$#" -ge 1 ]; then
     OUTDIR="$1"
 else
@@ -35,21 +47,21 @@ cd "${OUTDIR}"
 
 if [[ ! -f "${VCF_BASENAME}" ]]; then
     echo "Downloading chr${CHR} VCF..."
-    wget "${FTP_BASE}/${VCF_BASENAME}"
+    wget -q "${FTP_BASE}/${VCF_BASENAME}"  # CHANGED: -q for quieter
 else
     echo "VCF ${VCF_BASENAME} already exists, skipping download."
 fi
 
 if [[ ! -f "${VCF_BASENAME}.tbi" ]]; then
     echo "Downloading TBI index..."
-    wget "${FTP_BASE}/${VCF_BASENAME}.tbi"
+    wget -q "${FTP_BASE}/${VCF_BASENAME}.tbi"
 else
     echo "Index ${VCF_BASENAME}.tbi already exists, skipping download."
 fi
 
 if [[ ! -f "${PANEL_FILE}" ]]; then
     echo "Downloading panel file..."
-    wget "${FTP_BASE}/${PANEL_FILE}"
+    wget -q "${FTP_BASE}/${PANEL_FILE}"
 else
     echo "Panel file ${PANEL_FILE} already exists, skipping download."
 fi
@@ -58,14 +70,15 @@ fi
 # 1b. (Optional) Download GENCODE v19 GTF (hg19) for exon filtering
 ########################################
 
-GTF_URL="ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_19/gencode.v19.annotation.gtf.gz"
+# CHANGED: use https instead of ftp for GENCODE (ftp often blocked)
+GTF_URL="https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_19/gencode.v19.annotation.gtf.gz"
 GTF_FILE="gencode.v19.annotation.gtf.gz"
 EXON_BED="chr${CHR}_exons.bed"
 
 if [[ "${REMOVE_EXONS}" == "true" ]]; then
     if [[ ! -f "${GTF_FILE}" ]]; then
         echo "Downloading GENCODE v19 GTF..."
-        wget "${GTF_URL}"
+        wget -q "${GTF_URL}"
     else
         echo "GTF ${GTF_FILE} already exists, skipping download."
     fi
@@ -73,8 +86,14 @@ if [[ "${REMOVE_EXONS}" == "true" ]]; then
     if [[ ! -f "${EXON_BED}" ]]; then
         echo "Extracting chr${CHR} exons to BED..."
         # Extract chr${CHR}, filter for exons, convert to BED (0-based start), strip "chr"
-        zgrep "^chr${CHR}\b" "${GTF_FILE}" | \
+        # GTF has chr1, chr2, ...; 1000G VCF uses 1,2,... so we strip 'chr'
+        zgrep "^chr${CHR}[[:space:]]" "${GTF_FILE}" | \
         awk '$3=="exon" {print substr($1, 4) "\t" ($4-1) "\t" $5}' > "${EXON_BED}"
+
+        # Quick sanity check that BED is non-empty  # CHANGED
+        if [[ ! -s "${EXON_BED}" ]]; then
+            echo "WARNING: ${EXON_BED} is empty. Exon exclusion will have no effect." >&2
+        fi
     else
         echo "Exon BED ${EXON_BED} already exists, skipping creation."
     fi
@@ -87,6 +106,11 @@ fi
 ########################################
 
 echo "Ensuring ${POP1}, ${POP2}, and ${POP3} sample ID files exist..."
+
+if [[ ! -f "${PANEL_FILE}" ]]; then
+    echo "ERROR: Panel file ${PANEL_FILE} missing; cannot create sample lists." >&2
+    exit 1
+fi
 
 if [[ ! -f "${POP1}.samples" ]]; then
     grep -P "\t${POP1}\t" "${PANEL_FILE}" | cut -f1 > "${POP1}.samples"
@@ -102,6 +126,14 @@ fi
 
 echo "Sample counts:"
 wc -l "${POP1}.samples" "${POP2}.samples" "${POP3}.samples"
+
+# CHANGED: make sure we actually got samples
+for pop in "${POP1}" "${POP2}" "${POP3}"; do
+    if [[ ! -s "${pop}.samples" ]]; then
+        echo "ERROR: No samples found for population ${pop} in panel ${PANEL_FILE}." >&2
+        exit 1
+    fi
+done
 
 if [[ ! -f "merged.samples" ]]; then
     cat "${POP1}.samples" "${POP2}.samples" "${POP3}.samples" > "merged.samples"
@@ -125,8 +157,13 @@ echo "Preparing merged VCF name: ${MERGED_VCF}"
 
 EXCLUDE_ARGS=()
 if [[ "${REMOVE_EXONS}" == "true" ]]; then
+    if [[ ! -f "${EXON_BED}" ]]; then
+        echo "ERROR: Requested exon removal but ${EXON_BED} does not exist." >&2
+        exit 1
+    fi
     echo "Excluding exons using BED: ${EXON_BED}"
-    EXCLUDE_ARGS=(--targets-file "^${EXON_BED}")
+    # bcftools view: -T ^file means exclude regions in file
+    EXCLUDE_ARGS=(--targets-file "^${EXON_BED}")  # your original logic; this is okay
 else
     echo "Keeping all sites (no exon filtering)."
 fi
@@ -135,11 +172,17 @@ if [[ ! -f "${MERGED_VCF}" ]]; then
     echo "Extracting chromosome ${CHR} for ${POP1}, ${POP2}, ${POP3}..."
     bcftools view \
         --samples-file merged.samples \
-        --regions ${CHR} \
+        --regions "${CHR}" \
         "${EXCLUDE_ARGS[@]}" \
         -Oz \
         -o "${MERGED_VCF}" \
         "${VCF_BASENAME}"
+
+    # CHANGED: basic sanity check – ensure VCF is non-empty
+    if [[ ! -s "${MERGED_VCF}" ]]; then
+        echo "ERROR: ${MERGED_VCF} is empty. Something went wrong in bcftools view." >&2
+        exit 1
+    fi
 else
     echo "Merged VCF ${MERGED_VCF} already exists, skipping bcftools view."
 fi
@@ -156,7 +199,7 @@ if [[ -f "${MERGED_VCF}" ]]; then
         echo "Index for ${MERGED_VCF} already exists, skipping tabix."
     fi
 else
-    echo "WARNING: ${MERGED_VCF} not found, cannot index."
+    echo "WARNING: ${MERGED_VCF} not found, cannot index." >&2
 fi
 
 ########################################
@@ -172,7 +215,7 @@ if [[ ! -f "${POPFILE}" ]]; then
     awk -v pop="${POP1}" '{print $1 "\t" pop}' "${POP1}.samples" > "${POPFILE}"
     awk -v pop="${POP2}" '{print $1 "\t" pop}' "${POP2}.samples" >> "${POPFILE}"
     awk -v pop="${POP3}" '{print $1 "\t" pop}' "${POP3}.samples" >> "${POPFILE}"
-    echo "Created popfile: ${POPFILE} ($(wc -l < ${POPFILE}) samples)"
+    echo "Created popfile: ${POPFILE} ($(wc -l < "${POPFILE}") samples)"
 else
     echo "Popfile ${POPFILE} already exists, skipping creation."
 fi

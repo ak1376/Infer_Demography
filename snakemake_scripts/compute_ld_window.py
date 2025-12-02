@@ -34,6 +34,7 @@ import tskit
 # Optional GPU acceleration
 try:
     from pg_gpu.haplotype_matrix import HaplotypeMatrix
+
     _HAVE_GPU = True
 except ImportError:
     _HAVE_GPU = False
@@ -68,6 +69,7 @@ def parse_args():
 
 # ------------------------------------------------------------------ GPU helpers
 
+
 def _hash_positions(positions: np.ndarray) -> str:
     """SHA1 of float64 positions, little-endian bytes."""
     buf = positions.astype(np.float64).tobytes(order="C")
@@ -87,28 +89,29 @@ def build_sample_sets(ts: tskit.TreeSequence):
             name = pop.metadata.get("name")
         pop_names[pid] = name
 
-    samples_by_pid = {pid: [int(x) for x in ts.samples(population=pid)]
-                      for pid in range(ts.num_populations)}
+    samples_by_pid = {
+        pid: [int(x) for x in ts.samples(population=pid)]
+        for pid in range(ts.num_populations)
+    }
 
     # Try to find deme0/deme1 by name, otherwise use first two non-empty
     pid_d0 = next((pid for pid, nm in pop_names.items() if nm == "deme0"), None)
     pid_d1 = next((pid for pid, nm in pop_names.items() if nm == "deme1"), None)
-    
+
     # Check for ANC population (single population models like bottleneck)
     pid_anc = next((pid for pid, nm in pop_names.items() if nm == "ANC"), None)
-    
+
     if pid_d0 is None or pid_d1 is None:
         # Check if we have ANC population - for single population models
         if pid_anc is not None and len(samples_by_pid[pid_anc]) > 0:
             # For single population, split samples into two groups for LD analysis
             all_samples = samples_by_pid[pid_anc]
             mid = len(all_samples) // 2
-            ss = {
-                "deme0": all_samples[:mid],
-                "deme1": all_samples[mid:]
-            }
+            ss = {"deme0": all_samples[:mid], "deme1": all_samples[mid:]}
             if len(ss["deme0"]) == 0 or len(ss["deme1"]) == 0:
-                raise ValueError("Not enough samples in ANC population to split into two groups")
+                raise ValueError(
+                    "Not enough samples in ANC population to split into two groups"
+                )
             return ss
         else:
             # Fall back to using first two non-empty populations
@@ -120,10 +123,7 @@ def build_sample_sets(ts: tskit.TreeSequence):
                 # Single population - split samples
                 all_samples = nonempty[0][1]
                 mid = len(all_samples) // 2
-                ss = {
-                    "deme0": all_samples[:mid],
-                    "deme1": all_samples[mid:]
-                }
+                ss = {"deme0": all_samples[:mid], "deme1": all_samples[mid:]}
             else:
                 # Two or more populations
                 pid_d0, pid_d1 = nonempty[0][0], nonempty[1][0]
@@ -131,16 +131,18 @@ def build_sample_sets(ts: tskit.TreeSequence):
     else:
         # Found deme0 and deme1 explicitly
         ss = {"deme0": samples_by_pid[pid_d0], "deme1": samples_by_pid[pid_d1]}
-    
+
     if len(ss["deme0"]) == 0 or len(ss["deme1"]) == 0:
         raise ValueError("Empty sample set(s)")
     return ss
 
 
-def gpu_ld_from_trees(ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0", pop2: str = "deme1") -> dict:
+def gpu_ld_from_trees(
+    ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0", pop2: str = "deme1"
+) -> dict:
     """Compute LD stats using GPU acceleration from tree sequence file."""
     import cupy as cp
-    
+
     # Find GPU with most available memory
     best_gpu = 0
     max_free_mem = 0
@@ -150,20 +152,24 @@ def gpu_ld_from_trees(ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0"
         if free_mem > max_free_mem:
             max_free_mem = free_mem
             best_gpu = gpu_id
-    
+
     # Use the GPU with most free memory
     cp.cuda.Device(best_gpu).use()
-    gpu_name = cp.cuda.runtime.getDeviceProperties(best_gpu)['name'].decode()
-    print(f"📱 Using GPU {best_gpu} ({gpu_name}) with {max_free_mem/1e9:.1f}GB free memory")
-    
+    gpu_name = cp.cuda.runtime.getDeviceProperties(best_gpu)["name"].decode()
+    print(
+        f"📱 Using GPU {best_gpu} ({gpu_name}) with {max_free_mem/1e9:.1f}GB free memory"
+    )
+
     # Convert genetic distance bins to physical distance
     bp_bins = np.array(r_bins, dtype=float) / float(r_per_bp)
-    
+
     ts = tskit.load(ts_path)
     sample_sets = build_sample_sets(ts)
-    
+
     if pop1 not in sample_sets or pop2 not in sample_sets:
-        raise KeyError(f"Requested pops ({pop1},{pop2}) not in sample_sets={list(sample_sets)}")
+        raise KeyError(
+            f"Requested pops ({pop1},{pop2}) not in sample_sets={list(sample_sets)}"
+        )
 
     h = HaplotypeMatrix.from_ts(ts)
     # Set sample sets
@@ -172,39 +178,42 @@ def gpu_ld_from_trees(ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0"
         h.set_sample_sets(normalized)
     else:
         h.sample_sets = normalized
-    
+
     # Apply biallelic filter
     h_filt = h.apply_biallelic_filter()
 
     try:
         stats_by_bin = h_filt.compute_ld_statistics_gpu_two_pops(
-            bp_bins=bp_bins,
-            pop1=pop1,
-            pop2=pop2,
-            raw=True,
-            ac_filter=True,
-            fp64=True
+            bp_bins=bp_bins, pop1=pop1, pop2=pop2, raw=True, ac_filter=True, fp64=True
         )
     except TypeError:
         stats_by_bin = h_filt.compute_ld_statistics_gpu_two_pops(
-            bp_bins=bp_bins,
-            pop1=pop1,
-            pop2=pop2,
-            raw=True,
-            ac_filter=True
+            bp_bins=bp_bins, pop1=pop1, pop2=pop2, raw=True, ac_filter=True
         )
 
     # Convert to moments-compatible format
     MOMENTS_ORDER = [
-        'DD_0_0', 'DD_0_1', 'DD_1_1',
-        'Dz_0_0_0', 'Dz_0_0_1', 'Dz_0_1_1', 'Dz_1_0_0', 'Dz_1_0_1', 'Dz_1_1_1',
-        'pi2_0_0_0_0', 'pi2_0_0_0_1', 'pi2_0_0_1_1', 'pi2_0_1_0_1', 'pi2_0_1_1_1', 'pi2_1_1_1_1'
+        "DD_0_0",
+        "DD_0_1",
+        "DD_1_1",
+        "Dz_0_0_0",
+        "Dz_0_0_1",
+        "Dz_0_1_1",
+        "Dz_1_0_0",
+        "Dz_1_0_1",
+        "Dz_1_1_1",
+        "pi2_0_0_0_0",
+        "pi2_0_0_0_1",
+        "pi2_0_0_1_1",
+        "pi2_0_1_0_1",
+        "pi2_0_1_1_1",
+        "pi2_1_1_1_1",
     ]
-    H_STAT_NAMES = ['H_0_0', 'H_0_1', 'H_1_1']
-    
+    H_STAT_NAMES = ["H_0_0", "H_0_1", "H_1_1"]
+
     # Assemble per-bin vectors in moments order
     sums = []
-    for (b0, b1) in zip(bp_bins[:-1], bp_bins[1:]):
+    for b0, b1 in zip(bp_bins[:-1], bp_bins[1:]):
         key = (float(b0), float(b1))
         od = stats_by_bin.get(key, None)
         if od is None:
@@ -215,11 +224,19 @@ def gpu_ld_from_trees(ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0"
     # Compute H terms from tree sequence
     samples_vec = np.array(list(ts.samples()), dtype=np.int64)
     node_to_idx = {int(n): i for i, n in enumerate(samples_vec)}
-    idx_A = np.array([node_to_idx[n] for n in sample_sets["deme0"] if n in node_to_idx], dtype=np.int64)
-    idx_B = np.array([node_to_idx[n] for n in sample_sets["deme1"] if n in node_to_idx], dtype=np.int64)
+    idx_A = np.array(
+        [node_to_idx[n] for n in sample_sets["deme0"] if n in node_to_idx],
+        dtype=np.int64,
+    )
+    idx_B = np.array(
+        [node_to_idx[n] for n in sample_sets["deme1"] if n in node_to_idx],
+        dtype=np.int64,
+    )
 
     H00 = H01 = H11 = 0.0
-    for var in ts.variants(samples=samples_vec, alleles=None, impute_missing_data=False):
+    for var in ts.variants(
+        samples=samples_vec, alleles=None, impute_missing_data=False
+    ):
         g = var.genotypes
         gA = g[idx_A]
         gB = g[idx_B]
@@ -235,7 +252,10 @@ def gpu_ld_from_trees(ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0"
 
     sums.append(np.array([H00, H01, H11], dtype=float))
 
-    bins_gen = [(np.float64(r_bins[i]), np.float64(r_bins[i + 1])) for i in range(len(r_bins) - 1)]
+    bins_gen = [
+        (np.float64(r_bins[i]), np.float64(r_bins[i + 1]))
+        for i in range(len(r_bins) - 1)
+    ]
 
     result = {
         "bins": bins_gen,
@@ -243,15 +263,16 @@ def gpu_ld_from_trees(ts_path: str, r_bins, r_per_bp: float, pop1: str = "deme0"
         "stats": (MOMENTS_ORDER, H_STAT_NAMES),
         "pops": [pop1, pop2],
     }
-    
+
     # Aggressive GPU memory cleanup
     import cupy as cp
+
     try:
         cp.get_default_memory_pool().free_all_blocks()
         cp.get_default_pinned_memory_pool().free_all_blocks()
     except:
         pass
-    
+
     return result
 
 
@@ -268,14 +289,16 @@ def main():
     # Load config to get recombination rate and GPU preference
     with open(args.config_file) as f:
         config = json.load(f)
-    
+
     r_per_bp = float(config.get("recombination_rate", 1e-8))
     use_gpu = args.use_gpu and _HAVE_GPU and config.get("use_gpu_ld", False)
 
-    print(f"[LD] window {idx}: args.use_gpu={args.use_gpu}, "
+    print(
+        f"[LD] window {idx}: args.use_gpu={args.use_gpu}, "
         f"_HAVE_GPU={_HAVE_GPU}, "
         f"use_gpu_ld_in_cfg={config.get('use_gpu_ld', False)}, "
-        f"→ use_gpu={use_gpu}")
+        f"→ use_gpu={use_gpu}"
+    )
 
     vcf_gz = sim_dir / "windows" / f"window_{idx}.vcf.gz"
     samples_t = sim_dir / "windows" / "samples.txt"
@@ -298,39 +321,52 @@ def main():
     if use_gpu:
         # Tree sequences are saved in the same windows directory
         ts_file = sim_dir / "windows" / f"window_{idx}.trees"
-        
+
         if ts_file.exists():
             print(f"🚀 window {idx}: ATTEMPTING GPU acceleration from {ts_file}")
             try:
                 import time
+
                 gpu_start = time.perf_counter()
-                stats = gpu_ld_from_trees(str(ts_file), r_bins, r_per_bp, pop1="deme0", pop2="deme1")
+                stats = gpu_ld_from_trees(
+                    str(ts_file), r_bins, r_per_bp, pop1="deme0", pop2="deme1"
+                )
                 gpu_time = time.perf_counter() - gpu_start
-                
+
                 # Clear GPU memory after computation
                 try:
                     import cupy as cp
+
                     cp.get_default_memory_pool().free_all_blocks()
                     cp.get_default_pinned_memory_pool().free_all_blocks()
                 except:
                     pass  # Ignore if cupy not available
-                
+
                 with out_pkl.open("wb") as fh:
                     pickle.dump(stats, fh)
-                print(f"✅ window {idx:04d}: GPU LD stats completed in {gpu_time:.2f}s → {out_pkl.relative_to(sim_dir)}")
-                print(f"🎯 window {idx}: GPU processed {stats.get('_sitecheck', {}).get('S_filt', 'unknown')} sites")
+                print(
+                    f"✅ window {idx:04d}: GPU LD stats completed in {gpu_time:.2f}s → {out_pkl.relative_to(sim_dir)}"
+                )
+                print(
+                    f"🎯 window {idx}: GPU processed {stats.get('_sitecheck', {}).get('S_filt', 'unknown')} sites"
+                )
                 return
             except Exception as e:
                 # Clear GPU memory on error too
                 try:
                     import cupy as cp
+
                     cp.get_default_memory_pool().free_all_blocks()
                     cp.get_default_pinned_memory_pool().free_all_blocks()
                 except:
                     pass
-                print(f"❌ window {idx}: GPU failed ({e}), falling back to traditional moments")
+                print(
+                    f"❌ window {idx}: GPU failed ({e}), falling back to traditional moments"
+                )
         else:
-            print(f"⚠ window {idx}: tree sequence not found at {ts_file}, using traditional moments")
+            print(
+                f"⚠ window {idx}: tree sequence not found at {ts_file}, using traditional moments"
+            )
     else:
         gpu_reason = []
         if not args.use_gpu:
@@ -339,17 +375,20 @@ def main():
             gpu_reason.append("pg_gpu not installed")
         if not config.get("use_gpu_ld", False):
             gpu_reason.append("use_gpu_ld=false in config")
-        print(f"🐌 window {idx}: using traditional moments LD ({', '.join(gpu_reason)})")
+        print(
+            f"🐌 window {idx}: using traditional moments LD ({', '.join(gpu_reason)})"
+        )
 
     # Traditional moments path
     print(f"🐌 window {idx}: computing with traditional moments LD")
     # ----------------------------------------- grab every unique pop ID
     # read unique pop IDs from the samples file
     pops = list(config["num_samples"].keys())  # e.g. ["YRI", "CEU"]
-    print(f'Pops found in samples.txt: {pops}')
+    print(f"Pops found in samples.txt: {pops}")
 
     # compute LD statistics ----------------------------------------
     import time
+
     traditional_start = time.perf_counter()
     stats = moments.LD.Parsing.compute_ld_statistics(
         str(vcf_gz),
@@ -365,8 +404,12 @@ def main():
     with out_pkl.open("wb") as fh:
         pickle.dump(stats, fh)
 
-    print(f"✓ window {idx:04d}: traditional LD stats completed in {traditional_time:.2f}s → {out_pkl.relative_to(sim_dir)}")
-    print(f"📊 window {idx}: processed {len(stats.get('sums', []))-1 if stats.get('sums') else 'unknown'} r-bins")
+    print(
+        f"✓ window {idx:04d}: traditional LD stats completed in {traditional_time:.2f}s → {out_pkl.relative_to(sim_dir)}"
+    )
+    print(
+        f"📊 window {idx}: processed {len(stats.get('sums', []))-1 if stats.get('sums') else 'unknown'} r-bins"
+    )
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ import math
 import numpy as np
 
 
-
 def create_color_scheme(num_params):
     """
     Create a professional, muted color scheme with softer tones.
@@ -17,12 +16,12 @@ def create_color_scheme(num_params):
         # Generate main color using HSV color space
         # Use golden ratio for better color distribution
         hue = (i * 0.618033988749895) % 1.0  # golden ratio conjugate
-        
+
         # Use softer saturation and value for less jarring colors
         # Main color: moderate saturation, high but not max brightness
         sat_main = 0.6  # reduced from 1.0 for softer colors
         val_main = 0.85  # slightly reduced from 1.0 for less brightness
-        
+
         rgb = colorsys.hsv_to_rgb(hue, sat_main, val_main)
 
         # Convert RGB to hex
@@ -47,7 +46,7 @@ def create_color_scheme(num_params):
                 # Darker shade
                 sat = sat_main * 0.8
                 val = val_main * 0.7
-                
+
             shade_rgb = colorsys.hsv_to_rgb(hue, sat, val)
             shade = "#{:02x}{:02x}{:02x}".format(
                 int(shade_rgb[0] * 255),

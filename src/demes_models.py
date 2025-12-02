@@ -1,0 +1,247 @@
+# src/demes_models.py
+"""
+Demes demographic models
+Defined as functions that accept a dict of sampled parameters (float) and return a demes.Graph.
+"""
+from typing import Dict, Optional
+import demes
+import numpy as np
+
+
+def bottleneck_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    b = demes.Builder()
+    b.add_deme(
+        "ANC",
+        epochs=[
+            dict(
+                start_size=float(sampled["N0"]),
+                end_time=float(sampled["t_bottleneck_start"]),
+            ),
+            dict(
+                start_size=float(sampled["N_bottleneck"]),
+                end_time=float(sampled["t_bottleneck_end"]),
+            ),
+            dict(start_size=float(sampled["N_recover"]), end_time=0),
+        ],
+    )
+    return b.resolve()
+
+
+def split_isolation_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """Split + symmetric low migration (YRI/CEU)."""
+    N0 = float(sampled.get("N_anc", sampled.get("N0")))
+    N1 = float(sampled.get("N_YRI", sampled.get("N1")))
+    N2 = float(sampled.get("N_CEU", sampled.get("N2")))
+    T = float(sampled.get("T_split", sampled.get("t_split")))
+    # accept MANY possible keys; if both directions provided, average them
+    m_keys = ["m", "m_sym", "m12", "m21", "m_YRI_CEU", "m_CEU_YRI"]
+    vals = [float(sampled[k]) for k in m_keys if k in sampled]
+    m = float(np.mean(vals)) if vals else 0.0
+
+    b = demes.Builder()
+    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T)])
+    b.add_deme("YRI", ancestors=["ANC"], epochs=[dict(start_size=N1)])
+    b.add_deme("CEU", ancestors=["ANC"], epochs=[dict(start_size=N2)])
+    if m > 0:
+        b.add_migration(source="YRI", dest="CEU", rate=m)
+        b.add_migration(source="CEU", dest="YRI", rate=m)
+    return b.resolve()
+
+
+def split_migration_model(sampled: Dict[str, float]) -> demes.Graph:
+    """
+    Split + asymmetric migration (two rates).
+    Deme names: 'YRI' and 'CEU'.
+    """
+    N0 = float(sampled.get("N_anc", sampled.get("N0")))
+    N1 = float(sampled.get("N_YRI", sampled.get("N1")))
+    N2 = float(sampled.get("N_CEU", sampled.get("N2")))
+    T = float(sampled.get("T_split", sampled.get("t_split")))
+    m12 = float(sampled.get("m_YRI_CEU", sampled.get("m12", sampled.get("m", 0.0))))
+    m21 = float(sampled.get("m_CEU_YRI", sampled.get("m21", sampled.get("m", 0.0))))
+
+    b = demes.Builder()
+    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T)])
+    b.add_deme("YRI", ancestors=["ANC"], epochs=[dict(start_size=N1)])
+    b.add_deme("CEU", ancestors=["ANC"], epochs=[dict(start_size=N2)])
+    if m12 > 0:
+        b.add_migration(source="YRI", dest="CEU", rate=m12)
+    if m21 > 0:
+        b.add_migration(source="CEU", dest="YRI", rate=m21)
+    return b.resolve()
+
+
+def drosophila_three_epoch(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    Two-pop Drosophila-style model:
+      ANC (size N0) → split at T_AFR_EUR_split → AFR (AFR_recover)
+      and EUR with a bottleneck at T_EUR_expansion then recovery to EUR_recover.
+    Deme names: 'AFR' and 'EUR'.
+    """
+    N0 = float(sampled["N0"])
+    AFR_recover = float(sampled["AFR"])
+    EUR_bottleneck = float(sampled["EUR_bottleneck"])
+    EUR_recover = float(sampled["EUR_recover"])
+    T_split = float(sampled["T_AFR_EUR_split"])
+    T_EUR_exp = float(sampled["T_EUR_expansion"])
+
+    b = demes.Builder()
+    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T_split)])
+    b.add_deme("AFR", ancestors=["ANC"], epochs=[dict(start_size=AFR_recover)])
+    b.add_deme(
+        "EUR",
+        ancestors=["ANC"],
+        epochs=[
+            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),
+            dict(start_size=EUR_recover, end_time=0),
+        ],
+    )
+    return b.resolve()
+
+
+def split_migration_growth_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    Split + asymmetric migration + growth in FR.
+    Deme names: 'CO' and 'FR'.
+
+    Parameters:
+    - N_CO:    Size of CO population (constant).
+    - N_FR1:   Size of FR population at present (time 0).
+    - G_FR:    Growth rate of FR population.
+    - N_ANC:   Ancestral size.
+    - m_CO_FR: Migration rate CO -> FR (forward time).
+    - m_FR_CO: Migration rate FR -> CO (forward time).
+    - T:       Split time (generations ago).
+    """
+    N_CO = float(sampled.get("N_CO", sampled.get("N1")))
+    N_FR1 = float(sampled.get("N_FR1", sampled.get("N2")))
+    N_ANC = float(sampled.get("N_ANC", sampled.get("N0")))
+    m_CO_FR = float(sampled.get("m_CO_FR", 0.0))
+    m_FR_CO = float(sampled.get("m_FR_CO", 0.0))
+    T = float(sampled.get("T", sampled.get("T_split")))
+
+    # Handle growth rate or start/end sizes
+    # We need N_FR0 (size at split, time T) and N_FR1 (size at present, time 0)
+    if "G_FR" in sampled:
+        G_FR = float(sampled["G_FR"])
+        # N(T) = N(0) * exp(-rT)
+        N_FR0 = N_FR1 * np.exp(-G_FR * T)
+    elif "N_FR0" in sampled:
+        N_FR0 = float(sampled["N_FR0"])
+        # G_FR not strictly needed for demes if we have start/end sizes,
+        # but good to have consistent logic if we wanted it.
+    else:
+        # Default no growth
+        N_FR0 = N_FR1
+
+    b = demes.Builder()
+    b.add_deme("ANC", epochs=[dict(start_size=N_ANC, end_time=T)])
+    b.add_deme("CO", ancestors=["ANC"], epochs=[dict(start_size=N_CO)])
+    b.add_deme(
+        "FR",
+        ancestors=["ANC"],
+        # Epoch goes from T (start) to 0 (end).
+        # start_size is size at T (N_FR0). end_size is size at 0 (N_FR1).
+        epochs=[dict(start_size=N_FR0, end_size=N_FR1)],
+    )
+
+    # Migration
+    # m_CO_FR: Forward CO -> FR.
+    # Demes uses forward-time semantics: source=Origin of genes, dest=Destination of genes.
+    if m_CO_FR > 0:
+        b.add_migration(source="CO", dest="FR", rate=m_CO_FR)
+
+    # m_FR_CO: Forward FR -> CO.
+    if m_FR_CO > 0:
+        b.add_migration(source="FR", dest="CO", rate=m_FR_CO)
+
+    return b.resolve()
+
+
+def OOA_three_pop_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    Minimal three-pop Out-of-Africa model (YRI–CEU–CHB), Gutenkunst-style.
+
+    Deme names:
+      - 'YRI' : African population (YRI-like)
+      - 'CEU' : European population
+      - 'CHB' : East Asian population
+      - internal ancestor demes: 'ANC', 'OOA'
+
+    Parameters expected in `sampled` (all in generations/Ne units):
+      - N_anc     / N0        : ancestral size
+      - N_YRI     / N1        : present-day YRI size
+      - N_OOA                 : size of the out-of-Africa bottleneck pop
+      - N_CEU     / N2        : present-day CEU size
+      - N_CHB                 : present-day CHB size
+      - T_AFR_OOA / T1        : time of AFR vs OOA split (YRI vs non-African)
+      - T_OOA_EU_AS / T2      : time of OOA -> (CEU, CHB) split
+
+    Any missing parameters fall back to simple, reasonable defaults.
+    """
+
+    # --- sizes ---
+    N_anc = float(sampled.get("N_anc", sampled.get("N0", 10_000.0)))
+    N_YRI = float(sampled.get("N_YRI", sampled.get("N1", 14_000.0)))
+    N_OOA = float(sampled.get("N_OOA", 2_000.0))
+    N_CEU = float(sampled.get("N_CEU", sampled.get("N2", 5_000.0)))
+    N_CHB = float(sampled.get("N_CHB", 5_000.0))
+
+    # --- times (generations backwards from present) ---
+    T_africa_ooa = float(
+        sampled.get("T_AFR_OOA", sampled.get("T1", 2_000.0))
+    )  # AFR vs OOA split
+    T_ooa_eu_as = float(
+        sampled.get("T_OOA_EU_AS", sampled.get("T2", 1_000.0))
+    )  # CEU vs CHB split from OOA
+
+    if not (T_africa_ooa > T_ooa_eu_as >= 0):
+        raise ValueError(
+            "Require T_AFR_OOA > T_OOA_EU_AS >= 0 for OutOfAfrica_3G09 model."
+        )
+
+    b = demes.Builder(time_units="generations", generation_time=1)
+
+    # Ancestral deme up to AFR/OOA split
+    b.add_deme(
+        "ANC",
+        epochs=[dict(start_size=N_anc, end_time=T_africa_ooa)],
+    )
+
+    # YRI (African) splits from ANC at T_africa_ooa and persists to present
+    b.add_deme(
+        "YRI",
+        ancestors=["ANC"],
+        epochs=[dict(start_size=N_YRI, end_time=0)],
+    )
+
+    # OOA deme (non-African ancestor) from AFR/OOA split to EU/AS split
+    b.add_deme(
+        "OOA",
+        ancestors=["ANC"],
+        epochs=[dict(start_size=N_OOA, end_time=T_ooa_eu_as)],
+    )
+
+    # CEU and CHB descend from OOA at T_ooa_eu_as and persist to present
+    b.add_deme(
+        "CEU",
+        ancestors=["OOA"],
+        epochs=[dict(start_size=N_CEU, end_time=0)],
+    )
+    b.add_deme(
+        "CHB",
+        ancestors=["OOA"],
+        epochs=[dict(start_size=N_CHB, end_time=0)],
+    )
+
+    return b.resolve()
