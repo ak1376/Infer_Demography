@@ -1,4 +1,3 @@
-# ignore Python byte-code & build cruft
 __pycache__/
 *.py[cod]
 drosophila_*/
@@ -23,3 +22,4 @@ add_fim_resids_to_all_inferences.py
 run_all_models.sh
 test_real_data_analysis/
 debugging_scripts/
+experiment_neutral/
