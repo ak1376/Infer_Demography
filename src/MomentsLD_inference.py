@@ -8,11 +8,14 @@ This module provides functions to:
 4. Generate comparison plots between empirical and theoretical LD
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import pickle
 import importlib
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,12 +23,15 @@ import moments
 import nlopt
 import numdifftools as nd
 
-# Default settings
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
 DEFAULT_R_BINS = np.array(
     [0, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3]
 )
-JITTER = 1e-12  # numerical stability for matrix inversion
-CONVERGENCE_TOL = 1e-8
+JITTER = 1e-12          # numerical stability for matrix inversion
+CONVERGENCE_TOL = 1e-8  # default convergence tolerance for optimization
 
 
 # =============================================================================
@@ -33,8 +39,20 @@ CONVERGENCE_TOL = 1e-8
 # =============================================================================
 
 
-def load_sampled_params(sim_dir, required=True):
-    """Load sampled parameters from simulation directory."""
+def load_sampled_params(sim_dir: Path, required: bool = True) -> Optional[Dict]:
+    """Load sampled parameters from simulation directory.
+
+    Parameters
+    ----------
+    sim_dir
+        Directory containing 'sampled_params.pkl'.
+    required
+        If True, raise if file is missing; otherwise return None.
+
+    Returns
+    -------
+    dict or None
+    """
     pkl_file = sim_dir / "sampled_params.pkl"
     if not pkl_file.exists():
         if required:
@@ -49,25 +67,31 @@ def load_sampled_params(sim_dir, required=True):
         return pickle.load(f)
 
 
-def load_config(config_path):
+def load_config(config_path: Path) -> Dict:
     """Load configuration from JSON file."""
     with config_path.open("r") as f:
         return json.load(f)
 
 
-def aggregate_ld_statistics(ld_root):
+def aggregate_ld_statistics(ld_root: Path) -> Dict[str, List[np.ndarray]]:
     """
     Aggregate LD statistics from multiple windows into means and covariances.
 
-    Args:
-        ld_root: Path to MomentsLD directory containing LD_stats/ subdirectory
+    Parameters
+    ----------
+    ld_root
+        Path to MomentsLD directory containing LD_stats/ subdirectory.
 
-    Returns:
-        Dictionary with 'means' and 'varcovs' for empirical LD statistics
+    Returns
+    -------
+    dict
+        Dictionary with 'means' and 'varcovs' for empirical LD statistics.
 
+    Side effects
+    ------------
     Creates:
-        - means.varcovs.pkl: Aggregated statistics
-        - bootstrap_sets.pkl: Bootstrap data for variance estimation
+        - means.varcovs.pkl  (aggregated statistics)
+        - bootstrap_sets.pkl (bootstrap data for variance estimation)
     """
     means_file = ld_root / "means.varcovs.pkl"
     boots_file = ld_root / "bootstrap_sets.pkl"
@@ -100,7 +124,7 @@ def aggregate_ld_statistics(ld_root):
     with boots_file.open("wb") as f:
         pickle.dump(bootstrap_sets, f)
 
-    logging.info(f"Aggregated {len(ld_stats)} LD windows → {ld_root}")
+    logging.info("Aggregated %d LD windows → %s", len(ld_stats), ld_root)
     return mv
 
 
@@ -109,19 +133,33 @@ def aggregate_ld_statistics(ld_root):
 # =============================================================================
 
 
-def compute_theoretical_ld(params, param_names, demographic_model, r_bins, populations):
+def compute_theoretical_ld(
+    params: List[float],
+    param_names: List[str],
+    demographic_model,
+    r_bins: np.ndarray,
+    populations: List[str],
+):
     """
     Compute expected LD statistics under a demographic model.
 
-    Args:
-        params: Parameter values in log10 space
-        param_names: List of parameter names
-        demographic_model: Function that creates Demes graph from parameters
-        r_bins: Recombination rate bin edges
-        populations: List of population names to sample from
+    Parameters
+    ----------
+    params
+        Parameter values in log10 space.
+    param_names
+        Parameter names, same order as `params`.
+    demographic_model
+        Function that creates a Demes graph from a parameter dict.
+    r_bins
+        Recombination rate bin edges (same as in empirical LD).
+    populations
+        List of population names to sample from.
 
-    Returns:
-        moments.LD.LDstats: Expected σD² statistics
+    Returns
+    -------
+    moments.LD.LDstats
+        Expected σD² statistics.
     """
     # Convert to absolute scale and create parameter dictionary
     param_values = 10 ** np.array(params)
@@ -130,7 +168,7 @@ def compute_theoretical_ld(params, param_names, demographic_model, r_bins, popul
     # Create demographic graph
     graph = demographic_model(param_dict)
 
-    # Find reference population size for scaling
+    # Reference population size for scaling
     ref_size = (
         param_dict.get("N0")
         or param_dict.get("N_ANC")
@@ -144,7 +182,7 @@ def compute_theoretical_ld(params, param_names, demographic_model, r_bins, popul
     rho_mids = (rho_edges[:-1] + rho_edges[1:]) / 2.0
     ld_mids = moments.Demes.LD(graph, sampled_demes=populations, rho=rho_mids)
 
-    # Simpson's rule weighted average
+    # Simpson's rule weighted average within each bin
     ld_bins = [
         (ld_edges[i] + ld_edges[i + 1] + 4 * ld_mids[i]) / 6.0
         for i in range(len(rho_mids))
@@ -158,17 +196,26 @@ def compute_theoretical_ld(params, param_names, demographic_model, r_bins, popul
     return moments.LD.Inference.sigmaD2(ld_stats)
 
 
-def prepare_data_for_comparison(theoretical_ld, empirical_data, normalization=0):
+def prepare_data_for_comparison(
+    theoretical_ld,
+    empirical_data: Dict[str, List[np.ndarray]],
+    normalization: int = 0,
+):
     """
     Prepare theoretical and empirical data for likelihood comparison.
 
-    Args:
-        theoretical_ld: Output from compute_theoretical_ld()
-        empirical_data: Dictionary with 'means' and 'varcovs' keys
-        normalization: LD normalization scheme (0 = no normalization)
+    Parameters
+    ----------
+    theoretical_ld
+        Output from compute_theoretical_ld().
+    empirical_data
+        Dictionary with 'means' and 'varcovs' keys.
+    normalization
+        LD normalization scheme (0 = no normalization).
 
-    Returns:
-        Tuple of (theory_arrays, empirical_means, empirical_covariances)
+    Returns
+    -------
+    (theory_arrays, empirical_means, empirical_covariances)
     """
     # Process theoretical predictions
     theory_processed = moments.LD.LDstats(
@@ -179,9 +226,8 @@ def prepare_data_for_comparison(theoretical_ld, empirical_data, normalization=0)
     theory_processed = moments.LD.Inference.remove_normalized_lds(
         theory_processed, normalization=normalization
     )
-    theory_arrays = [
-        np.array(pred) for pred in theory_processed[:-1]
-    ]  # Remove heterozygosity
+    # Remove heterozygosity
+    theory_arrays = [np.array(pred) for pred in theory_processed[:-1]]
 
     # Process empirical data
     emp_means = [np.array(x) for x in empirical_data["means"]]
@@ -200,107 +246,7 @@ def prepare_data_for_comparison(theoretical_ld, empirical_data, normalization=0)
     emp_covars = emp_covars[:-1]
 
     return theory_arrays, emp_means, emp_covars
-    """
-    Writes: <ld_root>/empirical_vs_theoretical_comparison.pdf
-    """
-    pdf = ld_root / "empirical_vs_theoretical_comparison.pdf"
-    if pdf.exists():
-        return
 
-    demo_mod = importlib.import_module("simulation")
-    if config["demographic_model"] == "drosophila_three_epoch":
-        demo_function = getattr(demo_module, "drosophila_three_epoch")
-    else:
-        demo_function = getattr(demo_module, config["demographic_model"] + "_model")
-    graph = demo_func(sampled_params)
-
-    # pops to compare come from the config’s num_samples keys
-    sampled_demes = list(cfg["num_samples"].keys())
-
-    y = moments.Demes.LD(
-        graph, sampled_demes=sampled_demes, rho=4 * sampled_params["N0"] * r_vec
-    )
-    # Simpson-like binning
-    y = moments.LD.LDstats(
-        [(yl + yr) / 2 for yl, yr in zip(y[:-2], y[1:-1])] + [y[-1]],
-        num_pops=y.num_pops,
-        pop_ids=y.pop_ids,
-    )
-    y = moments.LD.Inference.sigmaD2(y)
-
-    if cfg["demographic_model"] == "bottleneck":
-        stats_to_plot = [["DD_0_0"], ["Dz_0_0_0"], ["pi2_0_0_0_0"]]
-        labels = [[r"$D_0^2$"], [r"$Dz_{0,0,0}$"], [r"$\pi_{2;0,0,0,0}$"]]
-        rows = 2
-    else:
-        stats_to_plot = [
-            ["DD_0_0"],
-            ["DD_0_1"],
-            ["DD_1_1"],
-            ["Dz_0_0_0"],
-            ["Dz_0_1_1"],
-            ["Dz_1_1_1"],
-            ["pi2_0_0_1_1"],
-            ["pi2_0_1_0_1"],
-            ["pi2_1_1_1_1"],
-        ]
-        labels = [
-            [r"$D_0^2$"],
-            [r"$D_0 D_1$"],
-            [r"$D_1^2$"],
-            [r"$Dz_{0,0,0}$"],
-            [r"$Dz_{0,1,1}$"],
-            [r"$Dz_{1,1,1}$"],
-            [r"$\pi_{2;0,0,1,1}$"],
-            [r"$\pi_{2;0,1,0,1}$"],
-            [r"$\pi_{2;1,1,1,1}$"],
-        ]
-        rows = 3
-
-    try:
-        # Ensure r_vec length matches the data dimensions
-        empirical_means = mv["means"][:-1]
-        empirical_varcovs = mv["varcovs"][:-1]
-
-        # If there's a dimension mismatch, truncate r_vec to match the data
-        if hasattr(empirical_means, "__len__") and len(r_vec) != len(empirical_means):
-            logging.warning(
-                "r_vec length (%d) doesn't match empirical data length (%d), truncating r_vec",
-                len(r_vec),
-                len(empirical_means),
-            )
-            r_vec = r_vec[: len(empirical_means)]
-
-        fig = moments.LD.Plotting.plot_ld_curves_comp(
-            y,
-            empirical_means,
-            empirical_varcovs,
-            rs=r_vec,
-            stats_to_plot=stats_to_plot,
-            labels=labels,
-            rows=rows,
-            plot_vcs=True,
-            show=False,
-            fig_size=(6, 4),
-        )
-        fig.savefig(pdf, dpi=300)
-        plt.close(fig)
-        logging.info("Written comparison PDF → %s", pdf)
-    except (IndexError, ValueError) as e:
-        logging.warning("Plotting failed due to data structure mismatch: %s", e)
-        logging.warning(
-            "Skipping PDF generation - this may indicate insufficient LD statistics data"
-        )
-        # Create empty file to satisfy Snakemake dependencies
-        pdf.touch()
-    except Exception as e:
-        logging.error("Unexpected error in plotting: %s", e)
-        # Create empty file to satisfy Snakemake dependencies
-        pdf.touch()
-        raise
-
-
-# ─── Core LD Analysis Functions ─────────────────────────────────────────────
 
 # =============================================================================
 # Likelihood Computation
@@ -308,18 +254,26 @@ def prepare_data_for_comparison(theoretical_ld, empirical_data, normalization=0)
 
 
 def compute_composite_likelihood(
-    empirical_means, empirical_covariances, theoretical_predictions
-):
+    empirical_means: List[np.ndarray],
+    empirical_covariances: List[np.ndarray],
+    theoretical_predictions: List[np.ndarray],
+) -> float:
     """
     Compute composite Gaussian log-likelihood.
 
-    Args:
-        empirical_means: List of empirical mean vectors for each r-bin
-        empirical_covariances: List of covariance matrices for each r-bin
-        theoretical_predictions: List of model prediction vectors for each r-bin
+    Parameters
+    ----------
+    empirical_means
+        List of empirical mean vectors for each r-bin.
+    empirical_covariances
+        List of covariance matrices for each r-bin.
+    theoretical_predictions
+        List of model prediction vectors for each r-bin.
 
-    Returns:
-        Log-likelihood value
+    Returns
+    -------
+    float
+        Composite log-likelihood.
     """
     total_loglik = 0.0
 
@@ -351,28 +305,38 @@ def compute_composite_likelihood(
 
 
 def objective_function(
-    log_params,
-    param_names,
+    log_params: np.ndarray,
+    param_names: List[str],
     demographic_model,
-    r_bins,
-    empirical_data,
-    populations,
-    normalization=0,
-):
+    r_bins: np.ndarray,
+    empirical_data: Dict[str, List[np.ndarray]],
+    populations: List[str],
+    normalization: int = 0,
+) -> float:
     """
-    Objective function for optimization: computes log-likelihood for given parameters.
+    Objective function for optimization: composite log-likelihood.
 
-    Args:
-        log_params: Parameters in log10 space
-        param_names: List of parameter names
-        demographic_model: Function creating Demes graph
-        r_bins: Recombination rate bins
-        empirical_data: Dictionary with empirical LD statistics
-        populations: Population names to sample
-        normalization: LD normalization scheme
+    Parameters
+    ----------
+    log_params
+        Parameters in log10 space.
+    param_names
+        List of parameter names.
+    demographic_model
+        Function creating Demes graph.
+    r_bins
+        Recombination rate bins.
+    empirical_data
+        Dictionary with empirical LD statistics.
+    populations
+        Population names to sample.
+    normalization
+        LD normalization scheme.
 
-    Returns:
-        Composite log-likelihood
+    Returns
+    -------
+    float
+        Composite log-likelihood.
     """
     try:
         # Compute theoretical LD
@@ -389,7 +353,7 @@ def objective_function(
         return compute_composite_likelihood(emp_means, emp_covars, theory_arrays)
 
     except Exception as e:
-        logging.warning(f"Error in objective function: {e}")
+        logging.warning("Error in objective function: %s", e)
         return -np.inf
 
 
@@ -398,17 +362,27 @@ def objective_function(
 # =============================================================================
 
 
-def handle_fixed_parameters(config, sampled_params, param_names):
+def handle_fixed_parameters(
+    config: Dict,
+    sampled_params: Optional[Dict[str, float]],
+    param_names: List[str],
+) -> List[Optional[float]]:
     """
     Parse configuration to determine which parameters should be fixed.
 
-    Args:
-        config: Configuration dictionary
-        sampled_params: Dictionary of sampled parameter values (optional)
-        param_names: List of all parameter names
+    Parameters
+    ----------
+    config
+        Configuration dictionary.
+    sampled_params
+        Dictionary of sampled parameter values (optional).
+    param_names
+        List of all parameter names.
 
-    Returns:
-        List where each element is either None (free parameter) or a float (fixed value)
+    Returns
+    -------
+    list
+        Each element is either None (free parameter) or a float (fixed value).
     """
     fixed_values = [None] * len(param_names)
     fixed_config = config.get("fixed_parameters", {})
@@ -421,15 +395,15 @@ def handle_fixed_parameters(config, sampled_params, param_names):
 
         if isinstance(fixed_spec, (int, float)):
             fixed_values[i] = float(fixed_spec)
-        elif isinstance(fixed_spec, str) and fixed_spec.lower() in ["sampled", "true"]:
+        elif isinstance(fixed_spec, str) and fixed_spec.lower() in {"sampled", "true"}:
             if sampled_params is None or param_name not in sampled_params:
                 logging.warning(
-                    "Config requested %s be fixed to '%s', but sampled_params are unavailable. "
-                    "Leaving this parameter free instead.",
+                    "Config requested %s be fixed to '%s', but sampled_params "
+                    "are unavailable. Leaving this parameter free instead.",
                     param_name,
                     fixed_spec,
                 )
-                continue  # leave fixed_values[i] = None → parameter remains free
+                continue
             fixed_values[i] = float(sampled_params[param_name])
         else:
             raise ValueError(
@@ -440,25 +414,28 @@ def handle_fixed_parameters(config, sampled_params, param_names):
 
 
 def create_free_parameter_vectors(
-    full_params, bounds_lower, bounds_upper, fixed_values
+    full_params: np.ndarray,
+    bounds_lower: np.ndarray,
+    bounds_upper: np.ndarray,
+    fixed_values: Optional[List[Optional[float]]],
 ):
     """
     Extract free parameters and their bounds from full parameter specifications.
 
-    Returns:
-        Tuple of (free_params, free_lower_bounds, free_upper_bounds, expand_function)
+    Returns
+    -------
+    (free_params, free_lower_bounds, free_upper_bounds, expand_function)
     """
     if fixed_values is None or all(v is None for v in fixed_values):
         # All parameters are free
         return full_params, bounds_lower, bounds_upper, lambda x: x
 
-    # Extract only free parameters
     free_indices = [i for i, fixed_val in enumerate(fixed_values) if fixed_val is None]
     free_params = full_params[free_indices]
     free_lower = bounds_lower[free_indices]
     free_upper = bounds_upper[free_indices]
 
-    def expand_to_full(free_values):
+    def expand_to_full(free_values: np.ndarray) -> np.ndarray:
         """Reconstruct full parameter vector from free parameters."""
         full = np.zeros(len(fixed_values))
         free_idx = 0
@@ -474,38 +451,25 @@ def create_free_parameter_vectors(
 
 
 def optimize_parameters(
-    start_values,
-    lower_bounds,
-    upper_bounds,
-    param_names,
+    start_values: np.ndarray,
+    lower_bounds: np.ndarray,
+    upper_bounds: np.ndarray,
+    param_names: List[str],
     demographic_model,
-    r_bins,
-    empirical_data,
-    populations,
-    normalization=0,
-    tolerance=CONVERGENCE_TOL,
-    verbose=True,
-    fixed_values=None,
+    r_bins: np.ndarray,
+    empirical_data: Dict[str, List[np.ndarray]],
+    populations: List[str],
+    normalization: int = 0,
+    tolerance: float = CONVERGENCE_TOL,
+    verbose: bool = True,
+    fixed_values: Optional[List[Optional[float]]] = None,
 ):
     """
-    Optimize demographic parameters using L-BFGS algorithm.
+    Optimize demographic parameters using L-BFGS (via nlopt).
 
-    Args:
-        start_values: Initial parameter values (absolute scale)
-        lower_bounds: Parameter lower bounds (absolute scale)
-        upper_bounds: Parameter upper bounds (absolute scale)
-        param_names: List of parameter names
-        demographic_model: Function creating Demes graph from parameters
-        r_bins: Recombination rate bins
-        empirical_data: Dictionary with empirical LD statistics
-        populations: Population names to sample
-        normalization: LD normalization scheme
-        tolerance: Convergence tolerance
-        verbose: Print optimization progress
-        fixed_values: List of fixed parameter values (None = free)
-
-    Returns:
-        Tuple of (optimal_parameters, max_log_likelihood, status_code)
+    Returns
+    -------
+    (optimal_parameters, max_log_likelihood, status_code)
     """
     # Convert to log10 space for optimization
     start_log10 = np.log10(np.maximum(start_values, 1e-300))
@@ -527,7 +491,6 @@ def optimize_parameters(
     best_likelihood = -np.inf
     best_params = None
 
-    # Create objective function for optimization
     def nlopt_objective(free_params, gradient):
         nonlocal best_likelihood, best_params
 
@@ -567,9 +530,9 @@ def optimize_parameters(
             gradient[:] = gradient_func(free_params)
 
         if verbose:
-            param_values = 10**full_params_log10
+            param_values = 10 ** full_params_log10
             param_str = ", ".join(
-                [f"{name}={val:.3g}" for name, val in zip(param_names, param_values)]
+                f"{name}={val:.3g}" for name, val in zip(param_names, param_values)
             )
             print(f"LL = {likelihood:.6f} | {param_str}")
 
@@ -587,7 +550,7 @@ def optimize_parameters(
         status = optimizer.last_optimize_result()
         max_likelihood = optimizer.last_optimum_value()
     except Exception as e:
-        logging.warning(f"Optimization failed: {e}. Using best solution found.")
+        logging.warning("Optimization failed: %s. Using best solution found.", e)
         if best_params is not None:
             optimal_free = best_params
             max_likelihood = best_likelihood
@@ -604,7 +567,7 @@ def optimize_parameters(
 
     # Convert back to absolute scale
     optimal_full_log10 = expand_function(optimal_free)
-    optimal_params = 10**optimal_full_log10
+    optimal_params = 10 ** optimal_full_log10
 
     return optimal_params, max_likelihood, status
 
@@ -614,36 +577,51 @@ def optimize_parameters(
 # =============================================================================
 
 
-def create_comparison_plot(config, sampled_params, empirical_data, r_bins, output_path):
+def _load_demographic_function(config):
+    """Helper to load the demographic model function from src/simulation.py."""
+    # Import as part of the src package so relative imports inside simulation.py work
+    demo_module = importlib.import_module("src.simulation")
+    model_name = config["demographic_model"]
+
+    if model_name == "drosophila_three_epoch":
+        return getattr(demo_module, "drosophila_three_epoch")
+
+    return getattr(demo_module, model_name + "_model")
+
+
+def create_comparison_plot(
+    config: Dict,
+    sampled_params: Dict[str, float],
+    empirical_data: Dict[str, List[np.ndarray]],
+    r_bins: np.ndarray,
+    output_path: Path,
+):
     """
     Create comparison plot between empirical and theoretical LD curves.
 
-    Args:
-        config: Configuration dictionary with demographic model info
-        sampled_params: Dictionary of sampled parameter values
-        empirical_data: Dictionary with empirical LD statistics
-        r_bins: Recombination rate bins
-        output_path: Path where to save the PDF
+    Parameters
+    ----------
+    config
+        Configuration dictionary with demographic model info.
+    sampled_params
+        Dictionary of sampled parameter values.
+    empirical_data
+        Dictionary with empirical LD statistics.
+    r_bins
+        Recombination rate bins.
+    output_path
+        Path where to save the PDF.
     """
     if output_path.exists():
         return
 
     try:
-        # Load demographic model
-        demo_module = importlib.import_module("simulation")
-        if config["demographic_model"] == "drosophila_three_epoch":
-            demo_function = getattr(demo_module, "drosophila_three_epoch")
-        else:
-            demo_function = getattr(demo_module, config["demographic_model"] + "_model")
-
-        # Get populations to sample
+        demo_function = _load_demographic_function(config)
         populations = list(config["num_samples"].keys())
 
-        # Compute theoretical LD under sampled parameters
-        log_params = [
-            np.log10(sampled_params[name]) for name in config["priors"].keys()
-        ]
         param_names = list(config["priors"].keys())
+        log_params = [np.log10(sampled_params[name]) for name in param_names]
+
         theoretical_ld = compute_theoretical_ld(
             log_params, param_names, demo_function, r_bins, populations
         )
@@ -652,21 +630,20 @@ def create_comparison_plot(config, sampled_params, empirical_data, r_bins, outpu
         emp_means = empirical_data["means"][:-1]
         emp_covars = empirical_data["varcovs"][:-1]
 
-        # Create plot - handle dimension mismatch gracefully
+        # Handle dimension mismatch gracefully
         r_vec_plot = r_bins
         theory_for_plot = theoretical_ld
 
-        # Check if we need to truncate due to dimension mismatch
         if len(emp_means) < len(r_bins):
-            r_vec_plot = r_bins[: len(emp_means)]
             logging.warning(
-                f"Truncating r_bins from {len(r_bins)} to {len(emp_means)} for plotting"
+                "Truncating r_bins from %d to %d for plotting",
+                len(r_bins),
+                len(emp_means),
             )
-
-            # Recompute theoretical LD with truncated r_bins to match dimensions
+            r_vec_plot = r_bins[: len(emp_means)]
             theory_for_plot = compute_theoretical_ld(
-                [np.log10(sampled_params[name]) for name in config["priors"].keys()],
-                list(config["priors"].keys()),
+                [np.log10(sampled_params[name]) for name in param_names],
+                param_names,
                 demo_function,
                 r_vec_plot,
                 populations,
@@ -717,10 +694,10 @@ def create_comparison_plot(config, sampled_params, empirical_data, r_bins, outpu
 
         fig.savefig(output_path, dpi=300)
         plt.close(fig)
-        logging.info(f"Comparison plot saved → {output_path}")
+        logging.info("Comparison plot saved → %s", output_path)
 
     except Exception as e:
-        logging.warning(f"Plot generation failed: {e}")
+        logging.warning("Plot generation failed: %s", e)
         logging.warning("Creating empty file to satisfy dependencies")
         output_path.touch()
 
@@ -731,7 +708,11 @@ def create_comparison_plot(config, sampled_params, empirical_data, r_bins, outpu
 
 
 def run_momentsld_inference(
-    config, empirical_data, results_dir, r_bins, sampled_params=None
+    config: Dict,
+    empirical_data: Dict[str, List[np.ndarray]],
+    results_dir: Path,
+    r_bins: np.ndarray,
+    sampled_params: Optional[Dict[str, float]] = None,
 ):
     """
     Main function to run MomentsLD demographic parameter inference.
@@ -742,12 +723,18 @@ def run_momentsld_inference(
     3. Runs L-BFGS optimization to find best-fit parameters
     4. Saves results and creates comparison plots
 
-    Args:
-        config: Configuration dictionary with priors, demographic model, etc.
-        empirical_data: Dictionary with aggregated LD statistics
-        results_dir: Directory where results will be saved
-        r_bins: Recombination rate bin edges
-        sampled_params: Optional true parameter values for fixing parameters
+    Parameters
+    ----------
+    config
+        Configuration dictionary with priors, demographic model, etc.
+    empirical_data
+        Dictionary with aggregated LD statistics.
+    results_dir
+        Directory where results will be saved.
+    r_bins
+        Recombination rate bin edges.
+    sampled_params
+        Optional true parameter values for fixing parameters and plotting.
     """
     results_file = results_dir / "best_fit.pkl"
     if results_file.exists():
@@ -755,11 +742,7 @@ def run_momentsld_inference(
         return
 
     # Load demographic model function
-    demo_module = importlib.import_module("simulation")
-    if config["demographic_model"] == "drosophila_three_epoch":
-        demo_function = getattr(demo_module, "drosophila_three_epoch")
-    else:
-        demo_function = getattr(demo_module, config["demographic_model"] + "_model")
+    demo_function = _load_demographic_function(config)
 
     # Extract parameter setup from configuration
     priors = config["priors"]
@@ -811,9 +794,11 @@ def run_momentsld_inference(
         pickle.dump(results, f)
 
     logging.info(
-        f"Optimization completed: LL = {max_likelihood:.6f}, status = {status}"
+        "Optimization completed: LL = %.6f, status = %s",
+        max_likelihood,
+        status,
     )
-    logging.info(f"Results saved → {results_file}")
+    logging.info("Results saved → %s", results_file)
 
     # Create comparison plot if sampled parameters are available
     if sampled_params is not None:

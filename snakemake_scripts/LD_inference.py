@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
-
-from __future__ import annotations
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
 
 import numpy as np
 
-# >>> make src importable <<<
-ROOT = Path(__file__).resolve().parents[1]  # project root
-SRC_DIR = ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+# Project root: /gpfs/projects/kernlab/akapoor/Infer_Demography
+ROOT = Path(__file__).resolve().parents[1]
 
-# project-local imports
-from MomentsLD_inference import (
-    load_config,
-    load_sampled_params,
-    aggregate_ld_statistics,
-    create_comparison_plot,
+# IMPORTANT: add the *project root* to sys.path, NOT src/
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Now src is a top-level package and we can import from it
+from src.MomentsLD_inference import (
     run_momentsld_inference,
+    aggregate_ld_statistics,
+    load_sampled_params,
+    load_config,
     DEFAULT_R_BINS,
+    create_comparison_plot,
 )
+
 
 
 def _parse_args():
@@ -43,7 +44,10 @@ def _parse_args():
         "--output-root",
         required=True,
         type=Path,
-        help="experiments/<MODEL>/inferences/sim_<sid>/MomentsLD or analogous path for real data",
+        help=(
+            "experiments/<MODEL>/inferences/sim_<sid>/MomentsLD or analogous "
+            "path for real data"
+        ),
     )
     p.add_argument("--config-file", required=True, type=Path)
     p.add_argument(

@@ -20,18 +20,20 @@ import msprime
 import demes
 
 # ------------------------------------------------------------------ local imports
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+from pathlib import Path
+import sys
 
-from simulation import (
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.simulation import (
     bottleneck_model,
     split_isolation_model,
     split_migration_model,
     drosophila_three_epoch,
-    msprime_simulation,  # reuse neutral path
-    stdpopsim_slim_simulation,  # reuse SLiM/BGS path
+    msprime_simulation,          # reuse neutral path
+    stdpopsim_slim_simulation,   # reuse SLiM/BGS path
 )
 
 # ────────────────────────────────────────────────────────────────────────────────

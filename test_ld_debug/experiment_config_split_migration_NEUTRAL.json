@@ -1,5 +1,5 @@
 {
-  "genome_length": 1e7,
+  "genome_length": 10000000.0,
   "mutation_rate": 1.5e-08,
   "recombination_rate": 1.5e-08,
   "demographic_model": "split_migration",
@@ -26,20 +26,20 @@
       30000
     ],
     "m_YRI_CEU": [
-      1e-8,
-      1e-4
+      1e-08,
+      0.0001
     ],
     "m_CEU_YRI": [
-      1e-8,
-      1e-4
+      1e-08,
+      0.0001
     ],
     "T_split": [
       500,
-      2e4
+      20000.0
     ]
   },
   "selection": {
-    "enabled": true,
+    "enabled": false,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
@@ -54,5 +54,5 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": false
+  "use_gpu_ld": true
 }

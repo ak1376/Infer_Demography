@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-from .demes_models import (
+from src.demes_models import (
     bottleneck_model,
     split_isolation_model,
     split_migration_model,
@@ -24,8 +24,8 @@ from .demes_models import (
     split_migration_growth_model,
     OOA_three_pop_model,
 )
-from .bgs_intervals import _contig_from_cfg, _apply_dfe_intervals
-from .stdpopsim_wrappers import define_sps_model
+from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals
+from src.stdpopsim_wrappers import define_sps_model
 
 # ──────────────────────────────────
 # Main entry: BGS only (SLiM via stdpopsim)
