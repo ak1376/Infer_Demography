@@ -33,11 +33,13 @@ sid="$SLURM_ARRAY_TASK_ID"
 echo "combine_results: sid=$sid  (folder sim_$sid)"
 
 # 3. Snakemake target for this simulation (no padding)
-TARGET="experiments/${MODEL}/inferences/sim_${sid}/all_inferences.pkl"
+TARGET="experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
 
-snakemake -j "$SLURM_CPUS_PER_TASK" \
+snakemake \
+  -j "$SLURM_CPUS_PER_TASK" \
   --snakefile "$SNAKEFILE" \
   --directory "$ROOT" \
   --rerun-incomplete \
+  --rerun-triggers mtime \
   --nolock \
   "$TARGET"

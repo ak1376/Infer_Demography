@@ -376,8 +376,7 @@ rule aggregate_opts_dadi:
 # ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
 rule cleanup_optimization_runs:
     input:
-        dadi_agg    = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
-        moments_agg = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+        combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     output:
         cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
     run:
@@ -385,20 +384,18 @@ rule cleanup_optimization_runs:
 
         sid = wildcards.sid
 
-        # Load aggregated results
-        dadi_data    = pickle.load(open(input.dadi_agg, "rb"))
-        moments_data = pickle.load(open(input.moments_agg, "rb"))
+        # Load aggregated results so we still know which opt indices were used
+        dadi_path    = f"experiments/{MODEL}/inferences/sim_{sid}/dadi/fit_params.pkl"
+        moments_path = f"experiments/{MODEL}/inferences/sim_{sid}/moments/fit_params.pkl"
 
-        dadi_lls   = list(dadi_data.get("best_ll", []))
-        dadi_opts  = list(dadi_data.get("opt_index", []))
-        moments_lls  = list(moments_data.get("best_ll", []))
+        dadi_data    = pickle.load(open(dadi_path, "rb"))
+        moments_data = pickle.load(open(moments_path, "rb"))
+
+        dadi_opts    = list(dadi_data.get("opt_index", []))
         moments_opts = list(moments_data.get("opt_index", []))
 
-        # Get top-K optimization indices from each engine separately
-        dadi_keep = set(dadi_opts[:TOP_K]) if dadi_opts else set()
+        dadi_keep    = set(dadi_opts[:TOP_K]) if dadi_opts else set()
         moments_keep = set(moments_opts[:TOP_K]) if moments_opts else set()
-        
-        # Union: keep optimization directories used by either engine's top-K
         keep_indices = dadi_keep | moments_keep
 
         print(f"🗑️  Starting cleanup for simulation {sid}")
@@ -406,7 +403,6 @@ rule cleanup_optimization_runs:
         print(f"📊 moments top-{TOP_K} optimizations: {sorted(moments_keep)}")
         print(f"📊 Combined optimizations to keep: {sorted(keep_indices)}")
 
-        # Clean up non-top-K optimization directories
         cleaned_count = 0
         for opt in range(NUM_OPTIMS):
             if opt not in keep_indices:
@@ -419,17 +415,12 @@ rule cleanup_optimization_runs:
                     except (FileNotFoundError, PermissionError) as e:
                         print(f"⚠️  Could not remove {run_dir}: {e}")
 
-        # Write completion marker
         pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
         with open(output.cleanup_done, "w") as f:
             f.write(f"Cleanup completed for simulation {sid}\n")
-            f.write(f"dadi_top_{TOP_K}: {sorted(dadi_keep)}\n")
-            f.write(f"moments_top_{TOP_K}: {sorted(moments_keep)}\n")
-            f.write(f"Combined_kept: {sorted(keep_indices)}\n")
             f.write(f"Removed {cleaned_count} optimization directories\n")
 
-        print(f"✅ Cleanup complete for sim {sid}: kept {len(keep_indices)} optimizations, removed {cleaned_count}")
-
+        print(f"✅ Cleanup complete for sim {sid}: removed {cleaned_count} optimization directories")
 
 ##############################################################################
 # RULE simulate_window – one VCF window
@@ -521,15 +512,16 @@ rule optimize_momentsld:
         bins      = R_BINS_STR,
         n_windows = NUM_WINDOWS,
         cfg  = EXP_CFG
-
     threads: 1
     shell:
-        """
+        r"""
+        PYTHONPATH={workflow.basedir} \
         python "snakemake_scripts/LD_inference.py" \
             --run-dir      {params.sim_dir} \
             --output-root  {params.LD_dir} \
             --config-file  {params.cfg}
         """
+
 
 ##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}             #
