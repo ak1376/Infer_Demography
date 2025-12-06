@@ -32,6 +32,7 @@ from src.simulation import (
     split_isolation_model,
     split_migration_model,
     drosophila_three_epoch,
+    split_migration_growth_model,
     msprime_simulation,          # reuse neutral path
     stdpopsim_slim_simulation,   # reuse SLiM/BGS path
 )
@@ -67,6 +68,8 @@ def demes_from_model(model_id: str, sampled: Dict[str, float]) -> demes.Graph:
         return split_migration_model(sampled)
     if model_id == "drosophila_three_epoch":
         return drosophila_three_epoch(sampled)
+    if model_id == "split_migration_growth":
+        return split_migration_growth_model(sampled)
     raise ValueError(f"Unsupported demographic_model: {model_id}")
 
 
