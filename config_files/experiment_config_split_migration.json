@@ -9,9 +9,9 @@
     "CEU": 10
   },
   "seed": 42,
-  "num_optimizations": 100,
-  "top_k": 5,
-  "num_draws": 4000,
+  "num_optimizations": 5,
+  "top_k": 1,
+  "num_draws": 2,
   "priors": {
     "N_anc": [
       100,
@@ -54,5 +54,6 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": false
+  "use_gpu_ld": true,
+  "use_gpu_dadi": true
 }

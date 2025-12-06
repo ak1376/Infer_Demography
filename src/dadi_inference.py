@@ -37,7 +37,21 @@ def diffusion_sfs_dadi(
     p_dict = {k: float(v) for k, v in zip(param_names, params_vec)}
     # Your moments_dadi_inference wrapper should have created demo_model so that:
     #   demo_model(p_dict)  works, and internally forwards `config` if supported.
+    
+    # Check if GPU debugging is enabled via config
+    use_gpu = config.get("use_gpu_dadi", False) if config else False
+    
+    # if use_gpu:
+    #     import time
+    #     print(f"[DADI GPU DEBUG] Computing SFS with parameters: {p_dict}")
+    #     print(f"[DADI GPU DEBUG] Grid points: {pts}")
+    #     start_time = time.time()
+        
     graph = demo_model(p_dict)
+
+    # if use_gpu:
+    #     mid_time = time.time()
+    #     print(f"[DADI GPU DEBUG] Graph creation took {mid_time - start_time:.3f} seconds")
 
     fs = dadi.Spectrum.from_demes(
         graph,
@@ -45,6 +59,14 @@ def diffusion_sfs_dadi(
         sampled_demes=list(sample_sizes.keys()),
         pts=pts,
     )
+
+    # if use_gpu:
+    #     end_time = time.time()
+    #     sfs_time = end_time - mid_time
+    #     total_time = end_time - start_time
+    #     print(f"[DADI GPU DEBUG] SFS computation took {sfs_time:.3f} seconds")
+    #     print(f"[DADI GPU DEBUG] Total SFS function time: {total_time:.3f} seconds")
+
     theta = (
         4.0
         * float(p_dict[param_names[0]])
@@ -75,6 +97,40 @@ def fit_model(
         sampled_params: (kept for backwards compat; unused unless you add logic)
         fixed_params: {param_name: fixed_value}
     """
+    # ── GPU configuration ───────────────────────────────────────────────
+    use_gpu = experiment_config.get("use_gpu_dadi", False)
+    
+    if use_gpu:
+        print(f"[DADI GPU] Enabling GPU acceleration...")
+        dadi.cuda_enabled(True)
+        
+        # Check if GPU is actually available and working
+        try:
+            # Test GPU functionality by checking if CUDA is properly initialized
+            import pycuda
+            import pycuda.driver as cuda
+            cuda.init()
+            
+            # Get GPU information for debugging
+            device_count = cuda.Device.count()
+            if device_count > 0:
+                device = cuda.Device(0)
+                device_name = device.name()
+                memory_info = cuda.mem_get_info()
+                free_memory = memory_info[0] / 1024**3  # GB
+                total_memory = memory_info[1] / 1024**3  # GB
+                
+                print(f"[DADI GPU] Successfully initialized GPU: {device_name}")
+                print(f"[DADI GPU] GPU memory: {free_memory:.1f} GB free / {total_memory:.1f} GB total")
+                print(f"[DADI GPU] dadi.cuda_enabled() = {dadi.cuda_enabled()}")
+            else:
+                print(f"[DADI GPU] Warning: No CUDA devices found")
+        except Exception as e:
+            print(f"[DADI GPU] Warning: GPU initialization failed: {e}")
+    else:
+        print(f"[DADI GPU] GPU acceleration disabled (use_gpu_dadi=False)")
+        dadi.cuda_enabled(False)
+
     priors = experiment_config["priors"]
 
     # ── parameter order / vectors / bounds ───────────────────────────────
@@ -204,9 +260,26 @@ def fit_model(
         opt.set_maxeval(10000)
 
         try:
+            if use_gpu:
+                print(f"[DADI GPU] Starting GPU-accelerated optimization...")
+                import time
+                start_time = time.time()
+            else:
+                print(f"[DADI CPU] Starting CPU optimization...")
+                import time
+                start_time = time.time()
+
             best_free_log10 = opt.optimize(free_start)
             best_ll = opt.last_optimum_value()
             status = opt.last_optimize_result()
+
+            end_time = time.time()
+            optimization_time = end_time - start_time
+            if use_gpu:
+                print(f"[DADI GPU] Optimization completed in {optimization_time:.2f} seconds")
+            else:
+                print(f"[DADI CPU] Optimization completed in {optimization_time:.2f} seconds")
+
         except Exception as e:
             print(f"Optimization failed: {e}")
             best_free_log10 = free_start
@@ -225,6 +298,12 @@ def fit_model(
     print("  status :", status)
     print("  LL     :", best_ll)
     print("  params :", best_params)
+
+    # ── GPU cleanup ──────────────────────────────────────────────────────
+    if use_gpu:
+        print(f"[DADI GPU] Disabling GPU acceleration...")
+        dadi.cuda_enabled(False)
+        print(f"[DADI GPU] GPU disabled. dadi.cuda_enabled() = {dadi.cuda_enabled()}")
 
     return [best_params], [best_ll]
 
