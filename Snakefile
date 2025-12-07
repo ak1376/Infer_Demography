@@ -38,6 +38,7 @@ NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
 
 USE_GPU_LD = CFG.get("use_gpu_ld", False)
+USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 
 def _normalize_residual_engines(val):
     # accepts "moments", "dadi", "both", list/tuple
@@ -205,6 +206,7 @@ rule simulate:
         r"""
         set -euo pipefail
 
+        PYTHONPATH={workflow.basedir} \
         python "{SIM_SCRIPT}" \
           --simulation-dir "{params.sim_dir}" \
           --experiment-config "{params.cfg}" \
@@ -274,6 +276,8 @@ rule infer_dadi:
         ),
         fix      = "",     # e.g. '--fix N0=10000 --fix m12=0.0'
     threads: 8
+    resources:
+        **({'gpu': 1} if USE_GPU_DADI else {})
     shell:
         r"""
         set -euo pipefail
@@ -441,6 +445,7 @@ rule simulate_window:
     threads: 1
     shell:
         r"""
+        PYTHONPATH={workflow.basedir} \
         python "{WIN_SCRIPT}" \
             --sim-dir      "{params.base_sim}" \
             --rep-index    {params.rep_idx} \
@@ -461,7 +466,8 @@ rule ld_window:
     params:
         sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins    = R_BINS_STR,
-        cfg     = EXP_CFG
+        cfg     = EXP_CFG,
+        gpu_flag = "--use-gpu" if USE_GPU_LD else ""
     threads: 4
     resources:
         ld_cores=4
@@ -474,7 +480,7 @@ rule ld_window:
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
-            --use-gpu
+            {params.gpu_flag}
 
         EXIT_CODE=$?
 

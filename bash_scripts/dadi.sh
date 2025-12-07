@@ -66,6 +66,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
+    --rerun-triggers mtime \
     --nolock \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" || { echo "Snakemake failed for SID=$SID OPT=$OPT"; exit 1; }
