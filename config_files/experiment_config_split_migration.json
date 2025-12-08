@@ -11,7 +11,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 4000,
+  "num_draws": 3400,
   "priors": {
     "N_anc": [
       100,
@@ -43,8 +43,8 @@
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
-      0,
-      95
+      1,
+      30
     ]
   },
   "use_fim_features": false,
@@ -53,7 +53,7 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": false,
   "use_gpu_dadi": false
 }

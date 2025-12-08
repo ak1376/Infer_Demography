@@ -23,14 +23,14 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_split_migration.json"
+EXP_CFG      = "config_files/experiment_config_bottleneck.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
 MODEL         = CFG["demographic_model"]
 NUM_DRAWS     = int(CFG["num_draws"])
 NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
-NUM_REAL_OPTIMS = 100
+NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 
@@ -108,13 +108,13 @@ rule all:
 
         # # Aggregated optimizer results (simulated)
         # [final_pkl(sid, "moments") for sid in SIM_IDS],
-        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
         # # Cleanup completion markers (simulated)
         # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
         # # LD artifacts (simulated; best-fit only)
-        expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+        # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
         # # FIM (simulated)
         # expand(

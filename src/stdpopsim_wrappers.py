@@ -115,6 +115,8 @@ class _Bottleneck(sps.DemographicModel):
             time=t_end, population="ANC", initial_size=float(N_recover)
         )
 
+        dem.sort_events()
+
         super().__init__(
             id="bottleneck",
             description="Single-population bottleneck (N0 → N_bottleneck → N_recover).",
