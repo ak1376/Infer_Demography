@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=40   # number of (sim,opt) pairs per array element
+BATCH_SIZE=50   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
