@@ -8,7 +8,7 @@
     "YRI": 10,
     "CEU": 10
   },
-  "seed": 42,
+  "seed": 295,
   "num_optimizations": 100,
   "top_k": 5,
   "num_draws": 5000,
