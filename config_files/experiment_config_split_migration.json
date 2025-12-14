@@ -47,7 +47,7 @@
       30
     ]
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": [
     "moments"
   ],

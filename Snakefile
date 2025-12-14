@@ -23,7 +23,11 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
+<<<<<<< HEAD
 EXP_CFG      = "config_files/experiment_config_OOA_three_pop.json"
+=======
+EXP_CFG      = "config_files/experiment_config_bottleneck.json"
+>>>>>>> ea5a27f (Speeding up random forest, making sure parameter fixing is happening correctly)
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -228,7 +232,8 @@ rule simulate:
 ##############################################################################
 rule infer_moments:
     input:
-        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", # ONLY USED WHEN FIXING PARAMETERS! 
     output:
         pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
     params:
@@ -251,19 +256,22 @@ rule infer_moments:
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
+          --ground-truth "{input.params}" \
           --generate-profiles \
-
           {params.fix}
 
         cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
         """
+
 
 ##############################################################################
 # RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
 ##############################################################################
 rule infer_dadi:
     input:
-        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", # ONLY USED WHEN FIXING PARAMETERS! 
+
     output:
         pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
     params:
@@ -288,6 +296,7 @@ rule infer_dadi:
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
+          --ground-truth "{input.params}" \
           {params.fix}
 
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"

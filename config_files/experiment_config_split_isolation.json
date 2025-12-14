@@ -10,7 +10,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 3300,
+  "num_draws": 5000,
   "priors": {
     "N_anc": [
       100,

@@ -12,7 +12,7 @@
 #SBATCH --mail-user=akapoor@uoregon.edu
 
 # 0. paths & experiment constants
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"

@@ -3,10 +3,10 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
-#SBATCH --time=18:00:00
+#SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --partition=kerngpu
+#SBATCH --mem=8G
+#SBATCH --partition=kerngpu,gpu,gpulong
 #SBATCH --account=kernlab
 #SBATCH --gres=gpu:1
 #SBATCH --requeue
@@ -21,7 +21,7 @@ BATCH_SIZE=50     # number of (sim,window) jobs per array task
 # ----------------------------------------------------------------------------
 
 # -------- config & constants -----------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
@@ -54,12 +54,14 @@ for IDX in $(seq "$START" "$END"); do
     echo "RUN: LD-stats: SID=$SID  WIN=$WIN  →  $TARGET"
 
     snakemake --snakefile "$SNAKEFILE" \
-              --directory  "$ROOT"      \
-              --nolock                  \
-              --latency-wait 120        \
-              --rerun-incomplete        \
-              -j "$SLURM_CPUS_PER_TASK" \
-              "$TARGET" || { echo "Failed for SID=$SID WIN=$WIN"; exit 1; }
+            --directory  "$ROOT"      \
+            --nolock                  \
+            --latency-wait 120        \
+            --rerun-incomplete        \
+            --rerun-triggers mtime    \
+            -j "$SLURM_CPUS_PER_TASK" \
+            "$TARGET"
+
 done
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."

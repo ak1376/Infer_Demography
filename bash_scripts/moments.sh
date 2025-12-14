@@ -6,7 +6,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=8G
-#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --partition=kern,preempt
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -20,7 +20,7 @@ BATCH_SIZE=50   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 # -------- config -----------------------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
@@ -100,6 +100,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     --rerun-incomplete \
     --nolock \
     --latency-wait 300 \
+    --rerun-triggers mtime    \
     -j "$SLURM_CPUS_PER_TASK" \
     "$TARGET" \
     || { echo "Snakemake failed for SID=$SID OPT=$OPT"; exit 1; }
