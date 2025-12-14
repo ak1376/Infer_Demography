@@ -11,7 +11,7 @@
   "seed": 42,
   "num_optimizations": 1,
   "top_k": 1,
-  "num_draws": 5000,
+  "num_draws": 3500,
   "priors": {
     "N0": [
       5000,
@@ -48,7 +48,7 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      95
+      30
     ]
   },
   "use_fim_features": false,
@@ -57,6 +57,6 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": true
 }

@@ -21,6 +21,5 @@ experiments_BGS/
 add_fim_resids_to_all_inferences.py
 run_all_models.sh
 test_real_data_analysis/
-debugging_scripts/
 experiments_neutral/
 debugging/
