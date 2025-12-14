@@ -133,37 +133,37 @@ rule all:
 
         # ── MODELING (on simulated inferences) ─────────────────────────────
         # Datasets
-        # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
 
         # Color scheme
-        # f"experiments/{MODEL}/modeling/color_shades.pkl",
-        # f"experiments/{MODEL}/modeling/main_colors.pkl",
+        f"experiments/{MODEL}/modeling/color_shades.pkl",
+        f"experiments/{MODEL}/modeling/main_colors.pkl",
 
         # Linear models
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
 
         # Random forest
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
         # XGBoost
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
         # ── REAL DATA: 1000G DOWNLOAD + POPFILES ───────────────────────────
         # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
@@ -703,7 +703,12 @@ rule combine_features:
         scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
         mse_val_png   = f"experiments/{MODEL}/modeling/datasets/mse_bars_val_normalized.png",
         mse_train_png = f"experiments/{MODEL}/modeling/datasets/mse_bars_train_normalized.png",
-        metrics_all   = f"experiments/{MODEL}/modeling/datasets/metrics_all.json"
+        metrics_all   = f"experiments/{MODEL}/modeling/datasets/metrics_all.json",
+        metrics_dadi  = f"experiments/{MODEL}/modeling/datasets/metrics_dadi.json",
+        metrics_moments = f"experiments/{MODEL}/modeling/datasets/metrics_moments.json",
+        metrics_momentsLD = f"experiments/{MODEL}/modeling/datasets/metrics_momentsLD.json",
+        outliers_tsv  = f"experiments/{MODEL}/modeling/datasets/outliers_removed.tsv",
+        outliers_txt  = f"experiments/{MODEL}/modeling/datasets/outliers_preview.txt"
     params:
         script = "snakemake_scripts/feature_extraction.py",
         outdir = f"experiments/{MODEL}/modeling"
@@ -711,7 +716,7 @@ rule combine_features:
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
+        /home/akapoor/miniforge3/envs/snakemake-env/bin/python "{params.script}" \
             --experiment-config "{input.cfg}" \
             --out-dir "{params.outdir}"
 
