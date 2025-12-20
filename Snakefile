@@ -23,22 +23,18 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG      = "config_files/experiment_config_bottleneck.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
 MODEL         = CFG["demographic_model"]
 NUM_DRAWS     = int(CFG["num_draws"])
 NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
-NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
-
-USE_GPU_LD = CFG.get("use_gpu_ld", False)
-USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 
 def _normalize_residual_engines(val):
     # accepts "moments", "dadi", "both", list/tuple
@@ -62,24 +58,6 @@ WINDOWS  = range(NUM_WINDOWS)
 SIM_BASEDIR = f"experiments/{MODEL}/simulations"
 RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
 LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
-# Real-data SFS stays in data/
-REAL_SFS = (
-    f"experiments/{MODEL}/real_data_analysis/data/"
-    f"data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.sfs.pkl"
-)
-
-# Real-data LD mirrors LD_ROOT but without sid
-REAL_LD_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD"
-
-# Real-data runs + final inferences
-REAL_RUN_DIR = lambda opt: (
-    f"experiments/{MODEL}/real_data_analysis/runs/run_{opt}"
-)
-
-REAL_FINAL_PKL = lambda tool: (
-    f"experiments/{MODEL}/real_data_analysis/inferences/{tool}/fit_params.pkl"
-)
-
 
 opt_pkl   = lambda sid, opt, tool: f"{RUN_DIR(sid, opt)}/inferences/{tool}/fit_params.pkl"
 final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/fit_params.pkl"
@@ -91,6 +69,11 @@ R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 SIM_IDS  = [i for i in range(NUM_DRAWS)]
 WINDOWS  = range(NUM_WINDOWS)
 
+# ── canonical path builders -----------------------------------------------
+SIM_BASEDIR = f"experiments/{MODEL}/simulations"                      # per‑sim artefacts
+RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
+LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"  # use {{sid}} wildcard
+
 opt_pkl   = lambda sid, opt, tool: f"{RUN_DIR(sid, opt)}/inferences/{tool}/fit_params.pkl"
 final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/fit_params.pkl"
 
@@ -99,92 +82,68 @@ final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/
 ##############################################################################
 rule all:
     input:
-        # ── SIMULATED DATA PIPELINE ────────────────────────────────────────
         # Simulation artifacts
         expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-        # # Aggregated optimizer results (simulated)
-        [final_pkl(sid, "moments") for sid in SIM_IDS],
-        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        # # # Aggregated optimizer results
+        # [final_pkl(sid, "moments") for sid in SIM_IDS],
+        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
-        # # Cleanup completion markers (simulated)
-        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
+        # # # LD artifacts
+        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
+        expand(f"{LD_ROOT}/windows/window_{{win}}.trees",         sid=SIM_IDS, win=WINDOWS),
+        # expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
+        # expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
 
-        # # LD artifacts (simulated; best-fit only)
-        # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
-
-        # # FIM (simulated)
+        # # FIM (always computed)
         # expand(
         #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
         #     sid=SIM_IDS, engine=FIM_ENGINES
         # ),
 
-        # # Residuals (simulated)
+        # # Residuals (always computed)
         # expand(
         #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
         #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
         # ),
 
-        # # Combined per-sim inference blobs (simulated)
+        # # Combined per-sim inference blobs (include FIM/residuals payloads)
         # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
-        # ── MODELING (on simulated inferences) ─────────────────────────────
-        # Datasets
-        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        # # Modeling datasets
+        # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        # f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
 
-        # Color scheme
-        f"experiments/{MODEL}/modeling/color_shades.pkl",
-        f"experiments/{MODEL}/modeling/main_colors.pkl",
+        # # Colors
+        # f"experiments/{MODEL}/modeling/color_shades.pkl",
+        # f"experiments/{MODEL}/modeling/main_colors.pkl",
 
-        # Linear models
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+        # # Models
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
 
-        # Random forest
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
-        # XGBoost
-        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
-        # ── REAL DATA: 1000G DOWNLOAD + POPFILES ───────────────────────────
-        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
-        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz.tbi",
-        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU.samples",
-        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/YRI.samples",
-        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/.download_done",
-        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
-
-        # Real-data SFS (this is your REAL_SFS constant)
-        # REAL_SFS,
-
-        # REAL DATA: aggregated SFS inferences (from runs/run_real_{opt})
-        # REAL_FINAL_PKL("moments"),
-        # REAL_FINAL_PKL("dadi"),
-
-        # REAL DATA: LD stats for each window
-        # expand(
-        #     f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl",
-        #     i=WINDOWS,
-        # )
 
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS
@@ -206,7 +165,6 @@ rule simulate:
         r"""
         set -euo pipefail
 
-        PYTHONPATH={workflow.basedir} \
         python "{SIM_SCRIPT}" \
           --simulation-dir "{params.sim_dir}" \
           --experiment-config "{params.cfg}" \
@@ -229,7 +187,7 @@ rule simulate:
 rule infer_moments:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", # ONLY USED WHEN FIXING PARAMETERS! 
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
     output:
         pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
     params:
@@ -251,14 +209,14 @@ rule infer_moments:
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
           --ground-truth "{input.params}" \
+          --outdir "{params.run_dir}/inferences" \
           --generate-profiles \
+
           {params.fix}
 
         cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
         """
-
 
 ##############################################################################
 # RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
@@ -266,8 +224,7 @@ rule infer_moments:
 rule infer_dadi:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl", # ONLY USED WHEN FIXING PARAMETERS! 
-
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
     output:
         pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
     params:
@@ -280,8 +237,6 @@ rule infer_dadi:
         ),
         fix      = "",     # e.g. '--fix N0=10000 --fix m12=0.0'
     threads: 8
-    resources:
-        **({'gpu': 1} if USE_GPU_DADI else {})
     shell:
         r"""
         set -euo pipefail
@@ -291,8 +246,8 @@ rule infer_dadi:
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
           --ground-truth "{input.params}" \
+          --outdir "{params.run_dir}/inferences" \
           {params.fix}
 
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
@@ -306,38 +261,18 @@ rule aggregate_opts_moments:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-
-        def _as_list(x):
+        def _as_list(x): 
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-
-        # Read all the data; track which opt each entry came from
-        for opt_idx, pkl in enumerate(input.mom):
+        params, lls = [], []
+        for pkl in input.mom:
             d = pickle.load(open(pkl, "rb"))
-            this_params = _as_list(d["best_params"])
-            this_lls    = _as_list(d["best_ll"])
-
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-        # Choose top-K by LL
+            params.extend(_as_list(d["best_params"]))
+            lls.extend(_as_list(d["best_ll"]))
         keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            # record which optimization index each kept entry came from
-            "opt_index":   [opt_ids[i] for i in keep],
-        }
-
+        best = {"best_params": [params[i] for i in keep],
+                "best_ll":      [lls[i]    for i in keep]}
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.mom, "wb"))
-
-        print(f"✅ Aggregated {len(params)} moments optimization results → {output.mom}")
-        print(f"✅ Kept top-{TOP_K} moments optimizations (opts={sorted(set(best['opt_index']))})")
-
 
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
 rule aggregate_opts_dadi:
@@ -347,89 +282,19 @@ rule aggregate_opts_dadi:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-
-        def _as_list(x):
+        def _as_list(x): 
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-
-        # Read all the data; track which opt each entry came from
-        for opt_idx, pkl in enumerate(input.dadi):
+        params, lls = [], []
+        for pkl in input.dadi:
             d = pickle.load(open(pkl, "rb"))
-            this_params = _as_list(d["best_params"])
-            this_lls    = _as_list(d["best_ll"])
-
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-            # NOTE: opt_idx == the optimization index (0..NUM_OPTIMS-1)
-
-        # Choose top-K by LL
+            params.extend(_as_list(d["best_params"]))
+            lls.extend(_as_list(d["best_ll"]))
         keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-        }
-
+        best = {"best_params": [params[i] for i in keep],
+                "best_ll":      [lls[i]    for i in keep]}
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.dadi, "wb"))
 
-        print(f"✅ Aggregated {len(params)} dadi optimization results → {output.dadi}")
-        print(f"✅ Kept top-{TOP_K} dadi optimizations (opts={sorted(set(best['opt_index']))})")
-
-
-
-# ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
-rule cleanup_optimization_runs:
-    input:
-        combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
-    output:
-        cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
-    run:
-        import pickle, numpy as np, pathlib, shutil
-
-        sid = wildcards.sid
-
-        # Load aggregated results so we still know which opt indices were used
-        dadi_path    = f"experiments/{MODEL}/inferences/sim_{sid}/dadi/fit_params.pkl"
-        moments_path = f"experiments/{MODEL}/inferences/sim_{sid}/moments/fit_params.pkl"
-
-        dadi_data    = pickle.load(open(dadi_path, "rb"))
-        moments_data = pickle.load(open(moments_path, "rb"))
-
-        dadi_opts    = list(dadi_data.get("opt_index", []))
-        moments_opts = list(moments_data.get("opt_index", []))
-
-        dadi_keep    = set(dadi_opts[:TOP_K]) if dadi_opts else set()
-        moments_keep = set(moments_opts[:TOP_K]) if moments_opts else set()
-        keep_indices = dadi_keep | moments_keep
-
-        print(f"🗑️  Starting cleanup for simulation {sid}")
-        print(f"📊 dadi top-{TOP_K} optimizations: {sorted(dadi_keep)}")
-        print(f"📊 moments top-{TOP_K} optimizations: {sorted(moments_keep)}")
-        print(f"📊 Combined optimizations to keep: {sorted(keep_indices)}")
-
-        cleaned_count = 0
-        for opt in range(NUM_OPTIMS):
-            if opt not in keep_indices:
-                run_dir = pathlib.Path(f"experiments/{MODEL}/runs/run_{sid}_{opt}")
-                if run_dir.exists():
-                    try:
-                        print(f"🗑️  Removing optimization {opt}: {run_dir}")
-                        shutil.rmtree(run_dir)
-                        cleaned_count += 1
-                    except (FileNotFoundError, PermissionError) as e:
-                        print(f"⚠️  Could not remove {run_dir}: {e}")
-
-        pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.cleanup_done, "w") as f:
-            f.write(f"Cleanup completed for simulation {sid}\n")
-            f.write(f"Removed {cleaned_count} optimization directories\n")
-
-        print(f"✅ Cleanup complete for sim {sid}: removed {cleaned_count} optimization directories")
 
 ##############################################################################
 # RULE simulate_window – one VCF window
@@ -437,6 +302,7 @@ rule cleanup_optimization_runs:
 rule simulate_window:
     input:
         params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
@@ -449,22 +315,11 @@ rule simulate_window:
     threads: 1
     shell:
         r"""
-        # Check if meta file exists and build the appropriate argument
-        META_FILE="{params.base_sim}/bgs.meta.json"
-        META_ARG=""
-        if [ -f "$META_FILE" ]; then
-            META_ARG="--meta-file $META_FILE"
-            echo "• Using BGS metadata from: $META_FILE"
-        else
-            echo "• No BGS metadata file found (likely msprime simulation or older version) - proceeding without it"
-        fi
-
-        PYTHONPATH={workflow.basedir} \
         python "{WIN_SCRIPT}" \
             --sim-dir      "{params.base_sim}" \
             --rep-index    {params.rep_idx} \
             --config-file  "{params.cfg}" \
-            $META_ARG \
+            --meta-file    "{input.metafile}" \
             --out-dir      "{params.out_winDir}"
         """
 
@@ -474,42 +329,27 @@ rule simulate_window:
 rule ld_window:
     input:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"
+        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"  # Needed for GPU acceleration
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
         sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins    = R_BINS_STR,
-        cfg     = EXP_CFG,
-        gpu_flag = "--use-gpu" if USE_GPU_LD else ""
+        cfg    = EXP_CFG
+
     threads: 4
     resources:
-        ld_cores=4
+        ld_cores=4,
+        gpu_mem=1  # Limit concurrent GPU jobs
     shell:
-        r"""
-        echo "CUDA_VISIBLE_DEVICES in Snakemake job: ${{CUDA_VISIBLE_DEVICES:-not_set}}"
-
-        python "{LD_SCRIPT}" \
+        """
+        ~/miniforge3/envs/snakemake-env/bin/python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
-            {params.gpu_flag}
-
-        EXIT_CODE=$?
-
-        if [ $EXIT_CODE -eq 0 ]; then
-            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
-            echo "🧹 Cleanup completed for window {wildcards.win}"
-        else
-            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
-            exit $EXIT_CODE
-        fi
+            --use-gpu
         """
-
 
 ##############################################################################
 # RULE optimize_momentsld – aggregate windows & optimise momentsLD          #
@@ -532,16 +372,15 @@ rule optimize_momentsld:
         bins      = R_BINS_STR,
         n_windows = NUM_WINDOWS,
         cfg  = EXP_CFG
+
     threads: 1
     shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
+        """
         python "snakemake_scripts/LD_inference.py" \
             --run-dir      {params.sim_dir} \
             --output-root  {params.LD_dir} \
             --config-file  {params.cfg}
         """
-
 
 ##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}             #
@@ -692,37 +531,13 @@ rule combine_features:
     input:
         cfg  = EXP_CFG
     output:
-        # full post-filtering data
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-
-        # raw splits
-        train_X       = f"experiments/{MODEL}/modeling/datasets/train_features.pkl",
-        train_y       = f"experiments/{MODEL}/modeling/datasets/train_targets.pkl",
-        tune_X        = f"experiments/{MODEL}/modeling/datasets/tune_features.pkl",
-        tune_y        = f"experiments/{MODEL}/modeling/datasets/tune_targets.pkl",
-        val_X         = f"experiments/{MODEL}/modeling/datasets/validation_features.pkl",
-        val_y         = f"experiments/{MODEL}/modeling/datasets/validation_targets.pkl",
-
-        # normalized splits
         ntrain_X      = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         ntrain_y      = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        ntune_X       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        ntune_y       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         nval_X        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         nval_y        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-
-        # split indices + plots/metrics
-        split_idx     = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
-        scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
-        mse_val_png   = f"experiments/{MODEL}/modeling/datasets/mse_bars_val_normalized.png",
-        mse_train_png = f"experiments/{MODEL}/modeling/datasets/mse_bars_train_normalized.png",
-        metrics_all   = f"experiments/{MODEL}/modeling/datasets/metrics_all.json",
-        metrics_dadi  = f"experiments/{MODEL}/modeling/datasets/metrics_dadi.json",
-        metrics_moments = f"experiments/{MODEL}/modeling/datasets/metrics_moments.json",
-        metrics_momentsLD = f"experiments/{MODEL}/modeling/datasets/metrics_momentsLD.json",
-        outliers_tsv  = f"experiments/{MODEL}/modeling/datasets/outliers_removed.tsv",
-        outliers_txt  = f"experiments/{MODEL}/modeling/datasets/outliers_preview.txt"
+        scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png"
     params:
         script = "snakemake_scripts/feature_extraction.py",
         outdir = f"experiments/{MODEL}/modeling"
@@ -730,32 +545,19 @@ rule combine_features:
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
-        /home/akapoor/miniforge3/envs/snakemake-env/bin/python "{params.script}" \
+        python "{params.script}" \
             --experiment-config "{input.cfg}" \
             --out-dir "{params.outdir}"
 
         # sanity checks
-        test -f "{output.features_df}"   && \
-        test -f "{output.targets_df}"    && \
-        test -f "{output.train_X}"       && \
-        test -f "{output.train_y}"       && \
-        test -f "{output.tune_X}"        && \
-        test -f "{output.tune_y}"        && \
-        test -f "{output.val_X}"         && \
-        test -f "{output.val_y}"         && \
-        test -f "{output.ntrain_X}"      && \
-        test -f "{output.ntrain_y}"      && \
-        test -f "{output.ntune_X}"       && \
-        test -f "{output.ntune_y}"       && \
-        test -f "{output.nval_X}"        && \
-        test -f "{output.nval_y}"        && \
-        test -f "{output.split_idx}"     && \
-        test -f "{output.scatter_png}"   && \
-        test -f "{output.mse_val_png}"   && \
-        test -f "{output.mse_train_png}" && \
-        test -f "{output.metrics_all}"
+        test -f "{output.features_df}" && \
+        test -f "{output.targets_df}"  && \
+        test -f "{output.ntrain_X}"    && \
+        test -f "{output.ntrain_y}"    && \
+        test -f "{output.nval_X}"      && \
+        test -f "{output.nval_y}"      && \
+        test -f "{output.scatter_png}"
         """
-
 
 ##############################################################################
 # RULE make_color_scheme – build color_shades.pkl & main_colors.pkl
@@ -787,33 +589,31 @@ rule linear_regression:
     input:
         X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        mdlcfg  = "config_files/model_config.yaml"
+        mdlcfg  = "config_files/model_config.yaml"   # optional
     output:
         obj   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
         errjs = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
         mdl   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
         plot  = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png"
     params:
-        script = "snakemake_scripts/linear_evaluation.py",
-        expcfg = EXP_CFG,
-        alpha = lambda w: config.get('linear', {}).get(w.reg, {}).get('alpha', 1.0) if w.reg in ['ridge', 'lasso', 'elasticnet'] else 0.0,
-        l1_ratio = lambda w: config.get('linear', {}).get(w.reg, {}).get('l1_ratio', 0.5) if w.reg == 'elasticnet' else 0.5,
-        gridflag = lambda w: "--do_grid_search" if config.get('linear', {}).get(w.reg, {}).get('grid_search', False) else ""
-    threads: 1
+        script   = "snakemake_scripts/linear_evaluation.py",
+        expcfg   = EXP_CFG,
+        alpha    = lambda w: config["linear"].get(w.reg, {}).get("alpha", 0.0),
+        l1_ratio = lambda w: config["linear"].get(w.reg, {}).get("l1_ratio", 0.5),
+        gridflag = lambda w: "--do_grid_search" if config["linear"].get(w.reg, {}).get("grid_search", False) else ""
+    threads: 2
+    benchmark:
+        f"benchmarks/linear_regression_{{reg}}.tsv"
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
         python "{params.script}" \
             --X_train_path "{input.X_train}" \
             --y_train_path "{input.y_train}" \
-            --X_tune_path  "{input.X_tune}" \
-            --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
             --experiment_config_path "{params.expcfg}" \
@@ -825,12 +625,8 @@ rule linear_regression:
             --l1_ratio {params.l1_ratio} \
             {params.gridflag}
 
-        test -f "{output.obj}"   && \
-        test -f "{output.errjs}" && \
-        test -f "{output.mdl}"   && \
-        test -f "{output.plot}"
+        test -f "{output.obj}" && test -f "{output.errjs}" && test -f "{output.mdl}"
         """
-
 
 ##############################################################################
 # RULE random_forest                                                         #
@@ -839,8 +635,6 @@ rule random_forest:
     input:
         X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
@@ -878,8 +672,6 @@ rule random_forest:
         python "{params.script}" \
             --X_train_path "{input.X_train}" \
             --y_train_path "{input.y_train}" \
-            --X_tune_path  "{input.X_tune}" \
-            --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
             --experiment_config_path "{input.expcfg}" \
@@ -903,8 +695,6 @@ rule xgboost:
     input:
         X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
@@ -952,8 +742,6 @@ rule xgboost:
         python "{params.script}" \
             --X_train_path "{input.X_train}" \
             --y_train_path "{input.y_train}" \
-            --X_tune_path  "{input.X_tune}" \
-            --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
             --experiment_config_path "{input.expcfg}" \
@@ -969,275 +757,7 @@ rule xgboost:
         test -f "{output.plot}"  && \
         test -f "{output.fi}"
         """
-
         
-##############################################################################
-# RULE download_1000G_data – Download and prepare 1000 Genomes data         #
-##############################################################################
-rule download_1000G_data:
-    output:
-        vcf      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
-        tbi      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz.tbi",
-        yri      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI.samples",
-        ceu      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/CEU.samples",
-        chb      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/CHB.samples",
-        popfile  = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
-        done     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/.download_done"
-    shell:
-        r"""
-        set -euo pipefail
-
-        # Run the download and preparation script, passing the output directory
-        bash bash_scripts/download_and_prepare_1000G_YRI_CEU_CHB.sh \
-          "$(dirname {output.vcf})"
-
-        # Verify all expected outputs exist
-        test -f "{output.vcf}" && \
-        test -f "{output.tbi}" && \
-        test -f "{output.yri}" && \
-        test -f "{output.ceu}" && \
-        test -f "{output.chb}" && \
-        test -f "{output.popfile}"
-
-        # Create completion marker
-        touch "{output.done}"
-
-        echo "✓ 1000 Genomes data download and preparation complete"
-        """
-
-
-
-##############################################################################
-# RULE compute_real_data_sfs – build 3D SFS from YRI/CEU/CHB VCF             #
-##############################################################################
-rule compute_real_data_sfs:
-    input:
-        vcf     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz",
-        popfile = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
-    output:
-        sfs = REAL_SFS
-    params:
-        config = "config_files/experiment_config_OOA_three_pop.json",
-    shell:
-        r"""
-        set -euo pipefail
-
-        python snakemake_scripts/real_data_sfs.py \
-          --input-vcf {input.vcf} \
-          --popfile   {input.popfile} \
-          --config    {params.config} \
-          --output-sfs {output.sfs}
-        """
-
-
-
-##############################################################################
-# REAL DATA – NLopt Poisson SFS optimisation (moments)
-##############################################################################
-rule infer_moments_real:
-    """
-    Run moments-based SFS inference on the real CEU/YRI SFS.
-    Uses the same model + config, but stores results in runs/run_real_{opt}.
-    """
-    input:
-        sfs = REAL_SFS
-    output:
-        # One run directory per opt, mirroring simulations:
-        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl"
-    params:
-        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/runs/run_{w.opt}",
-        cfg      = EXP_CFG,
-        model_py = (
-            f"src.simulation:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "src.simulation:drosophila_three_epoch"
-        ),
-        fix      = ""  # you can plug in real-data fixes here if you want
-    threads: 8
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
-          --mode moments \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
-          --generate-profiles \
-          {params.fix}
-
-        cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
-        """
-
-##############################################################################
-# REAL DATA – NLopt Poisson SFS optimisation (dadi)
-##############################################################################
-rule infer_dadi_real:
-    """
-    Run dadi-based SFS inference on the real CEU/YRI SFS.
-    Stores results in runs/run_real_{opt}.
-    """
-    input:
-        sfs = REAL_SFS
-    output:
-        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/dadi/fit_params.pkl"
-    params:
-        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/runs/run_{w.opt}",
-        cfg      = EXP_CFG,
-        model_py = (
-            f"src.simulation:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "src.simulation:drosophila_three_epoch"
-        ),
-        fix      = ""  # e.g. '--fix N0=10000' if you want to constrain N0 for real data
-    threads: 8
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
-          --mode dadi \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
-          {params.fix}
-
-        cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
-        """
-
-# ── REAL DATA: MOMENTS ONLY ────────────────────────────────────────────────
-rule aggregate_opts_moments_real:
-    input:
-        mom = [f"experiments/{MODEL}/real_data_analysis/runs/run_{o}/inferences/moments/fit_params.pkl"
-               for o in range(NUM_REAL_OPTIMS)]
-    output:
-        mom = f"experiments/{MODEL}/real_data_analysis/inferences/moments/fit_params.pkl"
-    run:
-        import pickle, numpy as np, pathlib
-
-        def _as_list(x):
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-
-        for opt_idx, pkl in enumerate(input.mom):
-            d = pickle.load(open(pkl, "rb"))
-            this_params = _as_list(d["best_params"])
-            this_lls    = _as_list(d["best_ll"])
-
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-        keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-        }
-
-        pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.mom, "wb"))
-
-        print(f"✅ [REAL] Aggregated {len(params)} moments optimization results → {output.mom}")
-        print(f"✅ [REAL] Kept top-{TOP_K} moments optimizations (opts={sorted(set(best['opt_index']))})")
-
-
-# ── REAL DATA: DADI ONLY ───────────────────────────────────────────────────
-rule aggregate_opts_dadi_real:
-    input:
-        dadi = [f"experiments/{MODEL}/real_data_analysis/runs/run_{o}/inferences/dadi/fit_params.pkl"
-                for o in range(NUM_REAL_OPTIMS)]
-    output:
-        dadi = f"experiments/{MODEL}/real_data_analysis/inferences/dadi/fit_params.pkl"
-    run:
-        import pickle, numpy as np, pathlib
-
-        def _as_list(x):
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-
-        for opt_idx, pkl in enumerate(input.dadi):
-            d = pickle.load(open(pkl, "rb"))
-            this_params = _as_list(d["best_params"])
-            this_lls    = _as_list(d["best_ll"])
-
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-        keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-        }
-
-        pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.dadi, "wb"))
-
-        print(f"✅ [REAL] Aggregated {len(params)} dadi optimization results → {output.dadi}")
-        print(f"✅ [REAL] Kept top-{TOP_K} dadi optimizations (opts={sorted(set(best['opt_index']))})")
-
-
-
-##############################################################################
-# REAL DATA LD ANALYSIS
-##############################################################################
-
-# One job per window
-rule split_real_vcf_window:
-    input:
-        vcf     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.chr22.no_exons.vcf.gz",
-        popfile = "experiments/OOA_three_pop/real_data_analysis/data/data_chr22_YRI_CEU_CHB/YRI_CEU_CHB.popfile"
-    output:
-        vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
-    params:
-        script      = "snakemake_scripts/split_vcf_windows.py",
-        window_size = 10_000_000,
-        num_windows = NUM_WINDOWS
-    shell:
-        """
-        python {params.script} \
-            --input-vcf {input.vcf} \
-            --popfile {input.popfile} \
-            --out-dir {REAL_LD_ROOT}/windows \
-            --window-size {params.window_size} \
-            --num-windows {params.num_windows} \
-            --window-index {wildcards.i}
-        """
-
-rule split_real_vcf:
-    input:
-        expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS)
-
-rule compute_ld_real:
-    input:
-        vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
-    output:
-        pkl = f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl"
-    params:
-        script = "snakemake_scripts/compute_ld_window.py",
-        config = EXP_CFG,
-        r_bins = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
-    shell:
-        """
-        python {params.script} \
-            --sim-dir {REAL_LD_ROOT} \
-            --window-index {wildcards.i} \
-            --config-file {params.config} \
-            --r-bins "{params.r_bins}"
-        """
-
-rule real_ld:
-    input:
-        expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS)
-
 ##############################################################################
 # Wildcard Constraints                                                      #
 ##############################################################################

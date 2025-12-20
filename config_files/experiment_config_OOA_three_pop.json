@@ -12,7 +12,7 @@
     "seed": 42,
     "num_optimizations": 1,
     "top_k": 1,
-    "num_draws": 5000,
+    "num_draws": 1,
     "priors": {
         "N_anc": [
             100,
@@ -60,6 +60,6 @@
     "use_residuals": false,
     "residual_engines": "moments",
     "engine": "msprime",
-    "use_gpu_ld": false,
+    "use_gpu_ld": true,
     "remove_exons": true
 }
