@@ -21,7 +21,7 @@ BATCH_SIZE=50     # number of (sim,window) jobs per array task
 # ----------------------------------------------------------------------------
 
 # -------- config & constants -----------------------------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

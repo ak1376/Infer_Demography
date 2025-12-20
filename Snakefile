@@ -23,11 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-<<<<<<< HEAD
-EXP_CFG      = "config_files/experiment_config_OOA_three_pop.json"
-=======
-EXP_CFG      = "config_files/experiment_config_bottleneck.json"
->>>>>>> ea5a27f (Speeding up random forest, making sure parameter fixing is happening correctly)
+EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -441,7 +437,6 @@ rule cleanup_optimization_runs:
 rule simulate_window:
     input:
         params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
@@ -454,12 +449,22 @@ rule simulate_window:
     threads: 1
     shell:
         r"""
+        # Check if meta file exists and build the appropriate argument
+        META_FILE="{params.base_sim}/bgs.meta.json"
+        META_ARG=""
+        if [ -f "$META_FILE" ]; then
+            META_ARG="--meta-file $META_FILE"
+            echo "• Using BGS metadata from: $META_FILE"
+        else
+            echo "• No BGS metadata file found (likely msprime simulation or older version) - proceeding without it"
+        fi
+
         PYTHONPATH={workflow.basedir} \
         python "{WIN_SCRIPT}" \
             --sim-dir      "{params.base_sim}" \
             --rep-index    {params.rep_idx} \
             --config-file  "{params.cfg}" \
-            --meta-file    "{input.metafile}" \
+            $META_ARG \
             --out-dir      "{params.out_winDir}"
         """
 

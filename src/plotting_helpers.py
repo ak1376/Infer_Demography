@@ -80,8 +80,17 @@ def visualizing_results(
     cols = math.ceil(num_params / rows)
 
     # ------------------------------------------------------------------
-    # NEW: choose a single color per STAGE (same across all parameters)
+    # Choose colors per STAGE - make it intuitive and consistent
     # ------------------------------------------------------------------
+    # Define intuitive stage colors explicitly
+    stage_color_map = {
+        "training": "#FF6B6B",    # Red/pink for training
+        "validation": "#4ECDC4",  # Teal/blue for validation  
+        "testing": "#45B7D1",     # Blue for testing
+        "tune": "#96CEB4",        # Green for tuning
+        "test": "#45B7D1"         # Same as testing
+    }
+    
     if color_shades is not None and main_colors is not None:
         # Use first len(stages) main colors, first shade for each
         stage_colors = {}
@@ -91,12 +100,18 @@ def visualizing_results(
             # Take the "main" shade (index 0)
             stage_colors[stage] = shades_for_base[0]
     else:
-        # Fallback: simple matplotlib tab colors
-        default_palette = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
-        stage_colors = {
-            stage: default_palette[idx % len(default_palette)]
-            for idx, stage in enumerate(stages)
-        }
+        # Use intuitive colors based on stage names
+        stage_colors = {}
+        for stage in stages:
+            if stage in stage_color_map:
+                stage_colors[stage] = stage_color_map[stage]
+            else:
+                # Fallback for unknown stages
+                fallback_colors = ["tab:purple", "tab:brown", "tab:olive", "tab:cyan"]
+                stage_colors[stage] = fallback_colors[len(stage_colors) % len(fallback_colors)]
+
+    # Debug: print color assignments
+    print(f"Stage color assignments: {stage_colors}")
 
     plt.figure(figsize=(5 * cols, 5 * rows))
 

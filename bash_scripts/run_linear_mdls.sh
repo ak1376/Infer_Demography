@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_bottleneck.json"
+CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 CORES="${SLURM_CPUS_PER_TASK:-4}"
