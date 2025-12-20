@@ -218,13 +218,11 @@ rule infer_moments:
         cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
         """
 
-##############################################################################
-# RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
-##############################################################################
+
 rule infer_dadi:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  # ONLY USED WHEN FIXING PARAMETERS!
     output:
         pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
     params:
@@ -235,11 +233,99 @@ rule infer_dadi:
             if MODEL != "drosophila_three_epoch"
             else "src.simulation:drosophila_three_epoch"
         ),
-        fix      = "",     # e.g. '--fix N0=10000 --fix m12=0.0'
+        fix      = "",  # e.g. '--fix N0=10000 --fix m12=0.0'
     threads: 8
     shell:
         r"""
         set -euo pipefail
+
+        # ------------------------------
+        # Read whether GPU is requested
+        # ------------------------------
+        USE_GPU="$(jq -r '.use_gpu_dadi // false' "{params.cfg}" 2>/dev/null || echo false)"
+        echo "[infer_dadi] use_gpu_dadi = $USE_GPU"
+
+        # ------------------------------
+        # Try to ensure nvcc exists *if* GPU requested
+        # ------------------------------
+        if [[ "$USE_GPU" == "true" ]]; then
+            # If Talapas uses modules, try loading CUDA
+            if [ -f /etc/profile.d/modules.sh ]; then
+                source /etc/profile.d/modules.sh 2>/dev/null || true
+            fi
+            if command -v module >/dev/null 2>&1; then
+                module load cuda 2>/dev/null || true
+                module load cudatoolkit 2>/dev/null || true
+                module list 2>/dev/null || true
+            fi
+
+            # Fallback: common CUDA install dirs
+            if ! command -v nvcc >/dev/null 2>&1; then
+                for d in /usr/local/cuda /usr/local/cuda-12* /usr/local/cuda-11*; do
+                    if [ -x "$d/bin/nvcc" ]; then
+                        export CUDA_HOME="$d"
+                        export PATH="$d/bin:$PATH"
+                        export LD_LIBRARY_PATH="$d/lib64:${{LD_LIBRARY_PATH:-}}"
+                        break
+                    fi
+                done
+            fi
+
+            echo "[infer_dadi] nvcc: $(command -v nvcc || echo NOT_FOUND)"
+            nvcc --version || true
+        fi
+
+        # ------------------------------
+        # Basic environment / version debug
+        # ------------------------------
+        echo "===== PYTHON / DADI CHECK ====="
+        python -V
+        which python
+        python -c "import sys; print('exe', sys.executable)"
+        python -c "import dadi; print('dadi', getattr(dadi,'__version__','no_version'), dadi.__file__)"
+
+        echo "===== GPU INFO ====="
+        echo "sid={wildcards.sid} opt={wildcards.opt}"
+        echo "SLURM_JOB_ID=${{SLURM_JOB_ID:-unset}} SLURM_ARRAY_TASK_ID=${{SLURM_ARRAY_TASK_ID:-unset}}"
+        echo "CUDA_VISIBLE_DEVICES=${{CUDA_VISIBLE_DEVICES:-unset}}"
+        nvidia-smi -L || true
+
+        # ------------------------------
+        # PyCUDA cache + host compiler for nvcc
+        # ------------------------------
+        export PYCUDA_CACHE_DIR="${{TMPDIR:-/tmp}}/pycuda_cache_${{SLURM_JOB_ID:-nojob}}_{wildcards.sid}_{wildcards.opt}"
+        mkdir -p "$PYCUDA_CACHE_DIR"
+        export CUDAHOSTCXX=/usr/bin/g++
+        export PYCUDA_DEFAULT_NVCC_OPTIONS="-O3"
+
+        export OMP_NUM_THREADS={threads}
+        export MKL_NUM_THREADS={threads}
+
+        # ------------------------------
+        # Only do the dangerous import test when GPU requested
+        # (prevents hard-crash when nvcc is missing and GPU not requested)
+        # ------------------------------
+        if [[ "$USE_GPU" == "true" ]]; then
+            echo "===== DADI CUDA IMPORT TEST (GPU requested) ====="
+            python - <<'PY'
+import traceback
+import dadi
+print("dadi file:", dadi.__file__)
+try:
+    import dadi.cuda
+    print("dadi.cuda import: OK")
+except Exception as e:
+    print("dadi.cuda import: FAIL")
+    traceback.print_exc()
+    raise SystemExit(2)
+PY
+        else
+            echo "===== Skipping dadi.cuda import test (GPU not requested) ====="
+        fi
+
+        # ------------------------------
+        # Run inference
+        # ------------------------------
         PYTHONPATH={workflow.basedir} \
         python "snakemake_scripts/moments_dadi_inference.py" \
           --mode dadi \
@@ -252,6 +338,7 @@ rule infer_dadi:
 
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
         """
+
 
 # ── MOMENTS ONLY ───────────────────────────────────────────────────────────
 rule aggregate_opts_moments:
