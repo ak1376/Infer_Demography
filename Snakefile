@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG      = "config_files/experiment_config_bottleneck.json"
+EXP_CFG      = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -82,67 +82,92 @@ final_pkl = lambda sid, tool: f"experiments/{MODEL}/inferences/sim_{sid}/{tool}/
 ##############################################################################
 rule all:
     input:
+        # ── SIMULATED DATA PIPELINE ────────────────────────────────────────
         # Simulation artifacts
         expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
         expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-        # # # Aggregated optimizer results
-        # [final_pkl(sid, "moments") for sid in SIM_IDS],
-        # [final_pkl(sid, "dadi")    for sid in SIM_IDS],
+        # # Aggregated optimizer results (simulated)
+        [final_pkl(sid, "moments") for sid in SIM_IDS],
+        [final_pkl(sid, "dadi")    for sid in SIM_IDS],
 
-        # # # LD artifacts
-        expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",        sid=SIM_IDS, win=WINDOWS),
-        expand(f"{LD_ROOT}/windows/window_{{win}}.trees",         sid=SIM_IDS, win=WINDOWS),
-        # expand(f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl", sid=SIM_IDS, win=WINDOWS),
-        # expand(f"{LD_ROOT}/best_fit.pkl",                         sid=SIM_IDS),
+        # # Cleanup completion markers (simulated)
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
-        # # FIM (always computed)
+        # # LD artifacts (simulated; best-fit only)
+        # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+
+        # # FIM (simulated)
         # expand(
         #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
         #     sid=SIM_IDS, engine=FIM_ENGINES
         # ),
 
-        # # Residuals (always computed)
+        # # Residuals (simulated)
         # expand(
         #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
         #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
         # ),
 
-        # # Combined per-sim inference blobs (include FIM/residuals payloads)
-        # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
+        # # Combined per-sim inference blobs (simulated)
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
-        # # Modeling datasets
-        # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        # f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        # ── MODELING (on simulated inferences) ─────────────────────────────
+        # Datasets
+        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
+        f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
 
-        # # Colors
-        # f"experiments/{MODEL}/modeling/color_shades.pkl",
-        # f"experiments/{MODEL}/modeling/main_colors.pkl",
+        # Color scheme
+        f"experiments/{MODEL}/modeling/color_shades.pkl",
+        f"experiments/{MODEL}/modeling/main_colors.pkl",
 
-        # # Models
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-        # expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
+        # Linear models
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png", reg=REG_TYPES),
 
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+        # Random forest
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+        # XGBoost
+        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+
+        # ── REAL DATA: 1000G DOWNLOAD + POPFILES ───────────────────────────
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.chr22.vcf.gz.tbi",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU.samples",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/YRI.samples",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/.download_done",
+        # "experiments/split_isolation/real_data_analysis/data/data_chr22_CEU_YRI/CEU_YRI.popfile",
+
+        # Real-data SFS (this is your REAL_SFS constant)
+        # REAL_SFS,
+
+        # REAL DATA: aggregated SFS inferences (from runs/run_real_{opt})
+        # REAL_FINAL_PKL("moments"),
+        # REAL_FINAL_PKL("dadi"),
+
+        # REAL DATA: LD stats for each window
+        # expand(
+        #     f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl",
+        #     i=WINDOWS,
+        # )
 
 
 ##############################################################################
@@ -219,10 +244,13 @@ rule infer_moments:
         """
 
 
+##############################################################################
+# RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
+##############################################################################
 rule infer_dadi:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  # ONLY USED WHEN FIXING PARAMETERS!
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
     output:
         pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
     params:
@@ -233,112 +261,40 @@ rule infer_dadi:
             if MODEL != "drosophila_three_epoch"
             else "src.simulation:drosophila_three_epoch"
         ),
-        fix      = "",  # e.g. '--fix N0=10000 --fix m12=0.0'
+        fix      = "",
     threads: 8
     shell:
         r"""
         set -euo pipefail
 
-        # ------------------------------
-        # Read whether GPU is requested
-        # ------------------------------
-        USE_GPU="$(jq -r '.use_gpu_dadi // false' "{params.cfg}" 2>/dev/null || echo false)"
-        echo "[infer_dadi] use_gpu_dadi = $USE_GPU"
-
-        # ------------------------------
-        # Try to ensure nvcc exists *if* GPU requested
-        # ------------------------------
-        if [[ "$USE_GPU" == "true" ]]; then
-            # If Talapas uses modules, try loading CUDA
-            if [ -f /etc/profile.d/modules.sh ]; then
-                source /etc/profile.d/modules.sh 2>/dev/null || true
-            fi
-            if command -v module >/dev/null 2>&1; then
-                module load cuda 2>/dev/null || true
-                module load cudatoolkit 2>/dev/null || true
-                module list 2>/dev/null || true
-            fi
-
-            # Fallback: common CUDA install dirs
-            if ! command -v nvcc >/dev/null 2>&1; then
-                for d in /usr/local/cuda /usr/local/cuda-12* /usr/local/cuda-11*; do
-                    if [ -x "$d/bin/nvcc" ]; then
-                        export CUDA_HOME="$d"
-                        export PATH="$d/bin:$PATH"
-                        export LD_LIBRARY_PATH="$d/lib64:${{LD_LIBRARY_PATH:-}}"
-                        break
-                    fi
-                done
-            fi
-
-            echo "[infer_dadi] nvcc: $(command -v nvcc || echo NOT_FOUND)"
-            nvcc --version || true
-        fi
-
-        # ------------------------------
-        # Basic environment / version debug
-        # ------------------------------
-        echo "===== PYTHON / DADI CHECK ====="
-        python -V
-        which python
-        python -c "import sys; print('exe', sys.executable)"
-        python -c "import dadi; print('dadi', getattr(dadi,'__version__','no_version'), dadi.__file__)"
-
-        echo "===== GPU INFO ====="
+        echo "===== infer_dadi ENV ====="
         echo "sid={wildcards.sid} opt={wildcards.opt}"
         echo "SLURM_JOB_ID=${{SLURM_JOB_ID:-unset}} SLURM_ARRAY_TASK_ID=${{SLURM_ARRAY_TASK_ID:-unset}}"
         echo "CUDA_VISIBLE_DEVICES=${{CUDA_VISIBLE_DEVICES:-unset}}"
+        echo "PYCUDA_CACHE_DIR=${{PYCUDA_CACHE_DIR:-unset}}"
+        echo "CUDAHOSTCXX=${{CUDAHOSTCXX:-unset}}"
+        command -v nvcc >/dev/null 2>&1 && echo "nvcc=$(command -v nvcc)" || echo "nvcc=NOT_FOUND"
         nvidia-smi -L || true
 
-        # ------------------------------
-        # PyCUDA cache + host compiler for nvcc
-        # ------------------------------
-        export PYCUDA_CACHE_DIR="${{TMPDIR:-/tmp}}/pycuda_cache_${{SLURM_JOB_ID:-nojob}}_{wildcards.sid}_{wildcards.opt}"
-        mkdir -p "$PYCUDA_CACHE_DIR"
-        export CUDAHOSTCXX=/usr/bin/g++
-        export PYCUDA_DEFAULT_NVCC_OPTIONS="-O3"
-
+        # Keep threading sane
         export OMP_NUM_THREADS={threads}
         export MKL_NUM_THREADS={threads}
 
-        # ------------------------------
-        # Only do the dangerous import test when GPU requested
-        # (prevents hard-crash when nvcc is missing and GPU not requested)
-        # ------------------------------
-        if [[ "$USE_GPU" == "true" ]]; then
-            echo "===== DADI CUDA IMPORT TEST (GPU requested) ====="
-            python - <<'PY'
-import traceback
-import dadi
-print("dadi file:", dadi.__file__)
-try:
-    import dadi.cuda
-    print("dadi.cuda import: OK")
-except Exception as e:
-    print("dadi.cuda import: FAIL")
-    traceback.print_exc()
-    raise SystemExit(2)
-PY
-        else
-            echo "===== Skipping dadi.cuda import test (GPU not requested) ====="
-        fi
+        # Ensure output dirs exist
+        mkdir -p "{params.run_dir}/inferences/dadi"
 
-        # ------------------------------
-        # Run inference
-        # ------------------------------
         PYTHONPATH={workflow.basedir} \
         python "snakemake_scripts/moments_dadi_inference.py" \
           --mode dadi \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
-          --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
+          --ground-truth "{input.params}" \
           {params.fix}
 
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
         """
-
 
 # ── MOMENTS ONLY ───────────────────────────────────────────────────────────
 rule aggregate_opts_moments:
@@ -348,18 +304,38 @@ rule aggregate_opts_moments:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-        def _as_list(x): 
+
+        def _as_list(x):
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-        params, lls = [], []
-        for pkl in input.mom:
+
+        params, lls, opt_ids = [], [], []
+
+        # Read all the data; track which opt each entry came from
+        for opt_idx, pkl in enumerate(input.mom):
             d = pickle.load(open(pkl, "rb"))
-            params.extend(_as_list(d["best_params"]))
-            lls.extend(_as_list(d["best_ll"]))
+            this_params = _as_list(d["best_params"])
+            this_lls    = _as_list(d["best_ll"])
+
+            params.extend(this_params)
+            lls.extend(this_lls)
+            opt_ids.extend([opt_idx] * len(this_lls))
+
+        # Choose top-K by LL
         keep = np.argsort(lls)[::-1][:TOP_K]
-        best = {"best_params": [params[i] for i in keep],
-                "best_ll":      [lls[i]    for i in keep]}
+
+        best = {
+            "best_params": [params[i] for i in keep],
+            "best_ll":     [lls[i]    for i in keep],
+            # record which optimization index each kept entry came from
+            "opt_index":   [opt_ids[i] for i in keep],
+        }
+
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.mom, "wb"))
+
+        print(f"✅ Aggregated {len(params)} moments optimization results → {output.mom}")
+        print(f"✅ Kept top-{TOP_K} moments optimizations (opts={sorted(set(best['opt_index']))})")
+
 
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
 rule aggregate_opts_dadi:
@@ -369,19 +345,84 @@ rule aggregate_opts_dadi:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
         import pickle, numpy as np, pathlib
-        def _as_list(x): 
+
+        def _as_list(x):
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-        params, lls = [], []
-        for pkl in input.dadi:
+
+        params, lls, opt_ids = [], [], []
+
+        # Read all the data; track which opt each entry came from
+        for opt_idx, pkl in enumerate(input.dadi):
             d = pickle.load(open(pkl, "rb"))
-            params.extend(_as_list(d["best_params"]))
-            lls.extend(_as_list(d["best_ll"]))
+            this_params = _as_list(d["best_params"])
+            this_lls    = _as_list(d["best_ll"])
+
+            params.extend(this_params)
+            lls.extend(this_lls)
+            opt_ids.extend([opt_idx] * len(this_lls))
+
+            # NOTE: opt_idx == the optimization index (0..NUM_OPTIMS-1)
+
+        # Choose top-K by LL
         keep = np.argsort(lls)[::-1][:TOP_K]
-        best = {"best_params": [params[i] for i in keep],
-                "best_ll":      [lls[i]    for i in keep]}
+
+        best = {
+            "best_params": [params[i] for i in keep],
+            "best_ll":     [lls[i]    for i in keep],
+            "opt_index":   [opt_ids[i] for i in keep],
+        }
+
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.dadi, "wb"))
 
+        print(f"✅ Aggregated {len(params)} dadi optimization results → {output.dadi}")
+        print(f"✅ Kept top-{TOP_K} dadi optimizations (opts={sorted(set(best['opt_index']))})")
+
+
+
+# ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
+rule cleanup_optimization_runs:
+    input:
+        dadi    = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
+        moments = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+    output:
+        cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
+    run:
+        import pickle, pathlib, shutil
+
+        sid = wildcards.sid
+
+        dadi_data    = pickle.load(open(input.dadi, "rb"))
+        moments_data = pickle.load(open(input.moments, "rb"))
+
+        # opt_index already corresponds to optimizer id (0..NUM_OPTIMS-1)
+        dadi_opts    = list(dadi_data.get("opt_index", []))
+        moments_opts = list(moments_data.get("opt_index", []))
+
+        dadi_keep    = set(dadi_opts[:TOP_K]) if dadi_opts else set()
+        moments_keep = set(moments_opts[:TOP_K]) if moments_opts else set()
+        keep_indices = dadi_keep | moments_keep
+
+        print(f"🗑️  Starting cleanup for simulation {sid}")
+        print(f"📊 dadi top-{TOP_K} optimizations: {sorted(dadi_keep)}")
+        print(f"📊 moments top-{TOP_K} optimizations: {sorted(moments_keep)}")
+        print(f"📊 Combined optimizations to keep: {sorted(keep_indices)}")
+
+        cleaned_count = 0
+        for opt in range(NUM_OPTIMS):
+            if opt not in keep_indices:
+                run_dir = pathlib.Path(f"experiments/{MODEL}/runs/run_{sid}_{opt}")
+                if run_dir.exists():
+                    print(f"🗑️  Removing optimization {opt}: {run_dir}")
+                    shutil.rmtree(run_dir)
+                    cleaned_count += 1
+
+        pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.cleanup_done, "w") as f:
+            f.write(f"Cleanup completed for simulation {sid}\n")
+            f.write(f"Removed {cleaned_count} optimization directories\n")
+
+        print(f"✅ Cleanup complete for sim {sid}: removed {cleaned_count} optimization directories")
 
 ##############################################################################
 # RULE simulate_window – one VCF window
