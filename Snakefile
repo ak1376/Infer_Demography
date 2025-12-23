@@ -479,6 +479,8 @@ rule simulate_window:
     threads: 1
     shell:
         r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
         python "{WIN_SCRIPT}" \
             --sim-dir      "{params.base_sim}" \
             --rep-index    {params.rep_idx} \
@@ -493,7 +495,7 @@ rule simulate_window:
 rule ld_window:
     input:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"  # Needed for GPU acceleration
+        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
@@ -503,16 +505,31 @@ rule ld_window:
 
     threads: 4
     resources:
-        ld_cores=4,
-        gpu_mem=1  # Limit concurrent GPU jobs
+        ld_cores=4
     shell:
         """
-        ~/miniforge3/envs/snakemake-env/bin/python "{LD_SCRIPT}" \
+        # Run the LD computation and capture exit code
+        python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
             --use-gpu
+
+        
+        EXIT_CODE=$?
+        
+        # If successful, clean up intermediate files
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
+            echo "🧹 Cleanup completed for window {wildcards.win}"
+        else
+            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
+            exit $EXIT_CODE
+        fi
         """
 
 ##############################################################################
