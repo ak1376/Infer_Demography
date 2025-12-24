@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-4999                # <— full range, no %MAX_CONCURRENT
+#SBATCH --array=0-9999                # <— full range, no %MAX_CONCURRENT
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=5:00:00
@@ -17,7 +17,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 0. batching parameters ----------------------------------------------------
 # ---------------------------------------------------------------------------
-BATCH_SIZE=1
+BATCH_SIZE=2
 
 # ---------------------------------------------------------------------------
 # 1. paths & config ---------------------------------------------------------

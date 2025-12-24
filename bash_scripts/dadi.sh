@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-BATCH_SIZE=50
+BATCH_SIZE=200
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
