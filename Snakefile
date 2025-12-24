@@ -556,7 +556,8 @@ rule optimize_momentsld:
 
     threads: 1
     shell:
-        """
+        r"""
+        PYTHONPATH=/projects/kernlab/akapoor/Infer_Demography \
         python "snakemake_scripts/LD_inference.py" \
             --run-dir      {params.sim_dir} \
             --output-root  {params.LD_dir} \
@@ -712,13 +713,37 @@ rule combine_features:
     input:
         cfg  = EXP_CFG
     output:
+        # full post-filtering data
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+
+        # raw splits
+        train_X       = f"experiments/{MODEL}/modeling/datasets/train_features.pkl",
+        train_y       = f"experiments/{MODEL}/modeling/datasets/train_targets.pkl",
+        tune_X        = f"experiments/{MODEL}/modeling/datasets/tune_features.pkl",
+        tune_y        = f"experiments/{MODEL}/modeling/datasets/tune_targets.pkl",
+        val_X         = f"experiments/{MODEL}/modeling/datasets/validation_features.pkl",
+        val_y         = f"experiments/{MODEL}/modeling/datasets/validation_targets.pkl",
+
+        # normalized splits
         ntrain_X      = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         ntrain_y      = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        ntune_X       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
+        ntune_y       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         nval_X        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         nval_y        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
-        scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png"
+
+        # split indices + plots/metrics
+        split_idx     = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
+        scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
+        mse_val_png   = f"experiments/{MODEL}/modeling/datasets/mse_bars_val_normalized.png",
+        mse_train_png = f"experiments/{MODEL}/modeling/datasets/mse_bars_train_normalized.png",
+        metrics_all   = f"experiments/{MODEL}/modeling/datasets/metrics_all.json",
+        metrics_dadi  = f"experiments/{MODEL}/modeling/datasets/metrics_dadi.json",
+        metrics_moments = f"experiments/{MODEL}/modeling/datasets/metrics_moments.json",
+        metrics_momentsLD = f"experiments/{MODEL}/modeling/datasets/metrics_momentsLD.json",
+        outliers_tsv  = f"experiments/{MODEL}/modeling/datasets/outliers_removed.tsv",
+        outliers_txt  = f"experiments/{MODEL}/modeling/datasets/outliers_preview.txt"
     params:
         script = "snakemake_scripts/feature_extraction.py",
         outdir = f"experiments/{MODEL}/modeling"
@@ -726,18 +751,30 @@ rule combine_features:
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
+        /home/akapoor/miniforge3/envs/snakemake-env/bin/python "{params.script}" \
             --experiment-config "{input.cfg}" \
             --out-dir "{params.outdir}"
 
         # sanity checks
-        test -f "{output.features_df}" && \
-        test -f "{output.targets_df}"  && \
-        test -f "{output.ntrain_X}"    && \
-        test -f "{output.ntrain_y}"    && \
-        test -f "{output.nval_X}"      && \
-        test -f "{output.nval_y}"      && \
-        test -f "{output.scatter_png}"
+        test -f "{output.features_df}"   && \
+        test -f "{output.targets_df}"    && \
+        test -f "{output.train_X}"       && \
+        test -f "{output.train_y}"       && \
+        test -f "{output.tune_X}"        && \
+        test -f "{output.tune_y}"        && \
+        test -f "{output.val_X}"         && \
+        test -f "{output.val_y}"         && \
+        test -f "{output.ntrain_X}"      && \
+        test -f "{output.ntrain_y}"      && \
+        test -f "{output.ntune_X}"       && \
+        test -f "{output.ntune_y}"       && \
+        test -f "{output.nval_X}"        && \
+        test -f "{output.nval_y}"        && \
+        test -f "{output.split_idx}"     && \
+        test -f "{output.scatter_png}"   && \
+        test -f "{output.mse_val_png}"   && \
+        test -f "{output.mse_train_png}" && \
+        test -f "{output.metrics_all}"
         """
 
 ##############################################################################
@@ -816,6 +853,8 @@ rule random_forest:
     input:
         X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
+        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
@@ -853,6 +892,8 @@ rule random_forest:
         python "{params.script}" \
             --X_train_path "{input.X_train}" \
             --y_train_path "{input.y_train}" \
+            --X_tune_path  "{input.X_tune}" \
+            --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
             --experiment_config_path "{input.expcfg}" \
@@ -876,6 +917,8 @@ rule xgboost:
     input:
         X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
+        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
         X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
@@ -923,6 +966,8 @@ rule xgboost:
         python "{params.script}" \
             --X_train_path "{input.X_train}" \
             --y_train_path "{input.y_train}" \
+            --X_tune_path  "{input.X_tune}" \
+            --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
             --experiment_config_path "{input.expcfg}" \
