@@ -318,19 +318,22 @@ rule aggregate_opts_moments:
     output:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, numpy as np, pathlib, re, glob, os
 
         sid = wildcards.sid
 
-        # discover whatever exists (no DAG explosion)
         mom_pkls = sorted(glob.glob(
             f"experiments/{MODEL}/runs/run_{sid}_*/inferences/moments/fit_params.pkl"
         ))
 
         def _as_list(x):
+            if x is None:
+                return []
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
 
         params, lls, opt_ids = [], [], []
+        n_readable = 0
+        n_nonempty = 0
 
         for pkl_path in mom_pkls:
             m = re.search(rf"/run_{sid}_(\d+)/inferences/moments/fit_params\.pkl$", pkl_path)
@@ -338,38 +341,46 @@ rule aggregate_opts_moments:
                 continue
             opt_idx = int(m.group(1))
 
-            d = pickle.load(open(pkl_path, "rb"))
+            # Load defensively; corrupt pkls should not silently "count"
+            try:
+                with open(pkl_path, "rb") as fh:
+                    d = pickle.load(fh)
+                n_readable += 1
+            except Exception as e:
+                print(f"WARNING: could not load {pkl_path}: {e}")
+                continue
+
             this_params = _as_list(d.get("best_params"))
             this_lls    = _as_list(d.get("best_ll"))
 
-            # skip empty/None
-            if this_lls is None or len(this_lls) == 0:
+            # treat "present" only if it contributes at least one ll
+            if len(this_lls) == 0:
                 continue
 
+            n_nonempty += 1
             params.extend(this_params)
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        # If nothing exists, still write a file so downstream doesn't crash
+        # ---- FAIL HARD if nothing to aggregate ----
         if len(lls) == 0:
-            best = {
-                "best_params": [],
-                "best_ll": [],
-                "opt_index": [],
-                "n_files_found": len(mom_pkls),
-                "note": f"No moments pkls found (or all empty) for sid={sid}",
-            }
-        else:
-            keep = np.argsort(lls)[::-1][:TOP_K]
-            best = {
-                "best_params": [params[i] for i in keep],
-                "best_ll":     [lls[i]    for i in keep],
-                "opt_index":   [opt_ids[i] for i in keep],
-                "n_files_found": len(mom_pkls),
-            }
+            raise ValueError(
+                f"[aggregate_opts_moments] No non-empty moments optimizations for sid={sid}. "
+                f"Found {len(mom_pkls)} pkl paths, readable={n_readable}, nonempty={n_nonempty}. "
+                f"Expected at least one run_{sid}_*/inferences/moments/fit_params.pkl with non-empty best_ll."
+            )
+
+        keep = np.argsort(lls)[::-1][:TOP_K]
+        best = {
+            "best_params": [params[i] for i in keep],
+            "best_ll":     [lls[i]    for i in keep],
+            "opt_index":   [opt_ids[i] for i in keep],
+            "n_files_found": len(mom_pkls),
+        }
 
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.mom, "wb"))
+        with open(output.mom, "wb") as fh:
+            pickle.dump(best, fh)
 
         print(f"✅ moments: found {len(mom_pkls)} files, aggregated {len(lls)} entries → {output.mom}")
         print(f"✅ moments: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
@@ -380,7 +391,7 @@ rule aggregate_opts_dadi:
     output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, numpy as np, pathlib, re, glob, os
 
         sid = wildcards.sid
 
@@ -389,9 +400,13 @@ rule aggregate_opts_dadi:
         ))
 
         def _as_list(x):
+            if x is None:
+                return []
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
 
         params, lls, opt_ids = [], [], []
+        n_readable = 0
+        n_nonempty = 0
 
         for pkl_path in dadi_pkls:
             m = re.search(rf"/run_{sid}_(\d+)/inferences/dadi/fit_params\.pkl$", pkl_path)
@@ -399,36 +414,44 @@ rule aggregate_opts_dadi:
                 continue
             opt_idx = int(m.group(1))
 
-            d = pickle.load(open(pkl_path, "rb"))
+            try:
+                with open(pkl_path, "rb") as fh:
+                    d = pickle.load(fh)
+                n_readable += 1
+            except Exception as e:
+                print(f"WARNING: could not load {pkl_path}: {e}")
+                continue
+
             this_params = _as_list(d.get("best_params"))
             this_lls    = _as_list(d.get("best_ll"))
 
-            if this_lls is None or len(this_lls) == 0:
+            if len(this_lls) == 0:
                 continue
 
+            n_nonempty += 1
             params.extend(this_params)
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
+        # ---- FAIL HARD if nothing to aggregate ----
         if len(lls) == 0:
-            best = {
-                "best_params": [],
-                "best_ll": [],
-                "opt_index": [],
-                "n_files_found": len(dadi_pkls),
-                "note": f"No dadi pkls found (or all empty) for sid={sid}",
-            }
-        else:
-            keep = np.argsort(lls)[::-1][:TOP_K]
-            best = {
-                "best_params": [params[i] for i in keep],
-                "best_ll":     [lls[i]    for i in keep],
-                "opt_index":   [opt_ids[i] for i in keep],
-                "n_files_found": len(dadi_pkls),
-            }
+            raise ValueError(
+                f"[aggregate_opts_dadi] No non-empty dadi optimizations for sid={sid}. "
+                f"Found {len(dadi_pkls)} pkl paths, readable={n_readable}, nonempty={n_nonempty}. "
+                f"Expected at least one run_{sid}_*/inferences/dadi/fit_params.pkl with non-empty best_ll."
+            )
+
+        keep = np.argsort(lls)[::-1][:TOP_K]
+        best = {
+            "best_params": [params[i] for i in keep],
+            "best_ll":     [lls[i]    for i in keep],
+            "opt_index":   [opt_ids[i] for i in keep],
+            "n_files_found": len(dadi_pkls),
+        }
 
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.dadi, "wb"))
+        with open(output.dadi, "wb") as fh:
+            pickle.dump(best, fh)
 
         print(f"✅ dadi: found {len(dadi_pkls)} files, aggregated {len(lls)} entries → {output.dadi}")
         print(f"✅ dadi: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
@@ -442,32 +465,37 @@ rule cleanup_optimization_runs:
     output:
         cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
     run:
-        import pickle, pathlib, shutil, re, glob
+        import pickle, pathlib, subprocess
 
         sid = wildcards.sid
 
-        dadi_data    = pickle.load(open(input.dadi, "rb"))
-        moments_data = pickle.load(open(input.moments, "rb"))
+        with open(input.dadi, "rb") as f:
+            dadi_data = pickle.load(f)
+        with open(input.moments, "rb") as f:
+            moments_data = pickle.load(f)
 
-        # keep what actually exists in the aggregated files
-        dadi_keep    = set(list(dadi_data.get("opt_index", []))[:TOP_K])
-        moments_keep = set(list(moments_data.get("opt_index", []))[:TOP_K])
+        dadi_keep    = set(dadi_data.get("opt_index", [])[:TOP_K])
+        moments_keep = set(moments_data.get("opt_index", [])[:TOP_K])
         keep_indices = dadi_keep | moments_keep
 
-        run_dirs = sorted(glob.glob(f"experiments/{MODEL}/runs/run_{sid}_*"))
+        run_root = pathlib.Path(f"experiments/{MODEL}/runs")
+        prefix = f"run_{sid}_"
 
         cleaned = 0
-        for rd in run_dirs:
-            m = re.search(rf"run_{sid}_(\d+)$", rd)
-            if not m:
+        for p in run_root.glob(f"{prefix}*"):
+            if not p.is_dir():
                 continue
-            opt = int(m.group(1))
-            if opt not in keep_indices:
-                p = pathlib.Path(rd)
-                if p.exists():
-                    print(f"🗑️ removing sid={sid} opt={opt}: {p}")
-                    shutil.rmtree(p)
-                    cleaned += 1
+            try:
+                opt = int(p.name.rsplit("_", 1)[1])
+            except Exception:
+                continue
+
+            if opt in keep_indices:
+                continue
+
+            print(f"🗑️ removing sid={sid} opt={opt}: {p}")
+            subprocess.run(["rm", "-rf", str(p)], check=False)
+            cleaned += 1
 
         pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
         with open(output.cleanup_done, "w") as f:

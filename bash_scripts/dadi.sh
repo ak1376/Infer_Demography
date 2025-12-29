@@ -6,7 +6,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=4G
-#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --partition=kern,preempt
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -38,6 +38,37 @@ echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}  SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TAS
 echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 
+# ----------------------------
+# Helper: decide whether canonical output is "non-empty"
+# Non-empty := pickle loads AND n_files_found>0 AND best_ll is non-empty (or best_params non-empty)
+# Empty example you showed has n_files_found=0 and lists empty.
+# Returns:
+#   0 => NON-EMPTY (skip)
+#   1 => EMPTY / missing / unreadable (do not skip; allow recompute)
+# ----------------------------
+is_nonempty_canon() {
+  local pkl="$1"
+
+  [[ -f "$pkl" ]] || return 1
+
+  python3 - <<'PY' "$pkl"
+import pickle, sys
+p = sys.argv[1]
+try:
+    d = pickle.load(open(p, "rb"))
+except Exception:
+    sys.exit(1)
+
+# tolerate missing keys
+n = d.get("n_files_found", 0)
+best_ll = d.get("best_ll", [])
+best_params = d.get("best_params", [])
+
+nonempty = (n is not None and int(n) > 0) and (len(best_ll) > 0 or len(best_params) > 0)
+sys.exit(0 if nonempty else 1)
+PY
+}
+
 # Self-submit if launched without an array task id
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
@@ -56,8 +87,25 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   SID=$(( IDX / NUM_OPTIMS ))
   OPT=$(( IDX % NUM_OPTIMS ))
 
+  # ---- canonical "sim_XX" output we use to decide whether to skip ----
+  CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/dadi/fit_params.pkl"
+
+  # Skip ONLY if canonical exists AND is non-empty.
+  # If canonical missing OR "empty" (like your example) OR unreadable -> recompute.
+  if is_nonempty_canon "$CANON_OUT"; then
+    echo "SKIP: sim_${SID} has NON-EMPTY $CANON_OUT (so skipping SID=$SID OPT=$OPT)"
+    continue
+  else
+    if [[ -f "$CANON_OUT" ]]; then
+      echo "RE-RUN: sim_${SID} has EMPTY/UNREADABLE $CANON_OUT (so running SID=$SID OPT=$OPT)"
+    else
+      echo "RUN: sim_${SID} missing $CANON_OUT (so running SID=$SID OPT=$OPT)"
+    fi
+  fi
+
+  # ---- what this job will build (per-run output) ----
   TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/fit_params.pkl"
-  echo "dadi optimisation: SID=$SID  OPT=$OPT  →  $TARGET"
+  echo "→ build $TARGET"
 
   snakemake \
     --snakefile "$SNAKEFILE" \

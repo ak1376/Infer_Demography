@@ -10,38 +10,115 @@
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
+#SBATCH --verbose
 
 set -euo pipefail
 
-# --- paths & config ---
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+# -----------------------------
+# Tunables
+# -----------------------------
+BATCH_SIZE="${BATCH_SIZE:-2}"   # sims per array task
+SIM_RANGE="${SIM_RANGE:-}"       # optional: "5000-20000" (inclusive)
+
+# -----------------------------
+# Paths & config
+# -----------------------------
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws'     "$CFG")
-MODEL=$(jq -r '.demographic_model' "$CFG")
+export EXP_CFG="$CFG"
 
-# If launched without --array, resubmit with full range.
+NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
+MODEL=$(jq -r '.demographic_model'      "$CFG")
+
+mkdir -p logs
+
+echo "CFG: $CFG"
+echo "MODEL: $MODEL  NUM_DRAWS: $NUM_DRAWS"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}  SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-unset}"
+echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
+echo "BATCH_SIZE=$BATCH_SIZE"
+echo "SIM_RANGE=${SIM_RANGE:-<unset>}"
+
+# -----------------------------
+# Parse SIM_RANGE (optional)
+# -----------------------------
+SIM_LO=0
+SIM_HI=$(( NUM_DRAWS - 1 ))
+
+if [[ -n "$SIM_RANGE" ]]; then
+  if [[ "$SIM_RANGE" =~ ^[0-9]+-[0-9]+$ ]]; then
+    SIM_LO="${SIM_RANGE%-*}"
+    SIM_HI="${SIM_RANGE#*-}"
+  else
+    echo "ERROR: SIM_RANGE must look like '5000-20000' (got '$SIM_RANGE')"
+    exit 2
+  fi
+
+  # clamp to [0, NUM_DRAWS-1]
+  (( SIM_LO < 0 )) && SIM_LO=0
+  (( SIM_HI > NUM_DRAWS-1 )) && SIM_HI=$(( NUM_DRAWS - 1 ))
+  if (( SIM_LO > SIM_HI )); then
+    echo "ERROR: SIM_RANGE lower bound > upper bound after clamping: ${SIM_LO}-${SIM_HI}"
+    exit 2
+  fi
+fi
+
+# -----------------------------
+# Self-submit if launched without array id
+# -----------------------------
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
-  sbatch --array=0-$(( NUM_DRAWS - 1 )) "$0" "$@"
+  # default: cover all sims (0..NUM_DRAWS-1)
+  # if SIM_RANGE set: cover only SIM_LO..SIM_HI
+  START_BATCH=$(( SIM_LO / BATCH_SIZE ))
+  END_BATCH=$(( SIM_HI / BATCH_SIZE ))
+
+  echo "Submitting array ${START_BATCH}-${END_BATCH} to cover sims ${SIM_LO}-${SIM_HI} (inclusive)"
+  sbatch --array="${START_BATCH}-${END_BATCH}" --export=ALL "$0" "$@"
   exit 0
 fi
 
-sid="$SLURM_ARRAY_TASK_ID"
-echo "aggregate_opts (both engines): sid=$sid"
+# -----------------------------
+# Compute this task's batch slice (global batches)
+# -----------------------------
+BATCH_START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
+BATCH_END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
+[[ $BATCH_END -ge $NUM_DRAWS ]] && BATCH_END=$(( NUM_DRAWS - 1 ))
 
-# Both engine outputs for this sim:
-TGT_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
-TGT_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
-# Add cleanup target
-CLEANUP_TGT="experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
+# Apply SIM_RANGE filtering (so last batch doesn't overshoot, etc.)
+if (( BATCH_END < SIM_LO || BATCH_START > SIM_HI )); then
+  echo "Array $SLURM_ARRAY_TASK_ID covers sims $BATCH_START..$BATCH_END, outside requested $SIM_LO..$SIM_HI → nothing to do."
+  exit 0
+fi
 
-# Only allow the aggregate and cleanup rules
-snakemake -j "$SLURM_CPUS_PER_TASK" \
-  --snakefile "$SNAKEFILE" \
-  --directory "$ROOT" \
-  --rerun-incomplete \
-  --nolock \
-  --allowed-rules aggregate_opts_dadi aggregate_opts_moments cleanup_optimization_runs \
-  --keep-going \
-  "$TGT_MOM" "$TGT_DADI" "$CLEANUP_TGT"
+RUN_START=$BATCH_START
+RUN_END=$BATCH_END
+(( RUN_START < SIM_LO )) && RUN_START=$SIM_LO
+(( RUN_END   > SIM_HI )) && RUN_END=$SIM_HI
+
+echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END (batch was $BATCH_START .. $BATCH_END)"
+
+# -----------------------------
+# Loop over sims in this (possibly trimmed) batch
+# -----------------------------
+for sid in $(seq "$RUN_START" "$RUN_END"); do
+  echo "aggregate_opts (both engines): sid=$sid"
+
+  TGT_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
+  TGT_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
+  CLEANUP_TGT="experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
+
+  snakemake -j "$SLURM_CPUS_PER_TASK" \
+    --snakefile "$SNAKEFILE" \
+    --directory "$ROOT" \
+    --rerun-incomplete \
+    --nolock \
+    --rerun-triggers mtime \
+    --allowed-rules aggregate_opts_dadi aggregate_opts_moments cleanup_optimization_runs \
+    --keep-going \
+    "$TGT_MOM" "$TGT_DADI" "$CLEANUP_TGT" \
+    || { echo "Snakemake failed for sid=$sid"; exit 1; }
+done
+
+echo "Array task $SLURM_ARRAY_TASK_ID finished."

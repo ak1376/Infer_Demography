@@ -6,7 +6,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=8G
-#SBATCH --partition=kern,preempt
+#SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL

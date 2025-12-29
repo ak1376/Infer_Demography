@@ -4,75 +4,88 @@
 #SBATCH --error=logs/combine_%A_%a.err
 #SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=12G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
+#SBATCH --verbose
 
-# 0. paths & experiment constants
+set -euo pipefail
+
+# -----------------------------
+# Tunables
+# -----------------------------
+BATCH_SIZE="${BATCH_SIZE:-2}"          # sims per array task
+SIM_RANGE="${SIM_RANGE:-}"             # optional: "5000-20000"
+
+# -----------------------------
+# Paths & config
+# -----------------------------
 CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
-
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws'     "$CFG")
-MODEL=$(jq -r '.demographic_model' "$CFG")
+NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
+MODEL=$(jq -r '.demographic_model'      "$CFG")
 
-# 1. (re)submit with the correct --array range if none was provided
+mkdir -p logs
+
+# -----------------------------
+# Parse SIM_RANGE (optional)
+# -----------------------------
+SIM_LO=0
+SIM_HI=$(( NUM_DRAWS - 1 ))
+
+if [[ -n "$SIM_RANGE" ]]; then
+  if [[ "$SIM_RANGE" =~ ^[0-9]+-[0-9]+$ ]]; then
+    SIM_LO="${SIM_RANGE%-*}"
+    SIM_HI="${SIM_RANGE#*-}"
+  else
+    echo "ERROR: SIM_RANGE must look like '5000-20000'"
+    exit 2
+  fi
+
+  (( SIM_LO < 0 )) && SIM_LO=0
+  (( SIM_HI > NUM_DRAWS-1 )) && SIM_HI=$(( NUM_DRAWS - 1 ))
+  (( SIM_LO > SIM_HI )) && exit 2
+fi
+
+# -----------------------------
+# Self-submit if not array job
+# -----------------------------
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
-    sbatch --array=0-$(( NUM_DRAWS - 1 )) "$0" "$@"
-    exit 0
+  START_BATCH=$(( SIM_LO / BATCH_SIZE ))
+  END_BATCH=$(( SIM_HI / BATCH_SIZE ))
+
+  echo "Submitting array ${START_BATCH}-${END_BATCH} for sims ${SIM_LO}-${SIM_HI}"
+  sbatch --array="${START_BATCH}-${END_BATCH}" --export=ALL "$0" "$@"
+  exit 0
 fi
 
-# 2. decode sid from array index (no padding)
-sid="$SLURM_ARRAY_TASK_ID"
-echo "combine_results: sid=$sid  (folder sim_$sid)"
+# -----------------------------
+# Compute batch slice
+# -----------------------------
+BATCH_START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
+BATCH_END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
+(( BATCH_END >= NUM_DRAWS )) && BATCH_END=$(( NUM_DRAWS - 1 ))
 
-SFS_FILE="experiments/${MODEL}/simulations/${sid}/SFS.pkl"
-
-# high-level targets for THIS sim
-TARGET_COMBO="experiments/${MODEL}/inferences/sim_${sid}/all_inferences.pkl"
-TARGET_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
-TARGET_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
-TARGET_LD="experiments/${MODEL}/inferences/sim_${sid}/MomentsLD/best_fit.pkl"
-
-# 3. Check simulation exists
-if [[ ! -f "$SFS_FILE" ]]; then
-    echo "ERROR: Simulation file $SFS_FILE doesn't exist for sim_${sid}!"
-    echo "This script assumes simulations are already done. Run simulation first."
-    exit 1
+if (( BATCH_END < SIM_LO || BATCH_START > SIM_HI )); then
+  echo "Array $SLURM_ARRAY_TASK_ID outside requested range — nothing to do."
+  exit 0
 fi
 
-echo "INFO: Simulation exists for sim_${sid}: $SFS_FILE"
+RUN_START=$BATCH_START
+RUN_END=$BATCH_END
+(( RUN_START < SIM_LO )) && RUN_START=$SIM_LO
+(( RUN_END   > SIM_HI )) && RUN_END=$SIM_HI
 
-# 4. Clean up metadata for simulation files to mark them as complete
-echo "INFO: Marking simulation files as complete in Snakemake metadata..."
-snakemake --cleanup-metadata \
-  "experiments/${MODEL}/simulations/${sid}/SFS.pkl" \
-  "experiments/${MODEL}/simulations/${sid}/sampled_params.pkl" \
-  "experiments/${MODEL}/simulations/${sid}/tree_sequence.trees" \
-  "experiments/${MODEL}/simulations/${sid}/demes.png" \
-  "experiments/${MODEL}/simulations/${sid}/bgs.meta.json" \
-  "experiments/${MODEL}/simulations/${sid}/.done" 2>/dev/null || true
+echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END"
 
-# 5. If the combined inference blob already exists, skip this sim
-if [[ -f "$TARGET_COMBO" ]]; then
-    echo "INFO: Combined inferences already exist for sim_${sid}:"
-    echo "  - $TARGET_COMBO ($(stat -c %y "$TARGET_COMBO"))"
-    echo "INFO: Skipping sim_${sid} - full inference already complete."
-    exit 0
-fi
-
-echo "INFO: Full inference NOT complete for sim_${sid}."
-[[ ! -f "$TARGET_DADI" ]] && echo "  - Missing: $TARGET_DADI"
-[[ ! -f "$TARGET_MOM"  ]] && echo "  - Missing: $TARGET_MOM"
-[[ ! -f "$TARGET_LD"   ]] && echo "  - Missing: $TARGET_LD"
-[[ ! -f "$TARGET_COMBO" ]] && echo "  - Missing: $TARGET_COMBO"
-
-# 6. Decide whether windows need to be (re)generated
-#    Use a BASH ARRAY for allowed rules (no commas!)
+# -----------------------------
+# Allowed rules
+# -----------------------------
 ALLOWED_RULES=(
   infer_dadi
   aggregate_opts_dadi
@@ -85,24 +98,48 @@ ALLOWED_RULES=(
   combine_results
 )
 
-# if LD windows are missing, also allow simulate_window
-if [[ ! -d "$WINDOWS_DIR" ]] || [[ $(ls -1 "$WINDOWS_DIR"/*.vcf.gz 2>/dev/null | wc -l) -eq 0 ]]; then
-    echo "INFO: Simulation windows missing. Allowing simulate_window rule."
-    ALLOWED_RULES+=(simulate_window)
-else
-    echo "INFO: Simulation windows exist. Restricting to inference rules only."
-fi
+# -----------------------------
+# Loop over sims in batch
+# -----------------------------
+for sid in $(seq "$RUN_START" "$RUN_END"); do
+  echo "combine_results: sid=$sid"
 
-echo "INFO: Allowed rules: ${ALLOWED_RULES[*]}"
+  SFS_FILE="experiments/${MODEL}/simulations/${sid}/SFS.pkl"
+  TARGET_COMBO="experiments/${MODEL}/inferences/sim_${sid}/all_inferences.pkl"
+  TARGET_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
+  TARGET_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
+  TARGET_LD="experiments/${MODEL}/inferences/sim_${sid}/MomentsLD/best_fit.pkl"
 
-# 7. Run full pipeline (dadi + moments + LD + FIM + residuals + combined blob) for this sim only
-snakemake \
-  -j "$SLURM_CPUS_PER_TASK" \
-  --snakefile "$SNAKEFILE" \
-  --directory "$ROOT" \
-  --rerun-incomplete \
-  --rerun-triggers mtime \
-  --nolock \
-  --allowed-rules "${ALLOWED_RULES[@]}" \
-  --keep-going \
-  "$TARGET_COMBO"
+  if [[ ! -f "$SFS_FILE" ]]; then
+    echo "ERROR: Missing simulation for sim_${sid}"
+    continue
+  fi
+
+  snakemake --cleanup-metadata \
+    "experiments/${MODEL}/simulations/${sid}/SFS.pkl" \
+    "experiments/${MODEL}/simulations/${sid}/sampled_params.pkl" \
+    "experiments/${MODEL}/simulations/${sid}/tree_sequence.trees" \
+    "experiments/${MODEL}/simulations/${sid}/demes.png" \
+    "experiments/${MODEL}/simulations/${sid}/bgs.meta.json" \
+    "experiments/${MODEL}/simulations/${sid}/.done" \
+    2>/dev/null || true
+
+  if [[ -f "$TARGET_COMBO" ]]; then
+    echo "sim_${sid} already complete — skipping"
+    continue
+  fi
+
+  snakemake \
+    -j "$SLURM_CPUS_PER_TASK" \
+    --snakefile "$SNAKEFILE" \
+    --directory "$ROOT" \
+    --rerun-incomplete \
+    --rerun-triggers mtime \
+    --nolock \
+    --allowed-rules "${ALLOWED_RULES[@]}" \
+    --keep-going \
+    "$TARGET_COMBO" \
+    || { echo "Snakemake failed for sid=$sid"; exit 1; }
+done
+
+echo "Array task $SLURM_ARRAY_TASK_ID finished."
