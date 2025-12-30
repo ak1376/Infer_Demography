@@ -53,11 +53,11 @@
       30
     ]
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": [
     "moments"
   ],
-  "use_residuals": false,
+  "use_residuals": true,
   "residual_engines": "moments",
   "engine": "msprime",
   "use_gpu_ld": true,

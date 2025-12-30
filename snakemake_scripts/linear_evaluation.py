@@ -24,24 +24,42 @@ def mean_squared_error(y_true, y_pred):
     return float(np.mean((yt - yp) ** 2))
 
 
-def _load_array(path):
+def _load_array_with_names(path):
     p = Path(path)
     if p.suffix == ".npy":
-        return np.load(p)
+        arr = np.load(p)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        return arr, None
+
     elif p.suffix == ".pkl":
         obj = pickle.load(open(p, "rb"))
-        # Common cases:
+
         if isinstance(obj, pd.DataFrame):
-            return obj.to_numpy()
+            return obj.to_numpy(), list(obj.columns)
+
         if isinstance(obj, pd.Series):
-            return obj.to_numpy().reshape(-1, 1)
+            return obj.to_numpy().reshape(-1, 1), [obj.name]
+
         if isinstance(obj, dict) and "features" in obj:
-            return np.asarray(obj["features"])
+            arr = np.asarray(obj["features"])
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            return arr, obj.get("feature_names", None)
+
         if isinstance(obj, dict) and "targets" in obj:
-            return np.asarray(obj["targets"])
-        return np.asarray(obj)
+            arr = np.asarray(obj["targets"])
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            return arr, obj.get("target_names", None)
+
+        arr = np.asarray(obj)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        return arr, None
+
     else:
-        raise ValueError(f"Unsupported extension for {path} (use .npy or .pkl).")
+        raise ValueError(f"Unsupported extension for {path}")
 
 
 def _build_default_model_dir(exp_cfg, regression_type):
@@ -136,12 +154,16 @@ def linear_evaluation(
     main_colors = pickle.load(open(main_colors_path, "rb"))
 
     # data
-    X_train = _load_array(X_train_path) if X_train_path else None
-    y_train = _load_array(y_train_path) if y_train_path else None
-    X_tune = _load_array(X_tune_path) if X_tune_path else None
-    y_tune = _load_array(y_tune_path) if y_tune_path else None
-    X_val = _load_array(X_val_path) if X_val_path else None
-    y_val = _load_array(y_val_path) if y_val_path else None
+    X_train, _ = _load_array_with_names(X_train_path) if X_train_path else (None, None)
+    y_train, y_names_train = _load_array_with_names(y_train_path) if y_train_path else (None, None)
+
+    X_tune, _ = _load_array_with_names(X_tune_path) if X_tune_path else (None, None)
+    y_tune, y_names_tune = _load_array_with_names(y_tune_path) if y_tune_path else (None, None)
+
+    X_val, _ = _load_array_with_names(X_val_path) if X_val_path else (None, None)
+    y_val, y_names_val = _load_array_with_names(y_val_path) if y_val_path else (None, None)
+
+
 
     if X_train is None and X_val is None:
         raise ValueError("Provide at least train or val split.")
@@ -230,9 +252,16 @@ def linear_evaluation(
         features_and_targets["validation"] = {"features": X_val, "targets": y_val}
 
     linear_obj = _organize_results(features_and_targets, train_preds, val_preds, model)
-    linear_obj["param_names"] = (
-        list(exp_cfg["priors"].keys()) if "priors" in exp_cfg else []
-    )
+    # ---- TARGET ORDER: match XGBoost behavior ----
+    if y_names_train is not None:
+        param_names = list(y_names_train)
+    else:
+        param_names = list(
+            exp_cfg.get("parameters_to_estimate",
+                        list(exp_cfg.get("priors", {}).keys()))
+        )
+
+    linear_obj["param_names"] = param_names
 
     # errors
     param_names = linear_obj["param_names"]

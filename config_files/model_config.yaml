@@ -15,7 +15,7 @@ linear:
 rf:
   enable: true          # set false to skip RF outputs/rule all
   random_search: true   # let the script do RandomizedSearchCV if True and no params given
-  n_iter: 20            # RS iterations
+  n_iter: 3            # RS iterations
   n_estimators: null    # null => let RS choose (or use defaults)
   max_depth: null
   min_samples_split: null

@@ -318,7 +318,7 @@ rule aggregate_opts_moments:
     output:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob, os
+        import pickle, numpy as np, pathlib, re, glob
 
         sid = wildcards.sid
 
@@ -341,7 +341,6 @@ rule aggregate_opts_moments:
                 continue
             opt_idx = int(m.group(1))
 
-            # Load defensively; corrupt pkls should not silently "count"
             try:
                 with open(pkl_path, "rb") as fh:
                     d = pickle.load(fh)
@@ -353,7 +352,7 @@ rule aggregate_opts_moments:
             this_params = _as_list(d.get("best_params"))
             this_lls    = _as_list(d.get("best_ll"))
 
-            # treat "present" only if it contributes at least one ll
+            # counts as "contributing" only if it provides at least one LL
             if len(this_lls) == 0:
                 continue
 
@@ -362,20 +361,22 @@ rule aggregate_opts_moments:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        # ---- FAIL HARD if nothing to aggregate ----
-        if len(lls) == 0:
+        # ---- FAIL HARD if fewer than TOP_K contributing opt pkls ----
+        if n_nonempty < TOP_K:
             raise ValueError(
-                f"[aggregate_opts_moments] No non-empty moments optimizations for sid={sid}. "
-                f"Found {len(mom_pkls)} pkl paths, readable={n_readable}, nonempty={n_nonempty}. "
-                f"Expected at least one run_{sid}_*/inferences/moments/fit_params.pkl with non-empty best_ll."
+                f"[aggregate_opts_moments] Need >= {TOP_K} non-empty moments optimizations for sid={sid}, "
+                f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(mom_pkls)}). "
+                f"Not aggregating."
             )
 
         keep = np.argsort(lls)[::-1][:TOP_K]
         best = {
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-            "n_files_found": len(mom_pkls),
+            "best_params":   [params[i] for i in keep],
+            "best_ll":       [lls[i]    for i in keep],
+            "opt_index":     [opt_ids[i] for i in keep],
+            "n_files_found": int(len(mom_pkls)),
+            "n_nonempty":    int(n_nonempty),
+            "min_required":  int(TOP_K),
         }
 
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
@@ -391,7 +392,7 @@ rule aggregate_opts_dadi:
     output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob, os
+        import pickle, numpy as np, pathlib, re, glob
 
         sid = wildcards.sid
 
@@ -433,20 +434,22 @@ rule aggregate_opts_dadi:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        # ---- FAIL HARD if nothing to aggregate ----
-        if len(lls) == 0:
+        # ---- FAIL HARD if fewer than TOP_K contributing opt pkls ----
+        if n_nonempty < TOP_K:
             raise ValueError(
-                f"[aggregate_opts_dadi] No non-empty dadi optimizations for sid={sid}. "
-                f"Found {len(dadi_pkls)} pkl paths, readable={n_readable}, nonempty={n_nonempty}. "
-                f"Expected at least one run_{sid}_*/inferences/dadi/fit_params.pkl with non-empty best_ll."
+                f"[aggregate_opts_dadi] Need >= {TOP_K} non-empty dadi optimizations for sid={sid}, "
+                f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(dadi_pkls)}). "
+                f"Not aggregating."
             )
 
         keep = np.argsort(lls)[::-1][:TOP_K]
         best = {
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-            "n_files_found": len(dadi_pkls),
+            "best_params":   [params[i] for i in keep],
+            "best_ll":       [lls[i]    for i in keep],
+            "opt_index":     [opt_ids[i] for i in keep],
+            "n_files_found": int(len(dadi_pkls)),
+            "n_nonempty":    int(n_nonempty),
+            "min_required":  int(TOP_K),
         }
 
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
@@ -474,8 +477,8 @@ rule cleanup_optimization_runs:
         with open(input.moments, "rb") as f:
             moments_data = pickle.load(f)
 
-        dadi_keep    = set(dadi_data.get("opt_index", [])[:TOP_K])
-        moments_keep = set(moments_data.get("opt_index", [])[:TOP_K])
+        dadi_keep    = set((dadi_data.get("opt_index") or [])[:TOP_K])
+        moments_keep = set((moments_data.get("opt_index") or [])[:TOP_K])
         keep_indices = dadi_keep | moments_keep
 
         run_root = pathlib.Path(f"experiments/{MODEL}/runs")
@@ -928,7 +931,7 @@ rule random_forest:
                 if config.get('rf', {}).get('n_iter') is not None else "",
             "--do_random_search" if config.get('rf', {}).get('random_search', False) else ""
         ]).strip()
-    threads: 4
+    threads: 8
     benchmark:
         "benchmarks/random_forest.tsv"
     shell:
