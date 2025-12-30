@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse, json, os, sys, pickle, joblib, time
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import yaml
 import matplotlib
 
-matplotlib.use("Agg")  # headless
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from sklearn.multioutput import MultiOutputRegressor
@@ -22,42 +25,78 @@ from src.plotting_helpers import visualizing_results  # your existing function
 
 
 # ---------- helpers ----------
-def mean_squared_error(y_true, y_pred):
+def mean_squared_error(y_true, y_pred) -> float:
     yt = np.asarray(y_true)
     yp = np.asarray(y_pred)
     return float(np.mean((yt - yp) ** 2))
 
 
-def _load_df_and_array(path):
+def load_df_pickle(path: str):
     """
-    Load .pkl or .npy and return (numpy_array, column_names_if_df_else_None).
-    Assumes .pkl files are DataFrames or dict-like from your pipeline.
+    Load a pkl that contains a DataFrame/Series, or ndarray/dict.
+    Return (df, colnames). If we don't know names, we synthesize them.
+    Mirrors your RF loader.
     """
-    p = Path(path)
-    if p.suffix == ".npy":
-        arr = np.load(p)
-        return arr, None
-    elif p.suffix == ".pkl":
-        with open(p, "rb") as fh:
-            obj = pickle.load(fh)
-        if isinstance(obj, pd.DataFrame):
-            return obj.to_numpy(), list(obj.columns)
-        if isinstance(obj, pd.Series):
-            return obj.to_numpy().reshape(-1, 1), [obj.name]
-        if isinstance(obj, dict):
-            if "features" in obj:
-                arr = np.asarray(obj["features"])
-                colnames = obj.get("feature_names", None)
-                return arr, colnames
-            if "targets" in obj:
-                arr = np.asarray(obj["targets"])
-                colnames = obj.get("target_names", None)
-                return arr, colnames
-        # fallback
-        arr = np.asarray(obj)
-        return arr, None
-    else:
-        raise ValueError(f"Unsupported extension for {path} (use .npy or .pkl).")
+    obj = pickle.load(open(path, "rb"))
+
+    if isinstance(obj, pd.DataFrame):
+        return obj, obj.columns.tolist()
+
+    if isinstance(obj, pd.Series):
+        return obj.to_frame(), [obj.name]
+
+    if isinstance(obj, dict) and "features" in obj:
+        arr = np.asarray(obj["features"])
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        cols = obj.get("feature_names", None)
+        if cols is None:
+            cols = [f"feature_{i}" for i in range(arr.shape[1])]
+        df = pd.DataFrame(arr, columns=list(cols))
+        return df, list(cols)
+
+    if isinstance(obj, dict) and "targets" in obj:
+        arr = np.asarray(obj["targets"])
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        cols = obj.get("target_names", None)
+        if cols is None:
+            cols = [f"target_{i}" for i in range(arr.shape[1])]
+        df = pd.DataFrame(arr, columns=list(cols))
+        return df, list(cols)
+
+    arr = np.asarray(obj)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    cols = [f"col_{i}" for i in range(arr.shape[1])]
+    df = pd.DataFrame(arr, columns=cols)
+    return df, cols
+
+
+def _align_df_columns(df: pd.DataFrame, desired_order: list[str], name: str) -> pd.DataFrame:
+    """
+    Reorder df columns to desired_order if it has the same set of columns.
+    Otherwise raise (so you catch silent mismatch early).
+    """
+    if df is None:
+        return df
+
+    have = list(df.columns)
+    if have == desired_order:
+        return df
+
+    if set(have) != set(desired_order):
+        missing = [c for c in desired_order if c not in have]
+        extra = [c for c in have if c not in desired_order]
+        raise ValueError(
+            f"[COLUMN ORDER ERROR] {name} columns don't match TRAIN columns.\n"
+            f"Missing: {missing}\n"
+            f"Extra:   {extra}\n"
+            f"Train:   {desired_order}\n"
+            f"{name}: {have}\n"
+        )
+
+    return df.loc[:, desired_order]
 
 
 def _default_model_dir(exp_cfg):
@@ -78,18 +117,13 @@ def _detect_outer_jobs(user, default=1):
     return int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or default))
 
 
-def _plot_feature_importances_grid(
-    model, feature_names, target_names, save_path, top_k=None
-):
-    """Single PNG grid of per-target importances."""
+def _plot_feature_importances_grid(model, feature_names, target_names, save_path, top_k=None):
     estimators = model.estimators_
     n_out = len(estimators)
     n_cols = 3
     n_rows = (n_out + n_cols - 1) // n_cols
 
-    fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(16, 5 * n_rows), constrained_layout=True
-    )
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 5 * n_rows), constrained_layout=True)
     axes = axes.flatten()
 
     for out_idx, est in enumerate(estimators):
@@ -122,25 +156,28 @@ def _plot_feature_importances_grid(
     plt.close(fig)
 
 
-def tune_xgb_on_tune(
-    X_train,
-    y_train,
-    X_tune,
-    y_tune,
-    n_iter=20,
-    random_state=42,
+def tune_xgb_on_tune_multioutput(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_tune: np.ndarray,
+    y_tune: np.ndarray,
+    *,
+    n_iter: int = 20,
+    random_state: int = 42,
+    outer_jobs: int = 1,
+    xgb_n_jobs: int = 1,
+    tree_method: str = "hist",
 ):
     """
-    Manual random search over XGB hyperparameters using TUNE set.
+    Random search over XGB hyperparams using the TUNE set, scoring on ALL targets.
 
-    For each sampled hyperparameter set:
-      - fit single-output XGB on TRAIN (first target)
-      - evaluate MSE on TUNE (same target)
-    Returns dict of best params.
+    IMPORTANT PARALLELISM RULE (same idea as your RF fix):
+      - XGBRegressor n_jobs = xgb_n_jobs (keep small, typically 1)
+      - MultiOutputRegressor n_jobs = outer_jobs (parallelize across targets)
     """
     rng = np.random.RandomState(random_state)
 
-    # Discrete grids (same spirit as your old RandomizedSearchCV)
+    # (Keep your discrete grids; expand if you want)
     n_estimators_grid = [150, 250]
     max_depth_grid = [3, 5]
     learning_rate_grid = [0.05, 0.10]
@@ -149,76 +186,54 @@ def tune_xgb_on_tune(
     min_child_weight_grid = [1, 3]
     reg_lambda_grid = [1.0, 5.0]
     reg_alpha_grid = [0.0, 0.1]
-    tree_method = "hist"
-
-    # single-output target (first column if multi-output)
-    y_tr = y_train[:, 0] if y_train.ndim > 1 else y_train
-    y_tu = y_tune[:, 0] if y_tune.ndim > 1 else y_tune
 
     best_mse = np.inf
     best_params = None
 
     print(
-        f"[TUNE] Random search on TUNE set: n_iter={n_iter}, "
-        f"X_train={X_train.shape}, X_tune={X_tune.shape}"
+        f"[TUNE] Random search on TUNE (ALL targets): n_iter={n_iter}, "
+        f"X_train={X_train.shape}, X_tune={X_tune.shape}, y_train={y_train.shape}"
     )
 
     for i in range(n_iter):
-        n_estimators = rng.choice(n_estimators_grid)
-        max_depth = rng.choice(max_depth_grid)
-        learning_rate = rng.choice(learning_rate_grid)
-        subsample = rng.choice(subsample_grid)
-        colsample_bytree = rng.choice(colsample_bytree_grid)
-        min_child_weight = rng.choice(min_child_weight_grid)
-        reg_lambda = rng.choice(reg_lambda_grid)
-        reg_alpha = rng.choice(reg_alpha_grid)
-
-        xgb = XGBRegressor(
+        params = dict(
             objective="reg:squarederror",
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            learning_rate=learning_rate,
-            subsample=subsample,
-            colsample_bytree=colsample_bytree,
-            min_child_weight=min_child_weight,
-            reg_lambda=reg_lambda,
-            reg_alpha=reg_alpha,
+            n_estimators=int(rng.choice(n_estimators_grid)),
+            max_depth=int(rng.choice(max_depth_grid)),
+            learning_rate=float(rng.choice(learning_rate_grid)),
+            subsample=float(rng.choice(subsample_grid)),
+            colsample_bytree=float(rng.choice(colsample_bytree_grid)),
+            min_child_weight=float(rng.choice(min_child_weight_grid)),
+            reg_lambda=float(rng.choice(reg_lambda_grid)),
+            reg_alpha=float(rng.choice(reg_alpha_grid)),
             tree_method=tree_method,
-            n_jobs=1,  # avoid oversubscription
-            random_state=random_state,
+            n_jobs=int(xgb_n_jobs),
+            random_state=int(random_state),
             verbosity=0,
         )
 
+        model = MultiOutputRegressor(XGBRegressor(**params), n_jobs=int(outer_jobs))
+
         t0 = time.perf_counter()
-        xgb.fit(X_train, y_tr)
-        preds = xgb.predict(X_tune)
-        mse = mse_sklearn(y_tu, preds)
+        model.fit(X_train, y_train)
+        preds = model.predict(X_tune)
+        mse = mse_sklearn(y_tune, preds)
         dt = time.perf_counter() - t0
 
         print(
             f"[TUNE] iter={i+1}/{n_iter} "
-            f"n_estimators={n_estimators}, max_depth={max_depth}, "
-            f"learning_rate={learning_rate}, subsample={subsample}, "
-            f"colsample_bytree={colsample_bytree}, min_child_weight={min_child_weight}, "
-            f"reg_lambda={reg_lambda}, reg_alpha={reg_alpha} "
-            f"-> tune MSE={mse:.6f} (time={dt:.1f}s)"
+            f"n_estimators={params['n_estimators']}, max_depth={params['max_depth']}, "
+            f"learning_rate={params['learning_rate']}, subsample={params['subsample']}, "
+            f"colsample_bytree={params['colsample_bytree']}, min_child_weight={params['min_child_weight']}, "
+            f"reg_lambda={params['reg_lambda']}, reg_alpha={params['reg_alpha']} "
+            f"-> tune MSE(all targets)={mse:.6f} (time={dt:.1f}s)"
         )
 
         if mse < best_mse:
             best_mse = mse
-            best_params = {
-                "n_estimators": n_estimators,
-                "max_depth": max_depth,
-                "learning_rate": learning_rate,
-                "subsample": subsample,
-                "colsample_bytree": colsample_bytree,
-                "min_child_weight": min_child_weight,
-                "reg_lambda": reg_lambda,
-                "reg_alpha": reg_alpha,
-                "tree_method": tree_method,
-            }
+            best_params = params
 
-    print(f"[TUNE] Best params from TUNE set: {best_params}, tune MSE={best_mse:.6f}")
+    print(f"[TUNE] Best params from TUNE: {best_params}, tune MSE={best_mse:.6f}")
     return best_params
 
 
@@ -253,7 +268,7 @@ def xgboost_evaluation(
     outer_n_jobs=None,
     xgb_n_jobs=1,
     tree_method="hist",
-    early_stopping_rounds=None,
+    early_stopping_rounds=None,  # IMPORTANT: ES uses TUNE, not VAL
 ):
 
     if experiment_config_path is None:
@@ -262,9 +277,7 @@ def xgboost_evaluation(
         exp_cfg = json.load(f)
     if model_config_path:
         with open(model_config_path) as f:
-            model_cfg = yaml.safe_load(f)
-    else:
-        model_cfg = {}
+            _ = yaml.safe_load(f)
 
     # output dir
     if model_directory is None:
@@ -277,43 +290,58 @@ def xgboost_evaluation(
     color_shades = pickle.load(open(color_shades_path, "rb"))
     main_colors = pickle.load(open(main_colors_path, "rb"))
 
-    # data
-    X_train, feat_names_train = (
-        _load_df_and_array(X_train_path) if X_train_path else (None, None)
-    )
-    y_train, targ_names_train = (
-        _load_df_and_array(y_train_path) if y_train_path else (None, None)
-    )
-    X_tune, _ = _load_df_and_array(X_tune_path) if X_tune_path else (None, None)
-    y_tune, _ = _load_df_and_array(y_tune_path) if y_tune_path else (None, None)
-    X_val, _ = _load_df_and_array(X_val_path) if X_val_path else (None, None)
-    y_val, _ = _load_df_and_array(y_val_path) if y_val_path else (None, None)
+    # ---------- LOAD AS DFS (for alignment discipline) ----------
+    X_train_df, feat_names_train = load_df_pickle(X_train_path)
+    y_train_df, targ_names_train = load_df_pickle(y_train_path)
+    X_tune_df, _ = load_df_pickle(X_tune_path) if X_tune_path else (None, None)
+    y_tune_df, _ = load_df_pickle(y_tune_path) if y_tune_path else (None, None)
+    X_val_df, _ = load_df_pickle(X_val_path) if X_val_path else (None, None)
+    y_val_df, _ = load_df_pickle(y_val_path) if y_val_path else (None, None)
 
-    # fallbacks for names
-    feature_names = (
-        feat_names_train
-        if feat_names_train is not None
-        else (
-            [f"feat_{i}" for i in range(X_train.shape[1])]
-            if X_train is not None
-            else None
-        )
-    )
-    target_names = (
-        targ_names_train if targ_names_train is not None else _get_param_names(exp_cfg)
-    )
+    # SOURCE OF TRUTH: TRAIN order
+    feature_order = list(feat_names_train)
+    target_order = list(targ_names_train) if targ_names_train else _get_param_names(exp_cfg)
 
-    # sanity checks
-    if X_train is None:
-        raise ValueError("X_train_path / y_train_path are required.")
-    if (X_train is None) ^ (y_train is None):
-        raise ValueError("Need both X_train & y_train (or neither).")
+    # Align tune/val to TRAIN order
+    if X_tune_df is not None:
+        X_tune_df = _align_df_columns(X_tune_df, feature_order, "X_tune")
+    if X_val_df is not None:
+        X_val_df = _align_df_columns(X_val_df, feature_order, "X_val")
+    if y_tune_df is not None and len(target_order) > 0:
+        y_tune_df = _align_df_columns(y_tune_df, target_order, "y_tune")
+    if y_val_df is not None and len(target_order) > 0:
+        y_val_df = _align_df_columns(y_val_df, target_order, "y_val")
+
+    print("[INFO] Feature order used:")
+    print("  " + ", ".join(feature_order[:10]) + (" ..." if len(feature_order) > 10 else ""))
+    print("[INFO] Target order used:")
+    print("  " + ", ".join(target_order))
+
+    # Convert to arrays
+    X_train = X_train_df.values
+    y_train = y_train_df.values
+    X_tune = None if X_tune_df is None else X_tune_df.values
+    y_tune = None if y_tune_df is None else y_tune_df.values
+    X_val = None if X_val_df is None else X_val_df.values
+    y_val = None if y_val_df is None else y_val_df.values
+
+    # sanity
+    if X_train is None or y_train is None:
+        raise ValueError("Need X_train_path and y_train_path.")
     if (X_val is None) ^ (y_val is None):
         raise ValueError("Need both X_val & y_val (or neither).")
     if (X_tune is None) ^ (y_tune is None):
         raise ValueError("Need both X_tune & y_tune (or neither).")
 
-    # decide hyperparams:
+    # Environment hints to avoid oversubscription
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
+    outer_jobs = _detect_outer_jobs(outer_n_jobs)
+    print(f"[INFO] Parallelism: outer n_jobs={outer_jobs} (targets), inner xgb n_jobs={xgb_n_jobs}")
+
+    # decide hyperparams
     user_provided = any(
         v is not None
         for v in [
@@ -329,15 +357,19 @@ def xgboost_evaluation(
     )
 
     if (do_random_search or not user_provided) and X_tune is not None:
-        print("[INFO] Running random search on TUNE set for XGBoost …")
-        best = tune_xgb_on_tune(
+        print("[INFO] Running random search on TUNE set for XGBoost (ALL targets) …")
+        best = tune_xgb_on_tune_multioutput(
             X_train,
             y_train,
             X_tune,
             y_tune,
             n_iter=n_iter,
             random_state=random_state,
+            outer_jobs=outer_jobs,
+            xgb_n_jobs=xgb_n_jobs,
+            tree_method=tree_method,
         )
+        # apply
         n_estimators = best.get("n_estimators", n_estimators)
         max_depth = best.get("max_depth", max_depth)
         learning_rate = best.get("learning_rate", learning_rate)
@@ -347,18 +379,7 @@ def xgboost_evaluation(
         reg_lambda = best.get("reg_lambda", reg_lambda)
         reg_alpha = best.get("reg_alpha", reg_alpha)
         tree_method = best.get("tree_method", tree_method)
-        print(f"[INFO] Best params applied from TUNE search.")
-
-    # Environment hints to avoid oversubscription
-    os.environ.setdefault("OMP_NUM_THREADS", "1")
-    os.environ.setdefault("MKL_NUM_THREADS", "1")
-    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-    print(
-        "[INFO] Thread caps: "
-        f"OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS')} "
-        f"MKL_NUM_THREADS={os.environ.get('MKL_NUM_THREADS')} "
-        f"OPENBLAS_NUM_THREADS={os.environ.get('OPENBLAS_NUM_THREADS')}"
-    )
+        print("[INFO] Best params applied from TUNE search.")
 
     # Base estimator
     xgb_base = XGBRegressor(
@@ -374,58 +395,43 @@ def xgboost_evaluation(
         tree_method=tree_method,
         n_jobs=int(xgb_n_jobs),
         random_state=random_state,
-        verbosity=2,  # info-level
+        verbosity=2,
     )
 
-    outer_jobs = _detect_outer_jobs(outer_n_jobs)
     print(
-        f"[INFO] Parallelism: outer n_jobs={outer_jobs} (targets), inner xgb n_jobs={xgb_n_jobs}"
-    )
-    print(
-        f"[INFO] Data shapes: "
-        f"X_train={X_train.shape}, y_train={y_train.shape}, "
+        f"[INFO] Data shapes: X_train={X_train.shape}, y_train={y_train.shape}, "
         f"X_tune={None if X_tune is None else X_tune.shape}, "
         f"y_tune={None if y_tune is None else y_tune.shape}, "
-        f"X_val={X_val.shape}, y_val={y_val.shape}"
+        f"X_val={None if X_val is None else X_val.shape}, y_val={None if y_val is None else y_val.shape}"
     )
 
-    # fit final multi-output model on TRAIN only
-    def _fit_multioutput_with_es(X_tr, Y_tr, X_va, Y_va):
+    # ---------- FIT ----------
+    # If early stopping is set, use TUNE as eval_set. VAL stays untouched.
+    def _fit_multioutput_with_es_using_tune(X_tr, Y_tr, X_tu, Y_tu):
         est_list = []
         n_out = Y_tr.shape[1]
         for i in range(n_out):
             est = xgb_base.__class__(**xgb_base.get_params())
-            lab = (
-                target_names[i]
-                if target_names and i < len(target_names)
-                else f"target_{i}"
-            )
-            print(f"[FIT] Target {i+1}/{n_out}: {lab}")
+            lab = target_order[i] if target_order and i < len(target_order) else f"target_{i}"
+            print(f"[FIT+ES] Target {i+1}/{n_out}: {lab}")
             t0 = time.perf_counter()
-            fit_kwargs = {}
-            if (
-                early_stopping_rounds is not None
-                and X_va is not None
-                and Y_va is not None
-            ):
-                fit_kwargs.update(
-                    dict(
-                        eval_set=[(X_va, Y_va[:, i])],
-                        early_stopping_rounds=early_stopping_rounds,
-                        verbose=True,
-                    )
-                )
-            est.fit(X_tr, Y_tr[:, i], **fit_kwargs)
-            best_iter = getattr(est, "best_iteration", None)
-            print(
-                f"[FIT]   elapsed={time.perf_counter()-t0:.1f}s best_iteration={best_iter}"
+            est.fit(
+                X_tr,
+                Y_tr[:, i],
+                eval_set=[(X_tu, Y_tu[:, i])],
+                early_stopping_rounds=int(early_stopping_rounds),
+                verbose=True,
             )
+            best_iter = getattr(est, "best_iteration", None)
+            print(f"[FIT+ES]   elapsed={time.perf_counter()-t0:.1f}s best_iteration={best_iter}")
             est_list.append(est)
         return est_list
 
     if early_stopping_rounds is not None:
-        print(f"[INFO] Using early stopping: {early_stopping_rounds} rounds.")
-        est_list = _fit_multioutput_with_es(X_train, y_train, X_val, y_val)
+        if X_tune is None or y_tune is None:
+            raise ValueError("early_stopping_rounds requires TUNE data (X_tune/y_tune).")
+        print(f"[INFO] Early stopping enabled: {early_stopping_rounds} rounds (eval_set=TUNE).")
+        est_list = _fit_multioutput_with_es_using_tune(X_train, y_train, X_tune, y_tune)
         model = MultiOutputRegressor(xgb_base, n_jobs=outer_jobs)
         model.estimators_ = est_list
     else:
@@ -434,79 +440,68 @@ def xgboost_evaluation(
         model.fit(X_train, y_train)
         print(f"[INFO] MultiOutputRegressor.fit elapsed: {time.perf_counter()-t0:.1f}s")
 
+    # predictions
     train_preds = model.predict(X_train)
-    val_preds = model.predict(X_val)
     if train_preds.ndim == 1:
         train_preds = train_preds.reshape(-1, 1)
-    if val_preds.ndim == 1:
-        val_preds = val_preds.reshape(-1, 1)
+
+    val_preds = None
+    if X_val is not None:
+        val_preds = model.predict(X_val)
+        if val_preds.ndim == 1:
+            val_preds = val_preds.reshape(-1, 1)
 
     # package container
-    features_and_targets = {
-        "training": {"features": X_train, "targets": y_train},
-        "validation": {"features": X_val, "targets": y_val},
-    }
-
     xgb_obj = {
         "model": model,
-        "training": {
-            "predictions": train_preds,
-            "targets": y_train,
-        },
-        "validation": {
-            "predictions": val_preds,
-            "targets": y_val,
-        },
-        "param_names": target_names,
+        "training": {"predictions": train_preds, "targets": y_train},
+        "validation": {"predictions": val_preds, "targets": y_val} if X_val is not None else None,
+        "param_names": list(target_order),
+        "target_order": list(target_order),
+        "feature_order": list(feature_order),
+        "xgb_random_state": int(random_state),
+        "outer_n_jobs": int(outer_jobs),
+        "xgb_n_jobs": int(xgb_n_jobs),
+        "tree_method": str(tree_method),
+        "early_stopping_rounds": None if early_stopping_rounds is None else int(early_stopping_rounds),
     }
 
     # errors
-    rrmse = {
-        "training": None,
-        "validation": None,
+    err = {
+        "training": float(np.mean((y_train - train_preds) ** 2)),
+        "validation": None if (X_val is None) else float(np.mean((y_val - val_preds) ** 2)),
         "training_mse": {},
         "validation_mse": {},
+        # "target_order": list(target_order),
+        # "feature_order": list(feature_order),
     }
 
-    def _fill_err(y_true, y_pred, split):
-        if y_true is None or y_pred is None:
-            return
-        yt = np.asarray(y_true)
-        yp = np.asarray(y_pred)
-        rrmse[split] = float(np.mean((yt - yp) ** 2))
-        for i, pname in enumerate(target_names):
-            rrmse[f"{split}_mse"][pname] = float(np.mean((yt[:, i] - yp[:, i]) ** 2))
-
-    _fill_err(y_train, train_preds, "training")
-    _fill_err(y_val, val_preds, "validation")
+    for i, pname in enumerate(target_order):
+        err["training_mse"][pname] = float(np.mean((y_train[:, i] - train_preds[:, i]) ** 2))
+        if X_val is not None:
+            err["validation_mse"][pname] = float(np.mean((y_val[:, i] - val_preds[:, i]) ** 2))
 
     # save artifacts
     with open(model_directory / "xgb_mdl_obj.pkl", "wb") as f:
         pickle.dump(xgb_obj, f)
     with open(model_directory / "xgb_model_error.json", "w") as f:
-        json.dump(rrmse, f, indent=4)
+        json.dump(err, f, indent=4)
     joblib.dump(model, model_directory / "xgb_model.pkl")
 
-    # plot predictions/results with your helper
+    # plots
     visualizing_results(
         xgb_obj,
         analysis="xgb_results",
         save_loc=model_directory,
-        stages=["training", "validation"],
+        stages=["training", "validation"] if X_val is not None else ["training"],
         color_shades=color_shades,
         main_colors=main_colors,
     )
 
-    # Feature importances
-    if feature_names is None:
-        feature_names = [
-            f"feat_{i}"
-            for i in range((X_train if X_train is not None else X_val).shape[1])
-        ]
     _plot_feature_importances_grid(
         model,
-        feature_names=feature_names,
-        target_names=target_names,
+        feature_names=list(feature_order),
+        target_names=list(target_order),
         save_path=model_directory / "xgb_feature_importances.png",
         top_k=top_k_features_plot,
     )
@@ -551,39 +546,15 @@ if __name__ == "__main__":
     p.add_argument("--random_state", type=int, default=42)
 
     # Plot options
-    p.add_argument(
-        "--top_k_features_plot",
-        type=int,
-        default=None,
-        help="Limit number of top features shown per target (optional).",
-    )
+    p.add_argument("--top_k_features_plot", type=int, default=None)
 
-    # Verbosity / performance controls
-    p.add_argument(
-        "--outer-n-jobs",
-        type=int,
-        default=None,
-        help="Parallel jobs across targets for MultiOutputRegressor. "
-        "Default: SLURM_CPUS_PER_TASK or os.cpu_count().",
-    )
-    p.add_argument(
-        "--xgb-n-jobs",
-        type=int,
-        default=1,
-        help="Threads per XGBRegressor (keep small to avoid oversubscription).",
-    )
-    p.add_argument(
-        "--tree-method",
-        type=str,
-        default="hist",
-        help="XGBoost tree_method; 'hist' is fast on CPU.",
-    )
-    p.add_argument(
-        "--early-stopping-rounds",
-        type=int,
-        default=None,
-        help="If set and validation data provided, use early stopping with per-iteration logs.",
-    )
+    # Perf controls
+    p.add_argument("--outer-n-jobs", type=int, default=None)
+    p.add_argument("--xgb-n-jobs", type=int, default=1)
+    p.add_argument("--tree-method", type=str, default="hist")
+
+    # Early stopping: uses TUNE (not VAL)
+    p.add_argument("--early-stopping-rounds", type=int, default=None)
 
     args = p.parse_args()
 

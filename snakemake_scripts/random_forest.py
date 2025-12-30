@@ -151,7 +151,7 @@ def tune_rf_on_tune(
     y_train,
     X_tune,
     y_tune,
-    n_iter=20,
+    n_iter=10,
     base_random_state=295,
 ):
     """
@@ -183,10 +183,18 @@ def tune_rf_on_tune(
             n_estimators=n_estimators,
             max_depth=max_depth,
             min_samples_split=min_samples_split,
+
+            min_samples_leaf=1,
+            max_features=0.7,
+            max_samples=0.9,
+            bootstrap=True,
             random_state=FIXED_RANDOM_STATE,
-            n_jobs=N_JOBS,  # critical: avoid oversubscription
+            n_jobs=1,
         )
-        rf = MultiOutputRegressor(rf_single, n_jobs=1)
+        rf = MultiOutputRegressor(
+            rf_single,
+            n_jobs=N_JOBS
+        )
         rf.fit(X_train, y_train)
 
         preds_tune = rf.predict(X_tune)
@@ -318,11 +326,18 @@ def main(args):
         n_estimators=n_estimators,
         max_depth=max_depth,
         min_samples_split=min_samples_split,
+
+        min_samples_leaf=1,
+        max_features=0.7,
+        max_samples=0.9,
+        bootstrap=True,
         random_state=FIXED_RANDOM_STATE,
-        n_jobs=N_JOBS,          # critical: avoid oversubscription
-        bootstrap=True,    # default; kept explicit for clarity
+        n_jobs=1,
     )
-    rf = MultiOutputRegressor(rf_single, n_jobs=1)
+    rf = MultiOutputRegressor(
+        rf_single,
+        n_jobs=N_JOBS
+    )
     rf.fit(X_train, y_train)
 
     tr_pred = rf.predict(X_train)
@@ -334,11 +349,11 @@ def main(args):
         "validation": float(np.mean((y_val - va_pred) ** 2)),
         "training_mse": {},
         "validation_mse": {},
-        "target_order": list(param_names),
-        "feature_order": list(feature_order),
-        "rf_random_state": FIXED_RANDOM_STATE,
-        "n_jobs_multioutput": 1,
-        "n_jobs_rf_single": N_JOBS,
+        # "target_order": list(param_names),
+        # "feature_order": list(feature_order),
+        # "rf_random_state": FIXED_RANDOM_STATE,
+        # "n_jobs_multioutput": N_JOBS,
+        # "n_jobs_rf_single": 1,
     }
 
     for i, p in enumerate(param_names):
@@ -421,7 +436,7 @@ if __name__ == "__main__":
     p.add_argument("--random_state", type=int, default=None)
 
     p.add_argument("--do_random_search", action="store_true")
-    p.add_argument("--n_iter", type=int, default=20)
+    p.add_argument("--n_iter", type=int, default=10)
 
     args = p.parse_args()
     main(args)
