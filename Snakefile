@@ -855,11 +855,16 @@ rule linear_regression:
     input:
         X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+
+        # ✅ add tune
+        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
+        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
+
         X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
         y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        mdlcfg  = "config_files/model_config.yaml"   # optional
+        mdlcfg  = "config_files/model_config.yaml"
     output:
         obj   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
         errjs = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
@@ -880,6 +885,8 @@ rule linear_regression:
         python "{params.script}" \
             --X_train_path "{input.X_train}" \
             --y_train_path "{input.y_train}" \
+            --X_tune_path  "{input.X_tune}" \
+            --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
             --experiment_config_path "{params.expcfg}" \
@@ -919,18 +926,24 @@ rule random_forest:
         script    = "snakemake_scripts/random_forest.py",
         model_dir = f"experiments/{MODEL}/modeling/random_forest",
         opt_flags = lambda w: " ".join([
-            f"--n_estimators {config['rf']['n_estimators']}" \
-                if config.get('rf', {}).get('n_estimators') is not None else "",
-            f"--max_depth {config['rf']['max_depth']}" \
-                if config.get('rf', {}).get('max_depth') is not None else "",
-            f"--min_samples_split {config['rf']['min_samples_split']}" \
-                if config.get('rf', {}).get('min_samples_split') is not None else "",
-            f"--random_state {config['rf']['random_state']}" \
-                if config.get('rf', {}).get('random_state') is not None else "",
-            f"--n_iter {config['rf']['n_iter']}" \
-                if config.get('rf', {}).get('n_iter') is not None else "",
-            "--do_random_search" if config.get('rf', {}).get('random_search', False) else ""
+            "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
+            f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
+            f"--optuna_timeout {config['rf']['optuna_timeout']}" if config.get("rf", {}).get("optuna_timeout") is not None else "",
+            f"--optuna_seed {config['rf']['optuna_seed']}" if config.get("rf", {}).get("optuna_seed") is not None else "",
+
+            f"--final_fit {config['rf']['final_fit']}" if config.get("rf", {}).get("final_fit") is not None else "",
+
+            # manual overrides (bypass optuna if any are set)
+            f"--n_estimators {config['rf']['n_estimators']}" if config.get("rf", {}).get("n_estimators") is not None else "",
+            f"--max_depth {config['rf']['max_depth']}" if config.get("rf", {}).get("max_depth") is not None else "",
+            f"--min_samples_split {config['rf']['min_samples_split']}" if config.get("rf", {}).get("min_samples_split") is not None else "",
+
+            # extra knobs
+            f"--min_samples_leaf {config['rf']['min_samples_leaf']}" if config.get("rf", {}).get("min_samples_leaf") is not None else "",
+            f"--max_features {config['rf']['max_features']}" if config.get("rf", {}).get("max_features") is not None else "",
+            f"--max_samples {config['rf']['max_samples']}" if config.get("rf", {}).get("max_samples") is not None else "",
         ]).strip()
+
     threads: 8
     benchmark:
         "benchmarks/random_forest.tsv"
@@ -983,27 +996,25 @@ rule xgboost:
         script    = "snakemake_scripts/xgboost_evaluation.py",
         model_dir = f"experiments/{MODEL}/modeling/xgboost",
         opt_flags = lambda w: " ".join([
-            f"--n_estimators {config['xgb']['n_estimators']}" \
-                if config.get('xgb', {}).get('n_estimators') is not None else "",
-            f"--max_depth {config['xgb']['max_depth']}" \
-                if config.get('xgb', {}).get('max_depth') is not None else "",
-            f"--learning_rate {config['xgb']['learning_rate']}" \
-                if config.get('xgb', {}).get('learning_rate') is not None else "",
-            f"--subsample {config['xgb']['subsample']}" \
-                if config.get('xgb', {}).get('subsample') is not None else "",
-            f"--colsample_bytree {config['xgb']['colsample_bytree']}" \
-                if config.get('xgb', {}).get('colsample_bytree') is not None else "",
-            f"--min_child_weight {config['xgb']['min_child_weight']}" \
-                if config.get('xgb', {}).get('min_child_weight') is not None else "",
-            f"--reg_lambda {config['xgb']['reg_lambda']}" \
-                if config.get('xgb', {}).get('reg_lambda') is not None else "",
-            f"--reg_alpha {config['xgb']['reg_alpha']}" \
-                if config.get('xgb', {}).get('reg_alpha') is not None else "",
-            f"--n_iter {config['xgb']['n_iter']}" \
-                if config.get('xgb', {}).get('n_iter') is not None else "",
-            f"--top_k_features_plot {config['xgb']['top_k_plot']}" \
-                if config.get('xgb', {}).get('top_k_plot') is not None else "",
-            "--do_random_search" if config.get('xgb', {}).get('do_random_search', False) else ""
+            "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
+            f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
+            f"--optuna_timeout {config['xgb']['optuna_timeout']}" if config.get("xgb", {}).get("optuna_timeout") is not None else "",
+            f"--optuna_seed {config['xgb']['optuna_seed']}" if config.get("xgb", {}).get("optuna_seed") is not None else "",
+
+            f"--final_fit {config['xgb']['final_fit']}" if config.get("xgb", {}).get("final_fit") is not None else "",
+            f"--early_stopping_rounds {config['xgb']['early_stopping_rounds']}" if config.get("xgb", {}).get("early_stopping_rounds") is not None else "",
+
+            # manual overrides (bypass optuna if any are set)
+            f"--n_estimators {config['xgb']['n_estimators']}" if config.get("xgb", {}).get("n_estimators") is not None else "",
+            f"--max_depth {config['xgb']['max_depth']}" if config.get("xgb", {}).get("max_depth") is not None else "",
+            f"--learning_rate {config['xgb']['learning_rate']}" if config.get("xgb", {}).get("learning_rate") is not None else "",
+            f"--subsample {config['xgb']['subsample']}" if config.get("xgb", {}).get("subsample") is not None else "",
+            f"--colsample_bytree {config['xgb']['colsample_bytree']}" if config.get("xgb", {}).get("colsample_bytree") is not None else "",
+            f"--min_child_weight {config['xgb']['min_child_weight']}" if config.get("xgb", {}).get("min_child_weight") is not None else "",
+            f"--reg_lambda {config['xgb']['reg_lambda']}" if config.get("xgb", {}).get("reg_lambda") is not None else "",
+            f"--reg_alpha {config['xgb']['reg_alpha']}" if config.get("xgb", {}).get("reg_alpha") is not None else "",
+
+            f"--top_k_features_plot {config['xgb']['top_k_plot']}" if config.get("xgb", {}).get("top_k_plot") is not None else "",
         ]).strip()
     threads: 4
     benchmark:

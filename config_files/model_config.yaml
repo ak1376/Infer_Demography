@@ -13,25 +13,32 @@ linear:
     grid_search: false
 
 rf:
-  enable: true          # set false to skip RF outputs/rule all
-  random_search: true   # let the script do RandomizedSearchCV if True and no params given
-  n_iter: 10            # RS iterations
-  n_estimators: null    # null => let RS choose (or use defaults)
-  max_depth: null
-  min_samples_split: null
-  random_state: 42
+  enable: true
+  use_optuna: false
+  final_fit: "train_plus_tune"
+
+  # bypass optuna by setting any of these:
+  n_estimators: 300
+  max_depth: 15
+  min_samples_split: 10
+
+  min_samples_leaf: 5
+  max_features: "sqrt"
+  max_samples: 0.75
 
 xgb:
-  do_random_search: true
-  n_iter: 20
-  random_state: 42
-  # override defaults (or leave None to let search fill them)
-  n_estimators: null
-  max_depth: null
-  learning_rate: null
-  subsample: null
-  colsample_bytree: null
-  min_child_weight: null
-  reg_lambda: null
-  reg_alpha: null
+  enable: true
+  use_optuna: false
+  final_fit: "train_only"          # IMPORTANT with early stopping
+  early_stopping_rounds: 50        # uses TUNE as eval_set
+
+  n_estimators: 2000               # upper bound; ES will stop earlier
+  max_depth: 5
+  learning_rate: 0.03
+  subsample: 0.9
+  colsample_bytree: 0.8
+  min_child_weight: 3
+  reg_lambda: 5.0
+  reg_alpha: 0.0
+
   top_k_plot: 20
