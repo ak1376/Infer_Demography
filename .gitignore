@@ -27,3 +27,5 @@ experiments_BGS/
 experiments_full_range_BGS/
 experiments_neutral/
 debugging/
+cleanup_empty_fit_pkls_and_cleanup_done.sh
+backfill_bgs_meta.py
