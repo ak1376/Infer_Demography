@@ -40,6 +40,17 @@ FIM_ENGINES = CFG.get("fim_engines", ["moments"])
 USE_GPU_LD = CFG.get("use_gpu_ld", False)
 USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 
+USE_GS = bool(CFG.get("gram_schmidt", False))
+
+def _resid_vector_fname():
+    # which vector do we want to feed into all_inferences.pkl?
+    return "residuals_gs_coeffs.npy" if USE_GS else "residuals_flat.npy"
+
+def _resid_vector_regex():
+    # for combine_results parsing
+    return r"residuals_gs_coeffs\.npy$" if USE_GS else r"residuals_flat\.npy$"
+
+
 def _normalize_residual_engines(val):
     # accepts "moments", "dadi", "both", list/tuple
     if isinstance(val, str):
@@ -601,7 +612,24 @@ rule sfs_residuals:
         res_arr   = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals.npy",
         res_flat  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
         meta_json = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
-        hist_png  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_histogram.png"
+        hist_png  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_histogram.png",
+        # Only required when gram_schmidt=true
+        gs_coeffs = (
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy"
+            if USE_GS
+            else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_disabled")
+        ),
+        # Optional reproducibility artifacts (only if enabled)
+        gs_basis = (
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_basis.npy"
+            if USE_GS
+            else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_basis_disabled")
+        ),
+        gs_recon = (
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_reconstruction.npy"
+            if USE_GS
+            else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_recon_disabled")
+        )
     params:
         cfg      = EXP_CFG,
         model_py = (
@@ -633,11 +661,19 @@ rule sfs_residuals:
           --outdir "{params.out_dir}" \
           $N_BINS_ARG
 
-        # ensure outputs exist
+        # ensure base outputs exist
         test -f "{output.res_arr}"   && \
         test -f "{output.res_flat}"  && \
         test -f "{output.meta_json}" && \
         test -f "{output.hist_png}"
+
+        # if GS enabled, ensure GS artifacts exist
+        if [ "{USE_GS}" = "True" ]; then
+          test -f "{output.gs_coeffs}"
+          # basis + reconstruction are written by the script when GS is enabled
+          test -f "{output.gs_basis}"
+          test -f "{output.gs_recon}"
+        fi
         """
 
 ##############################################################################
@@ -650,24 +686,37 @@ rule combine_results:
         dadi      = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
         moments   = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
         momentsLD = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl",
-        fims      = lambda w: [f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy" for eng in FIM_ENGINES],
-        resids    = lambda w: [
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/residuals_flat.npy"
+        fims      = lambda w: [
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"
+            for eng in FIM_ENGINES
+        ],
+        # 👇 pick which residual vector to include based on config
+        resid_vecs = lambda w: [
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/{_resid_vector_fname()}"
             for eng in RESIDUAL_ENGINES
-        ]
+        ],
+        # also pull meta so changes to GS settings trigger recombine
+        resid_meta = lambda w: [
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/meta.json"
+            for eng in RESIDUAL_ENGINES
+        ],
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
         import pickle, pathlib, numpy as np, re, os, json
+
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
+
+        cfg_obj = json.loads(open(input.cfg, "r").read())
+        use_gs = bool(cfg_obj.get("gram_schmidt", False))
 
         summary = {}
         summary["moments"]   = pickle.load(open(input.moments, "rb"))
         summary["dadi"]      = pickle.load(open(input.dadi, "rb"))
         summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
 
-        # FIM upper-triangles
+        # ---------------- FIM upper-triangles ----------------
         fim_payload = {}
         for fim_path in input.fims:
             eng = re.sub(r".*?/fim/([^.]+)\.fim\.npy$", r"\1", fim_path)
@@ -682,28 +731,60 @@ rule combine_results:
         if fim_payload:
             summary["FIM"] = fim_payload
 
-        # Residual SFS payloads (engine -> flat + shape if available)
+        # ---------------- Residual SFS vectors ----------------
+        # We attach either:
+        #   - residuals_flat.npy (raw) OR
+        #   - residuals_gs_coeffs.npy (GS reduced)
         resid_payload = {}
-        for flat_path in input.resids:
-            m = re.search(r"/sfs_residuals/([^/]+)/residuals_flat\.npy$", flat_path)
-            if not m:   # skip unexpected
+        for vec_path in input.resid_vecs:
+            m = re.search(r"/sfs_residuals/([^/]+)/([^/]+)\.npy$", vec_path)
+            if not m:
                 continue
             eng = m.group(1)
-            base = os.path.dirname(flat_path)
-            flat = np.load(flat_path)
+            stem = m.group(2)  # residuals_flat OR residuals_gs_coeffs
+            base = os.path.dirname(vec_path)
+
+            vec = np.load(vec_path)
+
+            # full residual array shape (optional)
             arr_path = os.path.join(base, "residuals.npy")
             arr = np.load(arr_path) if os.path.exists(arr_path) else None
-            resid_payload[eng] = {
-                "shape": (list(arr.shape) if arr is not None else None),
-                "flat": flat.astype(float).tolist(),
+
+            payload = {
+                "vector": vec.astype(float).tolist(),
+                "vector_dim": int(vec.size),
+                "vector_type": (
+                    "gram_schmidt_coeffs" if stem == "residuals_gs_coeffs" else "raw_flat_residuals"
+                ),
+                "full_residual_shape": (list(arr.shape) if arr is not None else None),
                 "order": "row-major",
             }
+
+            # If GS: attach GS metadata/basis shapes when available
+            if stem == "residuals_gs_coeffs":
+                meta_path = os.path.join(base, "meta.json")
+                basis_path = os.path.join(base, "residuals_gs_basis.npy")
+                if os.path.exists(basis_path):
+                    Q = np.load(basis_path)
+                    payload["gs_basis_shape"] = [int(Q.shape[0]), int(Q.shape[1])]
+                if os.path.exists(meta_path):
+                    try:
+                        mj = json.loads(open(meta_path, "r").read())
+                        payload["gram_schmidt_k"] = mj.get("gram_schmidt_k", None)
+                        payload["gram_schmidt_k_effective"] = mj.get("gram_schmidt_k_effective", None)
+                        payload["gram_schmidt_basis"] = mj.get("gram_schmidt_basis", None)
+                        payload["gram_schmidt_eps"] = mj.get("gram_schmidt_eps", None)
+                    except Exception:
+                        pass
+
+            resid_payload[eng] = payload
+
         if resid_payload:
             summary["SFS_residuals"] = resid_payload
 
         pickle.dump(summary, open(output.combo, "wb"))
         print(f"✓ combined → {output.combo}")
-
+        
 ##############################################################################
 # RULE combine_features – build datasets (filter, split, normalize)          #
 # (robust: discovers existing sims at runtime; skips missing)                #

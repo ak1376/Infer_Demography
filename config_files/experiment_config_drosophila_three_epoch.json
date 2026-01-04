@@ -11,7 +11,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 20000,
+  "num_draws": 5000,
   "priors": {
     "N0": [
       5000,
@@ -54,7 +54,7 @@
       30
     ]
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": [
     "moments"
   ],
@@ -62,5 +62,8 @@
   "residual_engines": "moments",
   "engine": "msprime",
   "use_gpu_ld": true,
-  "use_gpu_dadi": false
+  "use_gpu_dadi": false, 
+  "gram_schmidt": true,
+  "gram_schmidt_k": 10
+
 }

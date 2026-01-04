@@ -2,9 +2,9 @@
 #SBATCH --job-name=combine_inf
 #SBATCH --output=logs/combine_%A_%a.out
 #SBATCH --error=logs/combine_%A_%a.err
-#SBATCH --time=16:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=12G
+#SBATCH --time=2:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=2G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -135,7 +135,6 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
     --directory "$ROOT" \
     --rerun-incomplete \
     --rerun-triggers mtime \
-    --forcerun combine_results \
     --nolock \
     --allowed-rules "${ALLOWED_RULES[@]}" \
     --keep-going \
