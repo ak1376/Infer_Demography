@@ -3,9 +3,9 @@
 #SBATCH --array=0-9999                            # Array range (adjust based on the number of tasks and batch size)
 #SBATCH --output=logs/simulation_%A_%a.out      # Standard output log file (%A is job ID, %a is the array index)
 #SBATCH --error=logs/simulation_%A_%a.err       # Standard error log file
-#SBATCH --time=6:00:00                          # Time limit
-#SBATCH --cpus-per-task=8                       # Number of CPU cores per task
-#SBATCH --mem=8G                                # Memory per task
+#SBATCH --time=3:00:00                          # Time limit
+#SBATCH --cpus-per-task=2                       # Number of CPU cores per task
+#SBATCH --mem=2G                                # Memory per task
 #SBATCH --partition=kern,preempt,kerngpu        # Partitions to submit the job to
 #SBATCH --account=kernlab                       # Account to use
 #SBATCH --requeue                               # Requeue on preemption
@@ -14,12 +14,12 @@
 #SBATCH --verbose
 
 # Define batch size and total number of tasks
-BATCH_SIZE=2
-TOTAL_TASKS=20000
+BATCH_SIZE=1
+TOTAL_TASKS=10000
 
 # the master script exports CFG_PATH; abort if it is not set
 # : "${CFG_PATH:?CFG_PATH is not defined}"
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_OOA_three_pop.json"
 EXPERIMENT_CONFIG_FILE="$CFG_PATH"
 
 # Extract the values from the JSON config

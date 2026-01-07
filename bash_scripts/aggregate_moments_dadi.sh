@@ -2,7 +2,7 @@
 #SBATCH --job-name=agg_opts_both
 #SBATCH --output=logs/agg_both_%A_%a.out
 #SBATCH --error=logs/agg_both_%A_%a.err
-#SBATCH --time=08:00:00
+#SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=2G
 #SBATCH --partition=kern,preempt,kerngpu

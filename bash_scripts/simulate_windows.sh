@@ -15,11 +15,11 @@
 
 set -euo pipefail
 
-BATCH_SIZE=200
+BATCH_SIZE=100
 
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_OOA_three_pop.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

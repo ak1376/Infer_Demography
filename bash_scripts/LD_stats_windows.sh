@@ -36,10 +36,10 @@ export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
 mkdir -p "$CUPY_CACHE_DIR"
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=200
+BATCH_SIZE=100
 # ----------------------------------------------------------------------------
 
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_OOA_three_pop.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

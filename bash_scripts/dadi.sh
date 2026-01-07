@@ -15,12 +15,12 @@
 
 set -euo pipefail
 
-BATCH_SIZE=200
+BATCH_SIZE=100
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_OOA_three_pop.json}"
 export EXP_CFG="$CFG"
 
 # Hard-disable GPU visibility (belt + suspenders)
