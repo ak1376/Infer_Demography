@@ -5,7 +5,7 @@
 #SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=2G
-#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --partition=kern,preempt
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -17,15 +17,15 @@ set -euo pipefail
 # -----------------------------
 # Tunables
 # -----------------------------
-BATCH_SIZE="${BATCH_SIZE:-2}"      # sims per array task
-SIM_RANGE="${SIM_RANGE:-}"         # optional "5000-20000" inclusive
+BATCH_SIZE="${BATCH_SIZE:-1}"      # sims per array task
+SIM_RANGE="${SIM_RANGE:-4000-4999}"         # optional "5000-20000" inclusive
 FORCE="${FORCE:-0}"                # 1 => force rerun even if canonical looks good
 DRYRUN="${DRYRUN:-0}"              # 1 => add -n to snakemake (no execution)
 
 # -----------------------------
 # Paths & config
 # -----------------------------
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json}"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 export EXP_CFG="$CFG"

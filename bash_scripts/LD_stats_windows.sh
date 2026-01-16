@@ -5,7 +5,7 @@
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --mem=4G
 #SBATCH --partition=kerngpu,gpu,gpulong
 #SBATCH --account=kernlab
 #SBATCH --gres=gpu:1
@@ -36,10 +36,10 @@ export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
 mkdir -p "$CUPY_CACHE_DIR"
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=100
+BATCH_SIZE=50
 # ----------------------------------------------------------------------------
 
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_OOA_three_pop.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

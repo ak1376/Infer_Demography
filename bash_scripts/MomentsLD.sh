@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-9999                # <— full range, no %MAX_CONCURRENT
+#SBATCH --array=0-4999                # <— full range, no %MAX_CONCURRENT
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=5:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=2G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -17,14 +17,14 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 0. batching parameters ----------------------------------------------------
 # ---------------------------------------------------------------------------
-BATCH_SIZE=2
+BATCH_SIZE=1
 
 # ---------------------------------------------------------------------------
 # 1. paths & config ---------------------------------------------------------
 # ---------------------------------------------------------------------------
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
