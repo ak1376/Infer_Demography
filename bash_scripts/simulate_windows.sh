@@ -3,9 +3,9 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
-#SBATCH --time=16:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=6G
+#SBATCH --time=6:00:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=2G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -15,11 +15,11 @@
 
 set -euo pipefail
 
-BATCH_SIZE=100
+BATCH_SIZE=50
 
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 # CFG="$CFG_PATH"
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_OOA_three_pop.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

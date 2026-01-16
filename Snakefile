@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_OOA_three_pop.json"
+EXP_CFG = "config_files/experiment_config_split_isolation.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -606,19 +606,19 @@ rule compute_fim:
 rule sfs_residuals:
     input:
         obs_sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        agg_fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl"
+        agg_fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
     output:
         res_arr   = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals.npy",
         res_flat  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
         meta_json = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
         hist_png  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_histogram.png",
-        # Only required when gram_schmidt=true
+
+        # Only required when gram_schmidt=true; otherwise create temp sentinels
         gs_coeffs = (
             f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy"
             if USE_GS
             else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_disabled")
         ),
-        # Optional reproducibility artifacts (only if enabled)
         gs_basis = (
             f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_basis.npy"
             if USE_GS
@@ -628,7 +628,7 @@ rule sfs_residuals:
             f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_reconstruction.npy"
             if USE_GS
             else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_recon_disabled")
-        )
+        ),
     params:
         cfg      = EXP_CFG,
         model_py = (
@@ -638,18 +638,21 @@ rule sfs_residuals:
         ),
         inf_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}",
         out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}",
-        n_bins   = CFG.get("sfs_n_bins", "")  # empty string if not specified
+        n_bins   = CFG.get("sfs_n_bins", ""),  # empty string if not specified
     threads: 1
     shell:
         r"""
         set -euo pipefail
-        
-        # Build n_bins argument conditionally
+
+        # Ensure outdir exists (script also does this, but harmless)
+        mkdir -p "{params.out_dir}"
+
+        # Build optional n_bins flag
         N_BINS_ARG=""
         if [ -n "{params.n_bins}" ]; then
             N_BINS_ARG="--n-bins {params.n_bins}"
         fi
-        
+
         PYTHONPATH={workflow.basedir} \
         python "{RESID_SCRIPT}" \
           --mode {wildcards.engine} \
@@ -660,20 +663,22 @@ rule sfs_residuals:
           --outdir "{params.out_dir}" \
           $N_BINS_ARG
 
-        # ensure base outputs exist
-        test -f "{output.res_arr}"   && \
-        test -f "{output.res_flat}"  && \
-        test -f "{output.meta_json}" && \
+        # Base outputs must exist
+        test -f "{output.res_arr}"
+        test -f "{output.res_flat}"
+        test -f "{output.meta_json}"
         test -f "{output.hist_png}"
 
-        # if GS enabled, ensure GS artifacts exist
+        # GS outputs: if enabled, require real artifacts; else create sentinels
         if [ "{USE_GS}" = "True" ]; then
-          test -f "{output.gs_coeffs}"
-          # basis + reconstruction are written by the script when GS is enabled
-          test -f "{output.gs_basis}"
-          test -f "{output.gs_recon}"
+            test -f "{output.gs_coeffs}"
+            test -f "{output.gs_basis}"
+            test -f "{output.gs_recon}"
+        else
+            touch "{output.gs_coeffs}" "{output.gs_basis}" "{output.gs_recon}"
         fi
         """
+
 
 ##############################################################################
 # RULE combine_results – merge dadi / moments / moments-LD fits per sim      #

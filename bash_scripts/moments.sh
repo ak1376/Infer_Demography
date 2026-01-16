@@ -6,7 +6,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=4G
-#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --partition=kern,preempt
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -16,13 +16,13 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=200   # number of (sim,opt) pairs per array element
+BATCH_SIZE=50   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json}"
 export EXP_CFG="$CFG"
 
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
