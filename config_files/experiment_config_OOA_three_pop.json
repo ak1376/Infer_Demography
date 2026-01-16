@@ -1,5 +1,5 @@
 {
-    "genome_length": 1e7,
+    "genome_length": 1e6,
     "mutation_rate": 1.5e-08,
     "recombination_rate": 1.5e-08,
     "demographic_model": "OOA_three_pop",
@@ -12,7 +12,7 @@
     "seed": 42,
     "num_optimizations": 100,
     "top_k": 5,
-    "num_draws": 10000,
+    "num_draws": 1,
     "priors": {
         "N_anc": [
             100,

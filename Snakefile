@@ -91,21 +91,21 @@ WINDOWS  = range(NUM_WINDOWS)
 rule all:
     input:
         [
-            # ---------------- SIMULATED DATA PIPELINE ----------------
-            # expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+            ## ---------------- SIMULATED DATA PIPELINE ----------------
+            expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-            # Aggregated optimizer results (simulated)
+            ## Aggregated optimizer results (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",   sid=SIM_IDS),
 
-            # Cleanup completion markers (simulated)
+            ## Cleanup completion markers (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
             # LD artifacts (simulated; best-fit only)
-            # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+            expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
             # FIM (simulated)
             # expand(
@@ -128,24 +128,24 @@ rule all:
 
             # ---------------- REAL DATA ----------------
             # Real-data SFS
-            f"experiments/{MODEL}/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
+            # f"experiments/{MODEL}/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
 
-            # REAL DATA: per-optimization SFS inferences
-            *expand(
-                f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl",
-                opt=OPTIMS,
-            ),
-            *expand(
-                f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/dadi/fit_params.pkl",
-                opt=OPTIMS,
-            ),
+            # # REAL DATA: per-optimization SFS inferences
+            # *expand(
+            #     f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl",
+            #     opt=OPTIMS,
+            # ),
+            # *expand(
+            #     f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/dadi/fit_params.pkl",
+            #     opt=OPTIMS,
+            # ),
 
-            # REAL DATA: aggregated inferences
-            f"experiments/{MODEL}/real_data_analysis/inferences/moments/fit_params.pkl",
-            f"experiments/{MODEL}/real_data_analysis/inferences/dadi/fit_params.pkl",
+            # # REAL DATA: aggregated inferences
+            # f"experiments/{MODEL}/real_data_analysis/inferences/moments/fit_params.pkl",
+            # f"experiments/{MODEL}/real_data_analysis/inferences/dadi/fit_params.pkl",
 
-            *expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
-            *expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS)
+            # *expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
+            # *expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS)
 
         ]
 
@@ -524,22 +524,21 @@ rule ld_window:
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
-            --use-gpu
 
         
-        EXIT_CODE=$?
+        # EXIT_CODE=$?
         
-        # If successful, clean up intermediate files
-        if [ $EXIT_CODE -eq 0 ]; then
-            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
-            echo "🧹 Cleanup completed for window {wildcards.win}"
-        else
-            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
-            exit $EXIT_CODE
-        fi
+        # # If successful, clean up intermediate files
+        # if [ $EXIT_CODE -eq 0 ]; then
+        #     echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
+        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
+        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
+        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
+        #     echo "🧹 Cleanup completed for window {wildcards.win}"
+        # else
+        #     echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
+        #     exit $EXIT_CODE
+        # fi
         """
 
 ##############################################################################
