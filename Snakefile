@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_isolation.json"
+EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -511,11 +511,10 @@ rule ld_window:
     params:
         sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         bins    = R_BINS_STR,
-        cfg    = EXP_CFG
-
+        cfg     = EXP_CFG
     threads: 4
     resources:
-        ld_cores=4
+        ld_cores = 4
     shell:
         """
         # Run the LD computation and capture exit code
@@ -525,20 +524,19 @@ rule ld_window:
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
 
-        
-        # EXIT_CODE=$?
-        
-        # # If successful, clean up intermediate files
-        # if [ $EXIT_CODE -eq 0 ]; then
-        #     echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
-        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
-        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
-        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
-        #     echo "🧹 Cleanup completed for window {wildcards.win}"
-        # else
-        #     echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
-        #     exit $EXIT_CODE
-        # fi
+        EXIT_CODE=$?
+
+        # If successful, clean up intermediate files
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
+            echo "🧹 Cleanup completed for window {wildcards.win}"
+        else
+            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
+            exit $EXIT_CODE
+        fi
         """
 
 ##############################################################################

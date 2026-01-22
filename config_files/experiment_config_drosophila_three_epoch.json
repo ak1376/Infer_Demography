@@ -11,7 +11,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 10000,
+  "num_draws": 5000,
   "priors": {
     "N0": [
       5000,
@@ -43,7 +43,6 @@
     ]
   },
   "fixed_parameters": {
-    "T_AFR_expansion": "sampled"
   }, 
   "selection": {
     "enabled": true,
@@ -51,7 +50,7 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      30
+      95
     ]
   },
   "use_fim_features": false,
@@ -60,8 +59,8 @@
   ],
   "use_residuals": true,
   "residual_engines": "moments",
-  "engine": "msprime",
-  "use_gpu_ld": true,
+  "engine": "slim",
+  "use_gpu_ld": false,
   "use_gpu_dadi": false, 
   "gram_schmidt": true,
   "gram_schmidt_k": 10
