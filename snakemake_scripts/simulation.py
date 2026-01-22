@@ -52,8 +52,50 @@ def sample_params(
     priors: Dict[str, List[float]], *, rng: Optional[np.random.Generator] = None
 ) -> Dict[str, float]:
     rng = rng or np.random.default_rng()
-    params = {k: float(rng.uniform(*bounds)) for k, bounds in priors.items()}
-    # keep bottleneck start > end if both are present
+
+    params: Dict[str, float] = {}
+
+    # --- sample all non-time params first (including sizes, growth, migration, etc.) ---
+    time_keys = {"T_AFR_ancient_change", "T_AFR_OOA", "T_OOA_EU_AS"}
+    for k, bounds in priors.items():
+        if k in time_keys:
+            continue
+        params[k] = float(rng.uniform(*bounds))
+
+    # --- sample Gutenkunst times with guaranteed ordering ---
+    # Require: T_AFR_ancient_change > T_AFR_OOA > T_OOA_EU_AS >= 0
+    if time_keys.issubset(priors):
+        lo_eu, hi_eu = priors["T_OOA_EU_AS"]
+        lo_b,  hi_b  = priors["T_AFR_OOA"]
+        lo_af, hi_af = priors["T_AFR_ancient_change"]
+
+        max_tries = 1000
+        for _ in range(max_tries):
+            T_OOA_EU_AS = float(rng.uniform(lo_eu, hi_eu))
+
+            # enforce T_AFR_OOA > T_OOA_EU_AS
+            lo_b2 = max(lo_b, T_OOA_EU_AS + 1.0)
+            if lo_b2 >= hi_b:
+                continue
+            T_AFR_OOA = float(rng.uniform(lo_b2, hi_b))
+
+            # enforce T_AFR_ancient_change > T_AFR_OOA
+            lo_af2 = max(lo_af, T_AFR_OOA + 1.0)
+            if lo_af2 >= hi_af:
+                continue
+            T_AFR_ancient_change = float(rng.uniform(lo_af2, hi_af))
+
+            params["T_OOA_EU_AS"] = T_OOA_EU_AS
+            params["T_AFR_OOA"] = T_AFR_OOA
+            params["T_AFR_ancient_change"] = T_AFR_ancient_change
+            break
+        else:
+            raise RuntimeError(
+                "Could not sample valid Gutenkunst times after many tries. "
+                "Your prior bounds may be incompatible."
+            )
+
+    # keep bottleneck start > end if both are present (your existing logic)
     if {"t_bottleneck_start", "t_bottleneck_end"}.issubset(params) and params[
         "t_bottleneck_start"
     ] <= params["t_bottleneck_end"]:

@@ -10,31 +10,32 @@
     "CHB": 10
   },
   "seed": 42,
-  "num_optimizations": 1,
-  "top_k": 1,
-  "num_draws": 10,
+  "num_optimizations": 100,
+  "top_k": 5,
+  "num_draws": 5000,
 
   "priors": {
-    "N_AFR_ancient": [4000, 10000],
-    "N_AFR_recent":  [9000, 20000],
+    "N_AFR_ancient": [3000, 20000],
+    "N_AFR_recent":  [6000, 40000],
 
-    "N_OOA":         [1000, 4000],
+    "N_OOA":         [500, 12000],
 
-    "N_CEU_founder": [500, 2000],
-    "N_CHB_founder": [300, 1200],
+    "N_CEU_founder": [200, 8000],
+    "N_CHB_founder": [150, 6000],
 
-    "r_CEU":         [0.002, 0.006],
-    "r_CHB":         [0.003, 0.009],
+    "r_CEU":         [0.0005, 0.012],
+    "r_CHB":         [0.0005, 0.015],
 
-    "T_AFR_ancient_change": [8000, 10500],
-    "T_AFR_OOA":            [4800, 6800],
-    "T_OOA_EU_AS":          [600, 1200],
+    "T_OOA_EU_AS":          [400, 2000],
+    "T_AFR_OOA":            [3500, 10000],
+    "T_AFR_ancient_change": [6000, 16000],
 
-    "m_YRI_OOA": [0.0005, 0.004],
-    "m_YRI_CEU": [0.00001, 0.00008],
-    "m_YRI_CHB": [0.000005, 0.00006],
-    "m_CEU_CHB": [0.00003, 0.0002]
+    "m_YRI_OOA": [5e-5, 8e-4],
+    "m_YRI_CEU": [1e-6, 3e-4],
+    "m_YRI_CHB": [1e-6, 2e-4],
+    "m_CEU_CHB": [5e-6, 6e-4]
   },
+
 
   "selection": {
     "enabled": true,
