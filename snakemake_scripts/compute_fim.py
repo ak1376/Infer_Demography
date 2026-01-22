@@ -20,7 +20,6 @@ import numpy as np
 
 from fisher_info_sfs import observed_fim_theta
 
-
 # ------------------ Model import helpers ------------------
 
 

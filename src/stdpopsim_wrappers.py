@@ -3,6 +3,7 @@
 stdpopsim demographic model wrappers for SLiM simulations.
 Each model is defined as a subclass of stdpopsim.DemographicModel, which wraps an msprime.Demography object.
 """
+
 from typing import Dict
 import demes
 import msprime

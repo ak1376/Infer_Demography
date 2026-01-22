@@ -22,7 +22,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import numdifftools as nd
 
-
 # ---------------------------- helpers: SFS ---------------------------------
 
 

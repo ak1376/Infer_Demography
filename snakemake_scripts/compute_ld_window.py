@@ -16,6 +16,7 @@ It writes:
 Heavy lifting lives in:
   src/ld_stats.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,10 +36,16 @@ from src.LD_stats import compute_ld_window  # you will create this module
 def parse_args():
     p = argparse.ArgumentParser("compute LD stats for one window")
     p.add_argument("--sim-dir", required=True, type=Path, help=".../sim_<sid>")
-    p.add_argument("--window-index", required=True, type=int, help="zero-based window index")
-    p.add_argument("--config-file", required=True, type=Path, help="experiment_config_*.json")
+    p.add_argument(
+        "--window-index", required=True, type=int, help="zero-based window index"
+    )
+    p.add_argument(
+        "--config-file", required=True, type=Path, help="experiment_config_*.json"
+    )
     p.add_argument("--r-bins", required=True, help="comma-separated recomb-bin edges")
-    p.add_argument("--use-gpu", action="store_true", help="Enable GPU acceleration via pg_gpu")
+    p.add_argument(
+        "--use-gpu", action="store_true", help="Enable GPU acceleration via pg_gpu"
+    )
     return p.parse_args()
 
 

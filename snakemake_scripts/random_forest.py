@@ -22,8 +22,8 @@ from sklearn.metrics import mean_squared_error as sk_mse
 # ----------------------------
 # constants
 # ----------------------------
-N_JOBS = 8                 # parallelize across targets
-FIXED_RANDOM_STATE = 295   # RF randomness is fixed and NOT tuned
+N_JOBS = 8  # parallelize across targets
+FIXED_RANDOM_STATE = 295  # RF randomness is fixed and NOT tuned
 
 # Make project root importable (so "src" works)
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +63,9 @@ def load_df_pickle(path: str) -> tuple[pd.DataFrame, list[str]]:
     return pd.DataFrame(arr, columns=cols), cols
 
 
-def align_df_columns(df: pd.DataFrame, desired_order: list[str], name: str) -> pd.DataFrame:
+def align_df_columns(
+    df: pd.DataFrame, desired_order: list[str], name: str
+) -> pd.DataFrame:
     have = list(df.columns)
     if have == desired_order:
         return df
@@ -79,12 +81,16 @@ def align_df_columns(df: pd.DataFrame, desired_order: list[str], name: str) -> p
 
 
 # ------------------------ plots ------------------------
-def plot_feature_importances_grid(model, feature_names, target_names, out_path, top_k=20):
+def plot_feature_importances_grid(
+    model, feature_names, target_names, out_path, top_k=20
+):
     n_outputs = len(model.estimators_)
     n_cols = 3
     n_rows = (n_outputs + n_cols - 1) // n_cols
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows), constrained_layout=True)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(15, 5 * n_rows), constrained_layout=True
+    )
     axes = axes.flatten()
 
     for j, est in enumerate(model.estimators_):
@@ -131,10 +137,14 @@ def optuna_tune_rf(
         # Keep ranges reasonable for speed.
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 80, 400, step=20),
-            "max_depth": trial.suggest_categorical("max_depth", [None, 8, 12, 16, 20, 30]),
+            "max_depth": trial.suggest_categorical(
+                "max_depth", [None, 8, 12, 16, 20, 30]
+            ),
             "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
             "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-            "max_features": trial.suggest_categorical("max_features", ["sqrt", 0.5, 0.7, 1.0]),
+            "max_features": trial.suggest_categorical(
+                "max_features", ["sqrt", 0.5, 0.7, 1.0]
+            ),
             "max_samples": trial.suggest_float("max_samples", 0.5, 1.0),
             "bootstrap": True,  # needed if using max_samples
         }
@@ -176,28 +186,32 @@ def main(args):
     target_order = list(targ_names_train)
 
     X_tune_df = align_df_columns(X_tune_df, feature_order, "X_tune")
-    X_val_df  = align_df_columns(X_val_df,  feature_order, "X_val")
+    X_val_df = align_df_columns(X_val_df, feature_order, "X_val")
     y_tune_df = align_df_columns(y_tune_df, target_order, "y_tune")
-    y_val_df  = align_df_columns(y_val_df,  target_order, "y_val")
+    y_val_df = align_df_columns(y_val_df, target_order, "y_val")
 
     X_train = X_train_df.values
     y_train = y_train_df.values
-    X_tune  = X_tune_df.values
-    y_tune  = y_tune_df.values
-    X_val   = X_val_df.values
-    y_val   = y_val_df.values
+    X_tune = X_tune_df.values
+    y_tune = y_tune_df.values
+    X_val = X_val_df.values
+    y_val = y_val_df.values
 
     color_shades = pickle.load(open(args.color_shades_file, "rb"))
-    main_colors  = pickle.load(open(args.main_colors_file, "rb"))
+    main_colors = pickle.load(open(args.main_colors_file, "rb"))
 
     # Decide hyperparams
     user_specified = any(
-        v is not None for v in [args.n_estimators, args.max_depth, args.min_samples_split]
+        v is not None
+        for v in [args.n_estimators, args.max_depth, args.min_samples_split]
     )
 
     if args.use_optuna and not user_specified:
         rf_params = optuna_tune_rf(
-            X_train, y_train, X_tune, y_tune,
+            X_train,
+            y_train,
+            X_tune,
+            y_tune,
             n_trials=args.n_trials,
             timeout_sec=args.optuna_timeout,
             seed=args.optuna_seed,
@@ -207,7 +221,9 @@ def main(args):
         rf_params = dict(
             n_estimators=args.n_estimators if args.n_estimators is not None else 200,
             max_depth=args.max_depth,
-            min_samples_split=args.min_samples_split if args.min_samples_split is not None else 2,
+            min_samples_split=(
+                args.min_samples_split if args.min_samples_split is not None else 2
+            ),
             min_samples_leaf=args.min_samples_leaf,
             max_features=args.max_features,
             max_samples=args.max_samples,
@@ -225,7 +241,9 @@ def main(args):
 
     print(f"[INFO] Final fit on: {fit_label} X={X_fit.shape} y={y_fit.shape}")
     print(f"[INFO] RF params: {rf_params}")
-    print(f"[INFO] Parallelism: MultiOutput n_jobs={N_JOBS}, RF n_jobs=1, rf_random_state={FIXED_RANDOM_STATE}")
+    print(
+        f"[INFO] Parallelism: MultiOutput n_jobs={N_JOBS}, RF n_jobs=1, rf_random_state={FIXED_RANDOM_STATE}"
+    )
 
     rf_single = RandomForestRegressor(
         **rf_params,
@@ -243,11 +261,15 @@ def main(args):
         "training": float(np.mean((y_train - tr_pred) ** 2)),
         "validation": float(np.mean((y_val - va_pred) ** 2)),
         "training_mse": {},
-        "validation_mse": {}
+        "validation_mse": {},
     }
     for i, p in enumerate(target_order):
-        mse_dict["training_mse"][p] = float(np.mean((y_train[:, i] - tr_pred[:, i]) ** 2))
-        mse_dict["validation_mse"][p] = float(np.mean((y_val[:, i] - va_pred[:, i]) ** 2))
+        mse_dict["training_mse"][p] = float(
+            np.mean((y_train[:, i] - tr_pred[:, i]) ** 2)
+        )
+        mse_dict["validation_mse"][p] = float(
+            np.mean((y_val[:, i] - va_pred[:, i]) ** 2)
+        )
 
     rf_obj = {
         "model": rf,
@@ -341,7 +363,6 @@ if __name__ == "__main__":
     # (Optional) config paths passed by Snakemake for provenance/logging
     p.add_argument("--experiment_config_path", type=str, default=None)
     p.add_argument("--model_config_path", type=str, default=None)
-
 
     args = p.parse_args()
 

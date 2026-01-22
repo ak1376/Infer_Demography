@@ -22,6 +22,7 @@ import datetime
 import numpy as np
 import dadi
 import nlopt
+
 # REMOVED: import numdifftools as nd
 
 
@@ -234,9 +235,9 @@ def fit_model(
         # - looser ftol for faster exit
         # - add xtol (stop when params stop moving)
         # - fewer max evals
-        opt.set_ftol_rel(1e-5)     # was 1e-8
-        opt.set_xtol_rel(1e-4)     # new
-        opt.set_maxeval(2000)      # was 10000
+        opt.set_ftol_rel(1e-5)  # was 1e-8
+        opt.set_xtol_rel(1e-4)  # new
+        opt.set_maxeval(2000)  # was 10000
         opt.set_initial_step(0.1)  # new, good default in log10 space
 
         try:

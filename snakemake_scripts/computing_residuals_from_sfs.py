@@ -29,7 +29,6 @@ if str(ROOT) not in sys.path:
 
 from src.gram_schmidt import project_vector_onto_gs_basis  # noqa: E402
 
-
 # ------------------ Expected SFS helpers ------------------
 
 
@@ -320,12 +319,16 @@ def main():
     modes = ["dadi", "moments"] if args.mode == "both" else [args.mode]
 
     for mode in modes:
-        mode_outdir = (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
+        mode_outdir = (
+            (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
+        )
         mode_outdir.mkdir(parents=True, exist_ok=True)
 
         # Load best params
         method_dir = args.inference_dir / mode
-        best_params_dict, best_ll = load_best_params_from_inference(method_dir, param_names)
+        best_params_dict, best_ll = load_best_params_from_inference(
+            method_dir, param_names
+        )
 
         # Fill missing params with prior midpoint
         def prior_mid(p: str) -> float:
@@ -343,9 +346,13 @@ def main():
             pts = cfg.get("pts", None)
             if pts is None:
                 pts = _auto_pts_from_samples(sample_sizes)
-            fitted = expected_sfs_dadi(best_vec, param_names, sample_sizes, demo_func, mu, L, pts)
+            fitted = expected_sfs_dadi(
+                best_vec, param_names, sample_sizes, demo_func, mu, L, pts
+            )
         else:
-            fitted = expected_sfs_moments(best_vec, param_names, sample_sizes, demo_func, mu, L)
+            fitted = expected_sfs_moments(
+                best_vec, param_names, sample_sizes, demo_func, mu, L
+            )
 
         # Optional collapse (note: this changes shape to (n_bins,))
         obs_to_use = observed
@@ -382,7 +389,9 @@ def main():
         if use_gs:
             D = residuals_flat.size
             if gs_k > D:
-                raise ValueError(f"gram_schmidt_k={gs_k} cannot exceed residual dimension D={D}.")
+                raise ValueError(
+                    f"gram_schmidt_k={gs_k} cannot exceed residual dimension D={D}."
+                )
 
             gs_result = project_vector_onto_gs_basis(
                 residuals_flat,
@@ -421,7 +430,10 @@ def main():
         if use_gs and gs_result is not None:
             save_np(mode_outdir / "residuals_gs_coeffs.npy", residuals_gs_coeffs)
             save_np(mode_outdir / "residuals_gs_basis.npy", np.asarray(gs_result.basis))
-            save_np(mode_outdir / "residuals_gs_reconstruction.npy", np.asarray(gs_result.reconstruction))
+            save_np(
+                mode_outdir / "residuals_gs_reconstruction.npy",
+                np.asarray(gs_result.reconstruction),
+            )
 
         meta: Dict[str, Any] = {
             "mode": mode,
@@ -440,7 +452,9 @@ def main():
             meta.update(
                 {
                     "gram_schmidt_k": int(gs_k),
-                    "gram_schmidt_k_effective": int(np.asarray(gs_result.basis).shape[1]),
+                    "gram_schmidt_k_effective": int(
+                        np.asarray(gs_result.basis).shape[1]
+                    ),
                     "gram_schmidt_basis": gs_basis_type,
                     "gram_schmidt_eps": float(gs_eps),
                 }

@@ -64,7 +64,9 @@ def load_df_pickle(path: str) -> Tuple[pd.DataFrame, List[str]]:
     return pd.DataFrame(arr, columns=cols), cols
 
 
-def align_df_columns(df: pd.DataFrame, desired_order: List[str], name: str) -> pd.DataFrame:
+def align_df_columns(
+    df: pd.DataFrame, desired_order: List[str], name: str
+) -> pd.DataFrame:
     have = list(df.columns)
     if have == desired_order:
         return df
@@ -116,7 +118,9 @@ def plot_feature_importances_grid(
     n_cols = 3
     n_rows = (n_outputs + n_cols - 1) // n_cols
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 5 * n_rows), constrained_layout=True)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(16, 5 * n_rows), constrained_layout=True
+    )
     axes = np.array(axes).reshape(-1)
 
     for j, est in enumerate(estimators):
@@ -124,7 +128,9 @@ def plot_feature_importances_grid(
         ax = axes[j]
 
         if importances is None:
-            ax.set_title(f"{target_names[j] if j < len(target_names) else f'Output {j}'}\n(no feature_importances_)")
+            ax.set_title(
+                f"{target_names[j] if j < len(target_names) else f'Output {j}'}\n(no feature_importances_)"
+            )
             ax.axis("off")
             continue
 
@@ -188,7 +194,11 @@ def _fit_one_target(
     # Prefer callbacks if supported
     if _fit_supports_kwarg(est, "callbacks"):
         # callbacks path (works on some versions)
-        callbacks = [xgb.callback.EarlyStopping(rounds=int(early_stopping_rounds), save_best=True)]
+        callbacks = [
+            xgb.callback.EarlyStopping(
+                rounds=int(early_stopping_rounds), save_best=True
+            )
+        ]
         est.fit(
             X_train,
             y_train_1d,
@@ -255,7 +265,9 @@ def _fit_multioutput(
         dt = time.perf_counter() - t0
         best_iter = getattr(est, "best_iteration", None)
         best_ntree = getattr(est, "best_ntree_limit", None)
-        print(f"[FIT+ES]   elapsed={dt:.1f}s best_iteration={best_iter} best_ntree_limit={best_ntree}")
+        print(
+            f"[FIT+ES]   elapsed={dt:.1f}s best_iteration={best_iter} best_ntree_limit={best_ntree}"
+        )
         est_list.append(est)
 
     # Wrap for consistent downstream API (.predict)
@@ -282,7 +294,9 @@ def optuna_tune_xgb_multioutput(
     try:
         import optuna
     except ImportError as e:
-        raise RuntimeError("Optuna is not installed. Install with: pip install optuna") from e
+        raise RuntimeError(
+            "Optuna is not installed. Install with: pip install optuna"
+        ) from e
 
     # minimize tune MSE over all outputs
     def objective(trial: "optuna.Trial") -> float:
@@ -349,7 +363,11 @@ def main(args: argparse.Namespace) -> None:
         with open(args.model_config_path, "r") as f:
             _ = yaml.safe_load(f)
 
-    out_dir = Path(args.model_directory) if args.model_directory else _default_model_dir(exp_cfg)
+    out_dir = (
+        Path(args.model_directory)
+        if args.model_directory
+        else _default_model_dir(exp_cfg)
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[INFO] Outputs → {out_dir}")
@@ -381,7 +399,9 @@ def main(args: argparse.Namespace) -> None:
 
     outer_jobs = _detect_outer_jobs(args.outer_n_jobs)
     xgb_n_jobs = int(args.xgb_n_jobs)
-    print(f"[INFO] Parallelism: MultiOutput n_jobs={outer_jobs}, XGB n_jobs={xgb_n_jobs}")
+    print(
+        f"[INFO] Parallelism: MultiOutput n_jobs={outer_jobs}, XGB n_jobs={xgb_n_jobs}"
+    )
 
     # If any manual hyperparam is set -> bypass optuna
     user_specified = any(
@@ -421,13 +441,23 @@ def main(args: argparse.Namespace) -> None:
             "n_jobs": int(xgb_n_jobs),
             "random_state": int(args.optuna_seed),
             "verbosity": 2,
-            "n_estimators": int(args.n_estimators if args.n_estimators is not None else 600),
+            "n_estimators": int(
+                args.n_estimators if args.n_estimators is not None else 600
+            ),
             "max_depth": int(args.max_depth if args.max_depth is not None else 5),
-            "learning_rate": float(args.learning_rate if args.learning_rate is not None else 0.05),
+            "learning_rate": float(
+                args.learning_rate if args.learning_rate is not None else 0.05
+            ),
             "subsample": float(args.subsample if args.subsample is not None else 0.8),
-            "colsample_bytree": float(args.colsample_bytree if args.colsample_bytree is not None else 0.8),
-            "min_child_weight": float(args.min_child_weight if args.min_child_weight is not None else 3.0),
-            "reg_lambda": float(args.reg_lambda if args.reg_lambda is not None else 5.0),
+            "colsample_bytree": float(
+                args.colsample_bytree if args.colsample_bytree is not None else 0.8
+            ),
+            "min_child_weight": float(
+                args.min_child_weight if args.min_child_weight is not None else 3.0
+            ),
+            "reg_lambda": float(
+                args.reg_lambda if args.reg_lambda is not None else 5.0
+            ),
             "reg_alpha": float(args.reg_alpha if args.reg_alpha is not None else 0.0),
         }
         optuna_used = False
@@ -443,7 +473,9 @@ def main(args: argparse.Namespace) -> None:
 
     # With early stopping, do NOT train on TRAIN+TUNE
     if args.early_stopping_rounds is not None and fit_label != "TRAIN":
-        print("[WARN] early_stopping_rounds set: forcing final fit on TRAIN (not TRAIN+TUNE).")
+        print(
+            "[WARN] early_stopping_rounds set: forcing final fit on TRAIN (not TRAIN+TUNE)."
+        )
         X_fit, y_fit = X_train, y_train
         fit_label = "TRAIN"
 
@@ -484,7 +516,11 @@ def main(args: argparse.Namespace) -> None:
         "outer_n_jobs": int(outer_jobs),
         "xgb_n_jobs": int(xgb_n_jobs),
         "tree_method": str(args.tree_method),
-        "early_stopping_rounds": None if args.early_stopping_rounds is None else int(args.early_stopping_rounds),
+        "early_stopping_rounds": (
+            None
+            if args.early_stopping_rounds is None
+            else int(args.early_stopping_rounds)
+        ),
         "experiment_config_path": args.experiment_config_path,
         "model_config_path": args.model_config_path,
         "xgboost_version": xgb.__version__,
@@ -503,8 +539,12 @@ def main(args: argparse.Namespace) -> None:
         "xgboost_version": xgb.__version__,
     }
     for i, pname in enumerate(targ_order):
-        err["training_mse"][pname] = float(np.mean((y_train[:, i] - train_preds[:, i]) ** 2))
-        err["validation_mse"][pname] = float(np.mean((y_val[:, i] - val_preds[:, i]) ** 2))
+        err["training_mse"][pname] = float(
+            np.mean((y_train[:, i] - train_preds[:, i]) ** 2)
+        )
+        err["validation_mse"][pname] = float(
+            np.mean((y_val[:, i] - val_preds[:, i]) ** 2)
+        )
 
     # save
     with open(out_dir / "xgb_mdl_obj.pkl", "wb") as f:
@@ -537,7 +577,9 @@ def main(args: argparse.Namespace) -> None:
 
 # ------------------------ CLI ------------------------
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="XGBoost multi-output evaluation script (version-adaptive early stopping)")
+    p = argparse.ArgumentParser(
+        description="XGBoost multi-output evaluation script (version-adaptive early stopping)"
+    )
 
     # Data
     p.add_argument("--X_train_path", type=str, required=True)
@@ -557,7 +599,11 @@ if __name__ == "__main__":
     p.add_argument("--model_directory", type=str, default=None)
 
     # Final fit
-    p.add_argument("--final_fit", choices=["train_only", "train_plus_tune"], default="train_plus_tune")
+    p.add_argument(
+        "--final_fit",
+        choices=["train_only", "train_plus_tune"],
+        default="train_plus_tune",
+    )
 
     # Manual hyperparams (if any set, Optuna is bypassed)
     p.add_argument("--n_estimators", type=int, default=None)

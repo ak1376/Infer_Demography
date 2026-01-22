@@ -11,6 +11,7 @@ This script mirrors simulation.py's engine switch:
   - engine == "slim"    → stdpopsim_slim_simulation(...)
 and reuses those functions directly (no re-implementation here).
 """
+
 from __future__ import annotations
 import argparse, json, pickle, sys, gzip, shutil
 from pathlib import Path
@@ -34,8 +35,8 @@ from src.simulation import (
     drosophila_three_epoch,
     split_migration_growth_model,
     OOA_three_pop_model,
-    msprime_simulation,          # reuse neutal path
-    stdpopsim_slim_simulation,   # reuse SLiM/BGS path
+    msprime_simulation,  # reuse neutal path
+    stdpopsim_slim_simulation,  # reuse SLiM/BGS path
 )
 
 # ────────────────────────────────────────────────────────────────────────────────

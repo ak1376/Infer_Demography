@@ -30,7 +30,7 @@ import numdifftools as nd
 DEFAULT_R_BINS = np.array(
     [0, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3]
 )
-JITTER = 1e-12          # numerical stability for matrix inversion
+JITTER = 1e-12  # numerical stability for matrix inversion
 CONVERGENCE_TOL = 1e-8  # default convergence tolerance for optimization
 
 
@@ -193,16 +193,22 @@ def compute_theoretical_ld(
     ld_stats = moments.LD.LDstats(
         ld_bins, num_pops=ld_edges.num_pops, pop_ids=ld_edges.pop_ids
     )
-    
+
     # Debug: Log theoretical LD properties
-    logging.info(f"[DEBUG] Theoretical LD - num_pops: {ld_stats.num_pops}, pop_ids: {ld_stats.pop_ids}")
+    logging.info(
+        f"[DEBUG] Theoretical LD - num_pops: {ld_stats.num_pops}, pop_ids: {ld_stats.pop_ids}"
+    )
     logging.info(f"[DEBUG] Theoretical LD - shape: {len(ld_bins)} bins")
     logging.info(f"[DEBUG] Populations parameter passed: {populations}")
-    logging.info(f"[DEBUG] Expected stats for {ld_stats.num_pops} pops: {moments.LD.Util.moment_names(ld_stats.num_pops)}")
-    
+    logging.info(
+        f"[DEBUG] Expected stats for {ld_stats.num_pops} pops: {moments.LD.Util.moment_names(ld_stats.num_pops)}"
+    )
+
     try:
         result = moments.LD.Inference.sigmaD2(ld_stats)
-        logging.info(f"[DEBUG] Theoretical sigmaD2 - shape: {len(result)}, num_pops: {result.num_pops}")
+        logging.info(
+            f"[DEBUG] Theoretical sigmaD2 - shape: {len(result)}, num_pops: {result.num_pops}"
+        )
         return result
     except Exception as e:
         logging.error(f"[DEBUG] Error in sigmaD2 conversion: {e}")
@@ -248,15 +254,19 @@ def prepare_data_for_comparison(
 
     # Debug: Log empirical data properties
     logging.info(f"[DEBUG] Empirical data - means: {len(emp_means)} arrays")
-    logging.info(f"[DEBUG] Empirical data - mean shapes: {[arr.shape for arr in emp_means]}")
+    logging.info(
+        f"[DEBUG] Empirical data - mean shapes: {[arr.shape for arr in emp_means]}"
+    )
     logging.info(f"[DEBUG] Empirical data - covars: {len(emp_covars)} arrays")
-    logging.info(f"[DEBUG] Empirical data - covar shapes: {[arr.shape for arr in emp_covars]}")
-    
+    logging.info(
+        f"[DEBUG] Empirical data - covar shapes: {[arr.shape for arr in emp_covars]}"
+    )
+
     # Debug: Log detailed contents of first few empirical arrays
     for i, (mean_arr, cov_arr) in enumerate(zip(emp_means[:3], emp_covars[:3])):
         logging.info(f"[DEBUG] Bin {i} - mean values: {mean_arr}")
         logging.info(f"[DEBUG] Bin {i} - covar shape: {np.array(cov_arr).shape}")
-    
+
     # Debug: Check what remove_normalized_data expects for single population
     logging.info(f"[DEBUG] About to call remove_normalized_data with:")
     logging.info(f"[DEBUG] - len(emp_means): {len(emp_means)}")
@@ -267,28 +277,38 @@ def prepare_data_for_comparison(
     # Remove normalized statistics
     try:
         # Let moments.LD determine the statistics automatically based on num_pops
-        logging.info(f"[DEBUG] Calling remove_normalized_data with num_pops={theoretical_ld.num_pops}, normalization={normalization}")
-        
+        logging.info(
+            f"[DEBUG] Calling remove_normalized_data with num_pops={theoretical_ld.num_pops}, normalization={normalization}"
+        )
+
         emp_means, emp_covars = moments.LD.Inference.remove_normalized_data(
             emp_means,
             emp_covars,
             normalization=normalization,
             num_pops=theoretical_ld.num_pops,
         )
-        logging.info(f"[DEBUG] After remove_normalized_data - means: {len(emp_means)}, covars: {len(emp_covars)}")
+        logging.info(
+            f"[DEBUG] After remove_normalized_data - means: {len(emp_means)}, covars: {len(emp_covars)}"
+        )
     except Exception as e:
         logging.error(f"[DEBUG] Error in remove_normalized_data: {e}")
-        logging.error(f"[DEBUG] - normalization: {normalization}, num_pops: {theoretical_ld.num_pops}")
-        
+        logging.error(
+            f"[DEBUG] - normalization: {normalization}, num_pops: {theoretical_ld.num_pops}"
+        )
+
         # Debug the expected vs actual statistics
         expected_stats = moments.LD.Util.moment_names(theoretical_ld.num_pops)
         logging.error(f"[DEBUG] Expected LD statistics: {expected_stats[0]}")
         logging.error(f"[DEBUG] Expected H statistics: {expected_stats[1]}")
-        
+
         # Check what the empirical data actually contains
         logging.error(f"[DEBUG] Empirical data structure:")
-        for i, (mean_arr, cov_arr) in enumerate(zip(emp_means[:3], emp_covars[:3])):  # Show first 3
-            logging.error(f"[DEBUG] Bin {i} - mean shape: {mean_arr.shape}, values: {mean_arr[:5] if len(mean_arr) > 0 else 'empty'}")
+        for i, (mean_arr, cov_arr) in enumerate(
+            zip(emp_means[:3], emp_covars[:3])
+        ):  # Show first 3
+            logging.error(
+                f"[DEBUG] Bin {i} - mean shape: {mean_arr.shape}, values: {mean_arr[:5] if len(mean_arr) > 0 else 'empty'}"
+            )
             logging.error(f"[DEBUG] Bin {i} - covar shape: {np.array(cov_arr).shape}")
         raise
 
@@ -327,25 +347,35 @@ def compute_composite_likelihood(
         Composite log-likelihood.
     """
     total_loglik = 0.0
-    
-    logging.info(f"[DEBUG] Computing likelihood for {len(empirical_means)} r-bins")
-    logging.info(f"[DEBUG] Input shapes - means: {[arr.shape for arr in empirical_means]}")
-    logging.info(f"[DEBUG] Input shapes - covars: {[arr.shape for arr in empirical_covariances]}")
-    logging.info(f"[DEBUG] Input shapes - preds: {[arr.shape for arr in theoretical_predictions]}")
 
-    for i, (obs, cov, pred) in enumerate(zip(
-        empirical_means, empirical_covariances, theoretical_predictions
-    )):
-        logging.info(f"[DEBUG] Processing r-bin {i}: obs={obs.shape}, cov={np.array(cov).shape}, pred={pred.shape}")
-        
+    logging.info(f"[DEBUG] Computing likelihood for {len(empirical_means)} r-bins")
+    logging.info(
+        f"[DEBUG] Input shapes - means: {[arr.shape for arr in empirical_means]}"
+    )
+    logging.info(
+        f"[DEBUG] Input shapes - covars: {[arr.shape for arr in empirical_covariances]}"
+    )
+    logging.info(
+        f"[DEBUG] Input shapes - preds: {[arr.shape for arr in theoretical_predictions]}"
+    )
+
+    for i, (obs, cov, pred) in enumerate(
+        zip(empirical_means, empirical_covariances, theoretical_predictions)
+    ):
+        logging.info(
+            f"[DEBUG] Processing r-bin {i}: obs={obs.shape}, cov={np.array(cov).shape}, pred={pred.shape}"
+        )
+
         if len(obs) == 0:
             logging.info(f"[DEBUG] Skipping empty bin {i}")
             continue
 
         residual = obs - pred
         cov_matrix = np.array(cov)
-        
-        logging.info(f"[DEBUG] Bin {i} - residual shape: {residual.shape}, cov_matrix shape: {cov_matrix.shape}")
+
+        logging.info(
+            f"[DEBUG] Bin {i} - residual shape: {residual.shape}, cov_matrix shape: {cov_matrix.shape}"
+        )
 
         if cov_matrix.ndim == 2 and cov_matrix.size > 1:
             # Add small jitter for numerical stability
@@ -401,7 +431,7 @@ def objective_function(
     """
     try:
         logging.info(f"[DEBUG] Objective function called with log_params: {log_params}")
-        
+
         # Compute theoretical LD
         logging.info(f"[DEBUG] Computing theoretical LD...")
         theoretical_ld = compute_theoretical_ld(
@@ -414,7 +444,9 @@ def objective_function(
         theory_arrays, emp_means, emp_covars = prepare_data_for_comparison(
             theoretical_ld, empirical_data, normalization
         )
-        logging.info(f"[DEBUG] Data preparation completed - theory: {len(theory_arrays)}, emp_means: {len(emp_means)}, emp_covars: {len(emp_covars)}")
+        logging.info(
+            f"[DEBUG] Data preparation completed - theory: {len(theory_arrays)}, emp_means: {len(emp_means)}, emp_covars: {len(emp_covars)}"
+        )
 
         # Compute likelihood
         logging.info(f"[DEBUG] Computing composite likelihood...")
@@ -426,6 +458,7 @@ def objective_function(
         logging.warning("Error in objective function: %s", e)
         logging.warning(f"[DEBUG] Error details - type: {type(e)}, args: {e.args}")
         import traceback
+
         logging.warning(f"[DEBUG] Traceback: {traceback.format_exc()}")
         return -np.inf
 
@@ -603,7 +636,7 @@ def optimize_parameters(
             gradient[:] = gradient_func(free_params)
 
         if verbose:
-            param_values = 10 ** full_params_log10
+            param_values = 10**full_params_log10
             param_str = ", ".join(
                 f"{name}={val:.3g}" for name, val in zip(param_names, param_values)
             )
@@ -640,7 +673,7 @@ def optimize_parameters(
 
     # Convert back to absolute scale
     optimal_full_log10 = expand_function(optimal_free)
-    optimal_params = 10 ** optimal_full_log10
+    optimal_params = 10**optimal_full_log10
 
     return optimal_params, max_likelihood, status
 

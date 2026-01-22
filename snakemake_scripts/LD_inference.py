@@ -25,7 +25,6 @@ from src.MomentsLD_inference import (
 )
 
 
-
 def _parse_args():
     p = argparse.ArgumentParser(
         "Aggregate LD stats, make comparison PDF, run Moments-LD optimisation"

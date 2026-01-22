@@ -7,6 +7,7 @@ Generates:
   - flat_map.txt
 for each window.
 """
+
 import argparse
 import subprocess
 from pathlib import Path

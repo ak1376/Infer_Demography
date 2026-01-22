@@ -51,9 +51,7 @@ def drosophila_three_epoch_MomentsLD(
         The last element (N0) is *accepted* but not required inside the ODE
         – it is kept so you can write the best-fit back to file un-scaled.
     """
-    (nu_afr, nu_eur_bot, nu_eur_mod, T_afr_exp, T_split, T_eur_exp, m12, m21, N0) = (
-        params
-    )
+    nu_afr, nu_eur_bot, nu_eur_mod, T_afr_exp, T_split, T_eur_exp, m12, m21, N0 = params
 
     # -------- 1  ancestral equilibrium (single pop, size ratio 1) ----------
     nu_anc = 1.0

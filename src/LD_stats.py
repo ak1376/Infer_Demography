@@ -29,6 +29,7 @@ import moments
 # Optional GPU acceleration
 try:
     from pg_gpu.haplotype_matrix import HaplotypeMatrix  # type: ignore
+
     _HAVE_GPU = True
 except Exception:
     HaplotypeMatrix = None  # type: ignore
@@ -38,6 +39,7 @@ except Exception:
 # -----------------------------------------------------------------------------
 # moments-compatible stat naming (match moments.LD order)
 # -----------------------------------------------------------------------------
+
 
 def het_names(num_pops: int) -> List[str]:
     out: List[str] = []
@@ -83,6 +85,7 @@ def moment_names(num_pops: int) -> Tuple[List[str], List[str]]:
 # recombination map helpers (flat map file: pos  Map(cM))
 # -----------------------------------------------------------------------------
 
+
 def _load_rec_map_cM(rec_map_file: str | Path) -> tuple[np.ndarray, np.ndarray]:
     """
     Reads a map like:
@@ -106,7 +109,7 @@ def _load_rec_map_cM(rec_map_file: str | Path) -> tuple[np.ndarray, np.ndarray]:
 
     order = np.argsort(pos_bp)
     pos_bp = pos_bp[order]
-    map_M = (map_cM[order] / 100.0)  # cM -> Morgans
+    map_M = map_cM[order] / 100.0  # cM -> Morgans
     return pos_bp, map_M
 
 
@@ -139,6 +142,7 @@ def _r_per_bp_from_flat_map(rec_map_file: str | Path) -> float:
 # -----------------------------------------------------------------------------
 # population/sample utilities
 # -----------------------------------------------------------------------------
+
 
 def build_sample_sets(ts: tskit.TreeSequence) -> Dict[str, List[int]]:
     """
@@ -196,11 +200,15 @@ def build_sample_sets(ts: tskit.TreeSequence) -> Dict[str, List[int]]:
     # explicit ANC single-pop
     if pid_anc is not None and len(samples_by_pid[pid_anc]) > 0:
         all_samples = samples_by_pid[pid_anc]
-        print(f"Single population model detected - using all {len(all_samples)} samples as 'ANC'")
+        print(
+            f"Single population model detected - using all {len(all_samples)} samples as 'ANC'"
+        )
         return {"ANC": all_samples}
 
     # fallback first 1–3 non-empty
-    nonempty = [(pid, s, pop_names[pid]) for pid, s in samples_by_pid.items() if len(s) > 0]
+    nonempty = [
+        (pid, s, pop_names[pid]) for pid, s in samples_by_pid.items() if len(s) > 0
+    ]
     nonempty.sort(key=lambda x: x[0])
     if len(nonempty) < 1:
         raise ValueError("No non-empty populations in the tree sequence.")
@@ -254,6 +262,7 @@ def _select_best_gpu() -> None:
 def _gpu_cleanup() -> None:
     try:
         import cupy as cp
+
         cp.get_default_memory_pool().free_all_blocks()
         cp.get_default_pinned_memory_pool().free_all_blocks()
     except Exception:
@@ -274,12 +283,16 @@ def _compute_H_vals_from_ts(
     """
     samples_vec = np.array(list(ts.samples()), dtype=np.int64)
 
-    idx_by_pop = {pop: np.asarray(sample_sets[pop], dtype=np.int64) for pop in pop_order}
+    idx_by_pop = {
+        pop: np.asarray(sample_sets[pop], dtype=np.int64) for pop in pop_order
+    }
 
     k = len(pop_order)
     H = {(i, j): 0.0 for i in range(k) for j in range(i, k)}
 
-    for var in ts.variants(samples=samples_vec, alleles=None, impute_missing_data=False):
+    for var in ts.variants(
+        samples=samples_vec, alleles=None, impute_missing_data=False
+    ):
         g = var.genotypes  # aligned with samples_vec order
 
         ps: List[float] = []
@@ -311,6 +324,7 @@ def _compute_H_vals_from_ts(
 # -----------------------------------------------------------------------------
 # GPU computation (auto-dispatch)
 # -----------------------------------------------------------------------------
+
 
 def gpu_ld_from_trees_auto(
     ts_path: str | Path,
@@ -395,6 +409,7 @@ def gpu_ld_from_trees_auto(
         h.sample_sets = normalized
 
     import cupy as cp
+
     h.positions = cp.asarray(site_pos_M)
 
     # filter to biallelic sites; keeps positions aligned
@@ -403,7 +418,10 @@ def gpu_ld_from_trees_auto(
     sums: List[np.ndarray] = []
 
     def _bins_out() -> List[Tuple[np.float64, np.float64]]:
-        return [(np.float64(r_bins[i]), np.float64(r_bins[i + 1])) for i in range(len(r_bins) - 1)]
+        return [
+            (np.float64(r_bins[i]), np.float64(r_bins[i + 1]))
+            for i in range(len(r_bins) - 1)
+        ]
 
     def _finalize() -> Dict[str, Any]:
         _gpu_cleanup()
@@ -491,7 +509,7 @@ def gpu_ld_from_trees_auto(
                 pop1=pop1,
                 pop2=pop2,
                 pop3=pop3,
-                raw=True,         # IMPORTANT: we want true sums for the "sums" field
+                raw=True,  # IMPORTANT: we want true sums for the "sums" field
                 ac_filter=True,
             )
         else:
@@ -500,7 +518,7 @@ def gpu_ld_from_trees_auto(
                 stats_by_bin = multi_fn(
                     bp_bins=dist_bins,
                     pops=pop_order,
-                    raw=True,        # IMPORTANT
+                    raw=True,  # IMPORTANT
                     ac_filter=True,
                 )
             except TypeError:
@@ -508,7 +526,7 @@ def gpu_ld_from_trees_auto(
                     stats_by_bin = multi_fn(
                         bp_bins=dist_bins,
                         pops=pop_order,
-                        raw=True,      # IMPORTANT
+                        raw=True,  # IMPORTANT
                     )
                 except TypeError:
                     # last resort (may return means) — but at least try
@@ -543,7 +561,9 @@ def gpu_ld_from_trees_auto(
                 f"Detected k={k} pops but pg_gpu has no multi-pop kernel and CPU fallback inputs are missing."
             )
 
-        print(f"🐌 Falling back to moments CPU compute_ld_statistics for k={k} pops: {pop_order}")
+        print(
+            f"🐌 Falling back to moments CPU compute_ld_statistics for k={k} pops: {pop_order}"
+        )
         return moments.LD.Parsing.compute_ld_statistics(
             str(vcf_gz),
             rec_map_file=str(rec_map_file),
@@ -561,6 +581,7 @@ def gpu_ld_from_trees_auto(
 # -----------------------------------------------------------------------------
 # Public entrypoint used by wrapper
 # -----------------------------------------------------------------------------
+
 
 def compute_ld_window(
     *,
@@ -597,6 +618,7 @@ def compute_ld_window(
     if use_gpu:
         try:
             import time
+
             t0 = time.perf_counter()
 
             stats = gpu_ld_from_trees_auto(
@@ -606,9 +628,9 @@ def compute_ld_window(
                 cpu_fallback=True,
                 vcf_gz=vcf_gz,
                 rec_map_file=rec_map_file,
-                pop_file=samples_file,   # used to infer CPU pop order if pop_order not given
-                pop_order=pops_cpu,      # force index order == CPU/config order
-                sample_sets=None,        # if you later want canonical subsets, pass them here
+                pop_file=samples_file,  # used to infer CPU pop order if pop_order not given
+                pop_order=pops_cpu,  # force index order == CPU/config order
+                sample_sets=None,  # if you later want canonical subsets, pass them here
             )
 
             dt = time.perf_counter() - t0
@@ -616,9 +638,12 @@ def compute_ld_window(
             return stats
 
         except Exception as e:
-            print(f"❌ window {window_index:04d}: GPU path failed; falling back to CPU. Error: {e}")
+            print(
+                f"❌ window {window_index:04d}: GPU path failed; falling back to CPU. Error: {e}"
+            )
 
     import time
+
     t0 = time.perf_counter()
     stats = moments.LD.Parsing.compute_ld_statistics(
         str(vcf_gz),

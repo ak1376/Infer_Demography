@@ -680,7 +680,6 @@ def main(
     assert set(train_idx).isdisjoint(val_idx)
     assert set(tune_idx).isdisjoint(val_idx)
 
-
     print(
         f"[INFO] Split sizes: train={len(train_idx)}, tune={len(tune_idx)}, val={len(val_idx)} "
         f"(total={n_rows})"
@@ -710,7 +709,7 @@ def main(
     split_indices = {
         "train_idx": train_idx.tolist(),
         "tune_idx": tune_idx.tolist(),
-        "val_idx": val_idx.tolist()
+        "val_idx": val_idx.tolist(),
     }
     with open(datasets_dir / "split_indices.json", "w") as f:
         json.dump(split_indices, f)

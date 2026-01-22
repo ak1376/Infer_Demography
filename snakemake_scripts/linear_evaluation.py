@@ -14,7 +14,6 @@ if str(ROOT) not in sys.path:
 
 from src.plotting_helpers import visualizing_results  # keep using your plotting util
 
-
 # ---------- minimal helpers ----------
 
 
@@ -155,15 +154,19 @@ def linear_evaluation(
 
     # data
     X_train, _ = _load_array_with_names(X_train_path) if X_train_path else (None, None)
-    y_train, y_names_train = _load_array_with_names(y_train_path) if y_train_path else (None, None)
+    y_train, y_names_train = (
+        _load_array_with_names(y_train_path) if y_train_path else (None, None)
+    )
 
     X_tune, _ = _load_array_with_names(X_tune_path) if X_tune_path else (None, None)
-    y_tune, y_names_tune = _load_array_with_names(y_tune_path) if y_tune_path else (None, None)
+    y_tune, y_names_tune = (
+        _load_array_with_names(y_tune_path) if y_tune_path else (None, None)
+    )
 
     X_val, _ = _load_array_with_names(X_val_path) if X_val_path else (None, None)
-    y_val, y_names_val = _load_array_with_names(y_val_path) if y_val_path else (None, None)
-
-
+    y_val, y_names_val = (
+        _load_array_with_names(y_val_path) if y_val_path else (None, None)
+    )
 
     if X_train is None and X_val is None:
         raise ValueError("Provide at least train or val split.")
@@ -257,8 +260,9 @@ def linear_evaluation(
         param_names = list(y_names_train)
     else:
         param_names = list(
-            exp_cfg.get("parameters_to_estimate",
-                        list(exp_cfg.get("priors", {}).keys()))
+            exp_cfg.get(
+                "parameters_to_estimate", list(exp_cfg.get("priors", {}).keys())
+            )
         )
 
     linear_obj["param_names"] = param_names

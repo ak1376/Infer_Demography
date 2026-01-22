@@ -158,7 +158,7 @@ def run_simulation(
         fig, ax = plt.subplots(figsize=(8, 5))
 
         # Match the debug script / stdpopsim simplest style:
-        demesdraw.tubes(g, ax=ax)   # <-- no log_time
+        demesdraw.tubes(g, ax=ax)  # <-- no log_time
 
         # Optional: hide the internal bottleneck deme label ("OOA" or "B")
         # (keeps the demography correct; just cosmetic)
@@ -168,7 +168,7 @@ def run_simulation(
                 t.set_visible(False)
 
         ax.set_title(f"{model_type}")
-        ax.set_xlabel("time ago (generations)")   # matches your debug plot label style
+        ax.set_xlabel("time ago (generations)")  # matches your debug plot label style
         ax.set_ylabel("")
 
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
@@ -181,7 +181,6 @@ def run_simulation(
         ax.set_ylabel("N")
         ax.figure.savefig(fig_path, dpi=300, bbox_inches="tight")
         plt.close(ax.figure)
-
 
     # Metadata sidecar
     sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
@@ -303,7 +302,7 @@ def main():
             "drosophila_three_epoch",
             "split_migration_growth",
             "OOA_three_pop",
-            "OOA_three_pop_gutenkunst"
+            "OOA_three_pop_gutenkunst",
         ],
         help="Which demographic model to simulate",
     )

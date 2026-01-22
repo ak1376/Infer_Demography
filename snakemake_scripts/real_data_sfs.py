@@ -2,6 +2,7 @@
 """
 real_data_sfs.py: Parse VCF and popfile, construct SFS, and save as pickle.
 """
+
 import argparse
 import pickle
 from pathlib import Path

@@ -8,8 +8,9 @@ import numpy as np
 @dataclass(frozen=True)
 class GSResult:
     """Result of projecting a vector onto an orthonormal Gram–Schmidt basis."""
-    coeffs: np.ndarray          # (k_eff,)
-    basis: np.ndarray           # (D, k_eff) orthonormal columns
+
+    coeffs: np.ndarray  # (k_eff,)
+    basis: np.ndarray  # (D, k_eff) orthonormal columns
     reconstruction: np.ndarray  # (D,)
 
 
@@ -104,7 +105,7 @@ def project_vector_onto_gs_basis(
         raise ValueError(f"Unknown basis_type={basis_type!r}. Supported: 'poly'.")
 
     Q = gram_schmidt_columns(B, eps=eps)  # (D, k_eff)
-    coeffs = Q.T @ v                      # (k_eff,)
-    recon = Q @ coeffs                    # (D,)
+    coeffs = Q.T @ v  # (k_eff,)
+    recon = Q @ coeffs  # (D,)
 
     return GSResult(coeffs=coeffs, basis=Q, reconstruction=recon)

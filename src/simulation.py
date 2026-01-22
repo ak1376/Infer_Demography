@@ -175,9 +175,12 @@ def create_SFS(ts: tskit.TreeSequence) -> moments.Spectrum:
 
 
 # ------------------------------------------------------------------
-# Wrapper functions for inference scripts 
+# Wrapper functions for inference scripts
 # ------------------------------------------------------------------
 
-def OOA_three_pop_gutenkunst_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+
+def OOA_three_pop_gutenkunst_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
     """Wrapper for OOA_three_pop_Gutenkunst to match expected naming convention."""
     return OOA_three_pop_Gutenkunst(sampled, cfg)
