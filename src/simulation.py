@@ -22,7 +22,8 @@ from src.demes_models import (
     split_migration_model,
     drosophila_three_epoch,
     split_migration_growth_model,
-    OOA_three_pop_model,
+    OOA_three_pop_Gutenkunst,
+    OOA_three_pop_model_simplified,
 )
 from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals
 from src.stdpopsim_wrappers import define_sps_model
@@ -118,7 +119,9 @@ def simulation(
     elif model_type == "split_migration_growth":
         g = split_migration_growth_model(sampled_params, experiment_config)
     elif model_type == "OOA_three_pop":
-        g = OOA_three_pop_model(sampled_params, experiment_config)
+        g = OOA_three_pop_model_simplified(sampled_params, experiment_config)
+    elif model_type == "OOA_three_pop_gutenkunst":
+        g = OOA_three_pop_Gutenkunst(sampled_params, experiment_config)
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
 
@@ -169,3 +172,12 @@ def create_SFS(ts: tskit.TreeSequence) -> moments.Spectrum:
     sfs = moments.Spectrum(arr)
     sfs.pop_ids = pop_ids
     return sfs
+
+
+# ------------------------------------------------------------------
+# Wrapper functions for inference scripts 
+# ------------------------------------------------------------------
+
+def OOA_three_pop_gutenkunst_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+    """Wrapper for OOA_three_pop_Gutenkunst to match expected naming convention."""
+    return OOA_three_pop_Gutenkunst(sampled, cfg)

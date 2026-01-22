@@ -153,13 +153,35 @@ def run_simulation(
     ts_path = out_dir / "tree_sequence.trees"
     ts.dump(ts_path)
 
-    # Demography plot (always your demes graph)
-    fig_path = out_dir / "demes.png"
-    ax = demesdraw.tubes(g)
-    ax.set_xlabel("Time (generations)")
-    ax.set_ylabel("N")
-    ax.figure.savefig(fig_path, dpi=300, bbox_inches="tight")
-    plt.close(ax.figure)
+    if model_type == "OOA_three_pop_gutenkunst":
+        fig_path = out_dir / "demes.png"
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+        # Match the debug script / stdpopsim simplest style:
+        demesdraw.tubes(g, ax=ax)   # <-- no log_time
+
+        # Optional: hide the internal bottleneck deme label ("OOA" or "B")
+        # (keeps the demography correct; just cosmetic)
+        hide = {"OOA", "B"}
+        for t in ax.texts:
+            if t.get_text() in hide:
+                t.set_visible(False)
+
+        ax.set_title(f"{model_type}")
+        ax.set_xlabel("time ago (generations)")   # matches your debug plot label style
+        ax.set_ylabel("")
+
+        fig.savefig(fig_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    else:
+        fig_path = out_dir / "demes.png"
+        ax = demesdraw.tubes(g)
+        ax.set_xlabel("Time (generations)")
+        ax.set_ylabel("N")
+        ax.figure.savefig(fig_path, dpi=300, bbox_inches="tight")
+        plt.close(ax.figure)
+
 
     # Metadata sidecar
     sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
@@ -280,7 +302,8 @@ def main():
             "split_migration",
             "drosophila_three_epoch",
             "split_migration_growth",
-            "OOA_three_pop"
+            "OOA_three_pop",
+            "OOA_three_pop_gutenkunst"
         ],
         help="Which demographic model to simulate",
     )
