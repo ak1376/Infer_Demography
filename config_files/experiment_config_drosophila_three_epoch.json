@@ -43,6 +43,7 @@
     ]
   },
   "fixed_parameters": {
+    "T_AFR_expansion": "sampled"
   }, 
   "selection": {
     "enabled": true,
@@ -53,11 +54,11 @@
       95
     ]
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": [
     "moments"
   ],
-  "use_residuals": true,
+  "use_residuals": false,
   "residual_engines": "moments",
   "engine": "slim",
   "use_gpu_ld": false,

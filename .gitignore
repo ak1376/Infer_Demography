@@ -33,3 +33,4 @@ ld_3pop_regress/
 ld_dbg_2pop_regress/
 debug_compare_gpu_cpu_ld_replicates.py
 debug_compare_gpu_cpu_ld_2pop.py
+check_dadi_moments.sh

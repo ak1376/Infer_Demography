@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_OOA_three_pop.json"
+CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")

@@ -3,10 +3,10 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
-#SBATCH --time=12:00:00
+#SBATCH --time=3:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
-#SBATCH --partition=kerngpu,kern,preempt
+#SBATCH --partition=kerngpu,gpu,gpulong
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -38,7 +38,7 @@ mkdir -p "$CUPY_CACHE_DIR"
 BATCH_SIZE=50
 # ----------------------------------------------------------------------------
 
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

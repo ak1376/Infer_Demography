@@ -61,6 +61,7 @@ for IDX in $(seq "$START" "$END"); do
               --nolock \
               --rerun-incomplete \
               --allowed-rules simulate_window ld_window \
+              --forcerun simulate_window \
               --latency-wait 300 \
               -j "$SLURM_CPUS_PER_TASK" \
               "$TARGET"

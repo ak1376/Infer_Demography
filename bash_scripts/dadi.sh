@@ -3,10 +3,10 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/dadi_cpu_%A_%a.out
 #SBATCH --error=logs/dadi_cpu_%A_%a.err
-#SBATCH --time=8:00:00
-#SBATCH --cpus-per-task=4
+#SBATCH --time=15:00:00
+#SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
-#SBATCH --partition=kern,preempt
+#SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -20,7 +20,7 @@ BATCH_SIZE=50
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
 export EXP_CFG="$CFG"
 
 # Hard-disable GPU visibility (belt + suspenders)
