@@ -524,6 +524,7 @@ rule ld_window:
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
+            --use-gpu
 
         EXIT_CODE=$?
 
