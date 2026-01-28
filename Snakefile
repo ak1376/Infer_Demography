@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_isolation.json"
+EXP_CFG = "config_files/experiment_config_OOA_three_pop_gutenkunst.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())

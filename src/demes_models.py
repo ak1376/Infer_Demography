@@ -263,76 +263,57 @@ def OOA_three_pop_Gutenkunst(
 
     # ---------------- sizes ----------------
     N_AFR_ancient = getf("N_AFR_ancient", "N_A", default=7300)
-    N_AFR_recent = getf("N_AFR_recent", "N_AF", default=12300)
-    N_OOA = getf("N_OOA", "N_B", default=2100)
+    N_AFR_recent  = getf("N_AFR_recent",  "N_AF", default=12300)
+    N_OOA         = getf("N_OOA",          "N_B",  default=2100)
+
+    # Endpoint parameterization (NO growth rates)
     N_CEU_founder = getf("N_CEU_founder", "N_EU0", default=1000)
     N_CHB_founder = getf("N_CHB_founder", "N_AS0", default=510)
 
+    N_CEU_present = getf("N_CEU_present", "N_CEU", default=29725)
+    N_CHB_present = getf("N_CHB_present", "N_CHB", default=54090)
+
     # ---------------- times ----------------
-    T_AFR_ancient_change = getf(
-        "T_AFR_ancient_change", "T_AF", default=220e3 / 25.0
-    )  # 8800
-    T_AFR_OOA = getf("T_AFR_OOA", "T_B", default=140e3 / 25.0)  # 5600
-    T_OOA_EU_AS = getf("T_OOA_EU_AS", "T_EU_AS", default=21.2e3 / 25.0)  # 848
+    T_AFR_ancient_change = getf("T_AFR_ancient_change", "T_AF", default=220e3 / 25)
+    T_AFR_OOA            = getf("T_AFR_OOA",            "T_B",  default=140e3 / 25)
+    T_OOA_EU_AS          = getf("T_OOA_EU_AS",          "T_EU_AS", default=21.2e3 / 25)
 
     if not (T_AFR_ancient_change > T_AFR_OOA > T_OOA_EU_AS >= 0):
-        raise ValueError("Require T_AFR_ancient_change > T_AFR_OOA > T_OOA_EU_AS >= 0.")
-
-    # ---------------- growth ----------------
-    r_CEU = getf("r_CEU", "r_EU", default=0.004)
-    r_CHB = getf("r_CHB", "r_AS", default=0.0055)
-
-    N_CEU_present = getf(
-        "N_CEU_present",
-        "N_CEU",
-        default=N_CEU_founder * math.exp(r_CEU * T_OOA_EU_AS),
-    )
-    N_CHB_present = getf(
-        "N_CHB_present",
-        "N_CHB",
-        default=N_CHB_founder * math.exp(r_CHB * T_OOA_EU_AS),
-    )
+        raise ValueError("Require T_AF > T_B > T_EU_AS >= 0")
 
     # ---------------- migration ----------------
-    m_YRI_OOA = getf("m_YRI_OOA", "m_AF_B", default=25e-5)
+    m_YRI_OOA = getf("m_YRI_OOA", "m_AF_B",  default=25e-5)
     m_YRI_CEU = getf("m_YRI_CEU", "m_AF_EU", default=3e-5)
     m_YRI_CHB = getf("m_YRI_CHB", "m_AF_AS", default=1.9e-5)
     m_CEU_CHB = getf("m_CEU_CHB", "m_EU_AS", default=9.6e-5)
 
     b = demes.Builder(time_units="generations", generation_time=1)
 
-    # ------------------------------------------------------------------
-    # NEW: root ancestor required by demes when YRI has a finite start_time.
-    # In msprime/stdpopsim, YRI "exists" before T_AF; demes wants that as a
-    # separate ancestor deme.
-    #
-    # We set its size to N_AFR_ancient because at T_AFR_ancient_change (T_AF)
-    # msprime changes YRI to N_A, and there are no older size changes specified.
-    # ------------------------------------------------------------------
+    # ---------------- ancestor ----------------
     b.add_deme(
         "ANC",
         epochs=[dict(start_size=N_AFR_ancient, end_time=T_AFR_ancient_change)],
     )
 
-    # YRI: from T_AFR_ancient_change to present, size changes at T_AFR_OOA
+    # ---------------- YRI ----------------
     b.add_deme(
         "YRI",
         ancestors=["ANC"],
         epochs=[
-            dict(start_size=N_AFR_ancient, end_time=T_AFR_OOA),  # T_AF -> T_B
-            dict(start_size=N_AFR_recent, end_time=0),  # T_B -> 0
+            dict(start_size=N_AFR_ancient, end_time=T_AFR_OOA),
+            dict(start_size=N_AFR_recent,  end_time=0),
         ],
     )
 
-    # B: non-African ancestor/bottleneck from T_AFR_OOA to T_OOA_EU_AS
+    # ---------------- OOA bottleneck ----------------
     b.add_deme(
-        "OOA",  # instead of "B"
+        "OOA",
         ancestors=["YRI"],
         start_time=T_AFR_OOA,
         epochs=[dict(start_size=N_OOA, end_time=T_OOA_EU_AS)],
     )
 
-    # CEU/CHB start at split time (do not exist earlier), grow exponentially to present
+    # ---------------- CEU / CHB (exponential via endpoints) ----------------
     b.add_deme(
         "CEU",
         ancestors=["OOA"],
@@ -346,6 +327,7 @@ def OOA_three_pop_Gutenkunst(
             )
         ],
     )
+
     b.add_deme(
         "CHB",
         ancestors=["OOA"],
@@ -360,21 +342,16 @@ def OOA_three_pop_Gutenkunst(
         ],
     )
 
-    # Migration epochs (match stdpopsim):
-    # Recent: 0 -> T_OOA_EU_AS among YRI, CEU, CHB
-    b.add_migration(
-        demes=["YRI", "CEU"], rate=m_YRI_CEU, start_time=T_OOA_EU_AS, end_time=0
-    )
-    b.add_migration(
-        demes=["YRI", "CHB"], rate=m_YRI_CHB, start_time=T_OOA_EU_AS, end_time=0
-    )
-    b.add_migration(
-        demes=["CEU", "CHB"], rate=m_CEU_CHB, start_time=T_OOA_EU_AS, end_time=0
-    )
+    # ---------------- migration ----------------
+    b.add_migration(demes=["YRI", "CEU"], rate=m_YRI_CEU, start_time=T_OOA_EU_AS, end_time=0)
+    b.add_migration(demes=["YRI", "CHB"], rate=m_YRI_CHB, start_time=T_OOA_EU_AS, end_time=0)
+    b.add_migration(demes=["CEU", "CHB"], rate=m_CEU_CHB, start_time=T_OOA_EU_AS, end_time=0)
 
-    # Intermediate: T_OOA_EU_AS -> T_AFR_OOA between YRI and B
     b.add_migration(
-        demes=["YRI", "OOA"], rate=m_YRI_OOA, start_time=T_AFR_OOA, end_time=T_OOA_EU_AS
+        demes=["YRI", "OOA"],
+        rate=m_YRI_OOA,
+        start_time=T_AFR_OOA,
+        end_time=T_OOA_EU_AS,
     )
 
     return b.resolve()
