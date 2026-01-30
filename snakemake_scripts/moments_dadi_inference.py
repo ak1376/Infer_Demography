@@ -71,40 +71,6 @@ def load_sfs(path: Path):
     return pickle.loads(path.read_bytes())
 
 
-def load_ground_truth(gt_path: Path) -> Dict[str, float]:
-    """Load ground truth parameters from pickle or JSON file."""
-    if not gt_path.exists():
-        raise FileNotFoundError(f"Ground truth file not found: {gt_path}")
-
-    # Try to load as pickle first, then fall back to JSON
-    try:
-        with gt_path.open("rb") as f:
-            gt_data = pickle.load(f)
-    except (pickle.UnpicklingError, UnicodeDecodeError):
-        # Fall back to JSON if pickle fails
-        try:
-            gt_data = json.loads(gt_path.read_text())
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Could not load ground truth file as pickle or JSON: {e}")
-
-    # Handle different possible structures in the ground truth data
-    if isinstance(gt_data, dict):
-        # Check for nested parameter structures
-        if "parameters" in gt_data:
-            return {k: float(v) for k, v in gt_data["parameters"].items()}
-        elif "true_params" in gt_data:
-            return {k: float(v) for k, v in gt_data["true_params"].items()}
-        elif "ground_truth" in gt_data:
-            return {k: float(v) for k, v in gt_data["ground_truth"].items()}
-        else:
-            # Assume the top level contains the parameters directly
-            return {
-                k: float(v) for k, v in gt_data.items() if isinstance(v, (int, float))
-            }
-    else:
-        raise ValueError(f"Ground truth data must be a dictionary, got {type(gt_data)}")
-
-
 def handle_fixed_parameters(config, sampled_params, param_names):
     """
     Parse configuration to determine which parameters should be fixed.
@@ -141,18 +107,6 @@ def handle_fixed_parameters(config, sampled_params, param_names):
             )
 
     return fixed_params
-
-
-def create_start_dict_with_fixed(config, fixed_params):
-    """Create starting parameters dictionary with fixed params"""
-    start_dict = {}
-    for param, prior in config["priors"].items():
-        if param in fixed_params:
-            start_dict[param] = fixed_params[param]
-        else:
-            # Random start from uniform prior
-            start_dict[param] = np.random.uniform(prior[0], prior[1])
-    return start_dict
 
 
 def load_ground_truth(ground_truth_path):

@@ -316,7 +316,7 @@ def fit_model(
         opt.set_upper_bounds(np.log10(ub_free))
         opt.set_max_objective(nlopt_objective)
         opt.set_ftol_rel(1e-8)
-        opt.set_maxeval(10000)
+        opt.set_maxeval(500)
 
         try:
             x_free_hat_log10 = opt.optimize(np.log10(x0_free))
