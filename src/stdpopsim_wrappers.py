@@ -94,26 +94,38 @@ class _Bottleneck(sps.DemographicModel):
     """
     Single-population bottleneck implemented directly in msprime.Demography.
     Times in generations before present (t_start > t_end >= 0).
+
+    Forward-time story (what the names mean):
+      - Far past: size = N0 (ancestral)
+      - Between t_start and t_end: size = N_bottleneck
+      - From t_end to present: size = N_recover (present-day)
     """
 
-    def __init__(
-        self, N0, N_bottleneck, N_recover, t_bottleneck_start, t_bottleneck_end
-    ):
+    def __init__(self, N0, N_bottleneck, N_recover, t_bottleneck_start, t_bottleneck_end):
         t_start = float(t_bottleneck_start)
         t_end = float(t_bottleneck_end)
         if not (t_start > t_end >= 0):
             raise ValueError("Require t_bottleneck_start > t_bottleneck_end >= 0.")
 
         dem = msprime.Demography()
-        dem.add_population(name="ANC", initial_size=float(N0))
 
-        # At t_start, drop to the bottleneck size
+        # msprime uses backward time:
+        # - initial_size is the PRESENT size (time 0)
+        # - size changes at time t (generations ago) apply for OLDER times unless overridden
+        #
+        # We want present size = N_recover
+        dem.add_population(name="ANC", initial_size=float(N_recover))
+
+        # Going backward:
+        # at t_end (end of bottleneck forward-time), switch to bottleneck size
         dem.add_population_parameters_change(
-            time=t_start, population="ANC", initial_size=float(N_bottleneck)
+            time=t_end, population="ANC", initial_size=float(N_bottleneck)
         )
-        # At t_end, recover to N_recover (constant to present)
+
+        # Going further back:
+        # at t_start (start of bottleneck forward-time), switch to ancestral size N0
         dem.add_population_parameters_change(
-            time=t_end, population="ANC", initial_size=float(N_recover)
+            time=t_start, population="ANC", initial_size=float(N0)
         )
 
         dem.sort_events()
@@ -129,7 +141,6 @@ class _Bottleneck(sps.DemographicModel):
             model=dem,
             generation_time=1,
         )
-
 class _DrosophilaThreeEpoch(sps.DemographicModel):
     def __init__(
         self,
