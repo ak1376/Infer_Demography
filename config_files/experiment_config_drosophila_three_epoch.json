@@ -9,9 +9,9 @@
     "EUR": 20
   },
   "seed": 42,
-  "num_optimizations": 100,
-  "top_k": 5,
-  "num_draws": 5000,
+  "num_optimizations": 1,
+  "top_k": 1,
+  "num_draws": 500,
   "priors": {
     "N0": [
       5000,
@@ -43,7 +43,6 @@
     ]
   },
   "fixed_parameters": {
-    "T_AFR_expansion": "sampled"
   }, 
   "selection": {
     "enabled": true,
@@ -60,7 +59,7 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "slim",
+  "engine": "msprime",
   "use_gpu_ld": false,
   "use_gpu_dadi": false, 
   "gram_schmidt": true,

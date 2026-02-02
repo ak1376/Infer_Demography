@@ -34,7 +34,7 @@ from src.simulation import (
     split_migration_model,
     drosophila_three_epoch,
     split_migration_growth_model,
-    OOA_three_pop_model,
+    # OOA_three_pop_model,
     msprime_simulation,  # reuse neutal path
     stdpopsim_slim_simulation,  # reuse SLiM/BGS path
 )

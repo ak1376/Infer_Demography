@@ -3,19 +3,19 @@
 #SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
-#SBATCH --time=2:00:00
+#SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
-#SBATCH --partition=kerngpu,gpu,gpulong
-#SBATCH --account=kernlab
+#SBATCH --partition=gpu,kerngpu,gpulong
 #SBATCH --gres=gpu:1
+#SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
 
 set -eo pipefail
-
+# --gres=gpu:1
 # --- Make modules available (Talapas-style) ---
 module --ignore_cache purge || true
 

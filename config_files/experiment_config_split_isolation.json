@@ -8,8 +8,8 @@
     "CEU": 10
   },
   "seed": 42,
-  "num_optimizations": 100,
-  "top_k": 5,
+  "num_optimizations": 1,
+  "top_k": 1,
   "num_draws": 5000,
   "priors": {
     "N_anc": [
@@ -34,21 +34,21 @@
     ]
   },
   "selection": {
-    "enabled": false,
+    "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      30
+      90
     ]
   },
-  "use_fim_features": true,
+  "use_fim_features": false,
   "fim_engines": [
     "moments"
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": true,
   "gram_schmidt": false,
   "gram_schmidt_k": 10

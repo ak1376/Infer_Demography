@@ -23,7 +23,7 @@ SIM_RANGE="${SIM_RANGE:-}"             # optional: "5000-20000"
 # -----------------------------
 # Paths & config
 # -----------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
