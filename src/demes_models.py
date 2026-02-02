@@ -82,31 +82,58 @@ def drosophila_three_epoch(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
 ) -> demes.Graph:
     """
-    Two-pop Drosophila-style model:
-      ANC (size N0) → split at T_AFR_EUR_split → AFR (AFR_recover)
-      and EUR with a bottleneck at T_EUR_expansion then recovery to EUR_recover.
-    Deme names: 'AFR' and 'EUR'.
+    Demes equivalent of stdpopsim OutOfAfrica_2L06 (Li & Stephan 2006),
+    but using your parameter names.
+
+    Backward-time ordering should be:
+      T_AFR_expansion > T_AFR_EUR_split > T_EUR_expansion > 0
+
+    Interpretation (matching stdpopsim):
+      - AFR has modern size AFR from present back to T_AFR_expansion,
+        then ancestral size N0 older than that.
+      - EUR has modern size EUR_recover from present back to T_EUR_expansion,
+        then bottleneck size EUR_bottleneck from T_EUR_expansion back to the split.
+      - At T_AFR_EUR_split, EUR merges into AFR (equivalently: EUR splits from AFR forward time).
     """
-    N0 = float(sampled["N0"])
-    AFR_recover = float(sampled["AFR"])
-    EUR_bottleneck = float(sampled["EUR_bottleneck"])
-    EUR_recover = float(sampled["EUR_recover"])
-    T_split = float(sampled["T_AFR_EUR_split"])
-    T_EUR_exp = float(sampled["T_EUR_expansion"])
+
+    N0 = float(sampled["N0"])  # ancestral AFR size (N_A1)
+    AFR = float(sampled["AFR"])  # modern AFR size (N_A0)
+
+    EUR_bottleneck = float(sampled["EUR_bottleneck"])  # N_E1
+    EUR_recover = float(sampled["EUR_recover"])  # N_E0
+
+    T_AFR_expansion = float(sampled["T_AFR_expansion"])  # t_A0
+    T_split = float(sampled["T_AFR_EUR_split"])  # t_AE
+    T_EUR_exp = float(sampled["T_EUR_expansion"])  # t_E1
+
+    if not (T_AFR_expansion > T_split > T_EUR_exp > 0):
+        raise ValueError(
+            "Need T_AFR_expansion > T_AFR_EUR_split > T_EUR_expansion > 0, got: "
+            f"{T_AFR_expansion=}, {T_split=}, {T_EUR_exp=}"
+        )
 
     b = demes.Builder()
-    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T_split)])
-    b.add_deme("AFR", ancestors=["ANC"], epochs=[dict(start_size=AFR_recover)])
+
+    # AFR is the root lineage (no explicit ANC deme needed)
+    b.add_deme(
+        "AFR",
+        epochs=[
+            dict(start_size=N0, end_time=T_AFR_expansion),  # older (ancestral)
+            dict(start_size=AFR, end_time=0),               # recent (modern)
+        ],
+    )
+
+    # EUR branches off AFR at the split time
     b.add_deme(
         "EUR",
-        ancestors=["ANC"],
+        ancestors=["AFR"],
+        start_time=T_split,
         epochs=[
-            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),
-            dict(start_size=EUR_recover, end_time=0),
+            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),  # older part (near split)
+            dict(start_size=EUR_recover, end_time=0),             # recent (modern)
         ],
     )
     return b.resolve()
-
 
 def split_migration_growth_model(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
