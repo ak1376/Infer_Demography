@@ -12,7 +12,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 5000,
+  "num_draws": 10,
 
   "priors": {
     "N_AFR_ancient": [3000, 20000],

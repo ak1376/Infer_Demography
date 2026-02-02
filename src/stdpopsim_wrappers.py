@@ -94,26 +94,38 @@ class _Bottleneck(sps.DemographicModel):
     """
     Single-population bottleneck implemented directly in msprime.Demography.
     Times in generations before present (t_start > t_end >= 0).
+
+    Forward-time story (what the names mean):
+      - Far past: size = N0 (ancestral)
+      - Between t_start and t_end: size = N_bottleneck
+      - From t_end to present: size = N_recover (present-day)
     """
 
-    def __init__(
-        self, N0, N_bottleneck, N_recover, t_bottleneck_start, t_bottleneck_end
-    ):
+    def __init__(self, N0, N_bottleneck, N_recover, t_bottleneck_start, t_bottleneck_end):
         t_start = float(t_bottleneck_start)
         t_end = float(t_bottleneck_end)
         if not (t_start > t_end >= 0):
             raise ValueError("Require t_bottleneck_start > t_bottleneck_end >= 0.")
 
         dem = msprime.Demography()
-        dem.add_population(name="ANC", initial_size=float(N0))
 
-        # At t_start, drop to the bottleneck size
+        # msprime uses backward time:
+        # - initial_size is the PRESENT size (time 0)
+        # - size changes at time t (generations ago) apply for OLDER times unless overridden
+        #
+        # We want present size = N_recover
+        dem.add_population(name="ANC", initial_size=float(N_recover))
+
+        # Going backward:
+        # at t_end (end of bottleneck forward-time), switch to bottleneck size
         dem.add_population_parameters_change(
-            time=t_start, population="ANC", initial_size=float(N_bottleneck)
+            time=t_end, population="ANC", initial_size=float(N_bottleneck)
         )
-        # At t_end, recover to N_recover (constant to present)
+
+        # Going further back:
+        # at t_start (start of bottleneck forward-time), switch to ancestral size N0
         dem.add_population_parameters_change(
-            time=t_end, population="ANC", initial_size=float(N_recover)
+            time=t_start, population="ANC", initial_size=float(N0)
         )
 
         dem.sort_events()
@@ -129,21 +141,7 @@ class _Bottleneck(sps.DemographicModel):
             model=dem,
             generation_time=1,
         )
-
-
 class _DrosophilaThreeEpoch(sps.DemographicModel):
-    """
-    Two-pop Drosophila-style three-epoch model.
-
-    ANC (size N0) splits at T_AFR_EUR_split into:
-      - AFR: constant size AFR (AFR_recover in your priors)
-      - EUR: bottleneck of size EUR_bottleneck until T_EUR_expansion,
-             then recovery to EUR_recover up to the present.
-
-    Populations are added leaf-first so p0/p1 are AFR/EUR (not ANC),
-    which plays nicely with SLiM’s population ordering.
-    """
-
     def __init__(
         self,
         N0,
@@ -156,26 +154,27 @@ class _DrosophilaThreeEpoch(sps.DemographicModel):
         T_split = float(T_AFR_EUR_split)
         T_exp = float(T_EUR_expansion)
 
+        if not (0 <= T_exp < T_split):
+            raise ValueError(
+                f"Require 0 <= T_EUR_expansion < T_AFR_EUR_split; got {T_exp} vs {T_split}"
+            )
+
         dem = msprime.Demography()
 
         # Leaf-first: extant pops first, then ANC
         dem.add_population(name="AFR", initial_size=float(AFR))
-        dem.add_population(name="EUR", initial_size=float(EUR_bottleneck))
+        dem.add_population(name="EUR", initial_size=float(EUR_recover))  # present size
         dem.add_population(name="ANC", initial_size=float(N0))
 
-        # EUR expansion (bottleneck -> recovery) at T_EUR_expansion
+        # Going backward: at T_exp generations ago, EUR switches to bottleneck size
         dem.add_population_parameters_change(
-            time=T_exp,
-            population="EUR",
-            initial_size=float(EUR_recover),
+            time=T_exp, population="EUR", initial_size=float(EUR_bottleneck)
         )
 
-        # Split backward in time at T_AFR_EUR_split: AFR/EUR merge into ANC
-        dem.add_population_split(
-            time=T_split,
-            ancestral="ANC",
-            derived=["AFR", "EUR"],
-        )
+        # Split backward in time at T_split: AFR/EUR merge into ANC
+        dem.add_population_split(time=T_split, ancestral="ANC", derived=["AFR", "EUR"])
+
+        dem.sort_events()
 
         super().__init__(
             id="drosophila_three_epoch",

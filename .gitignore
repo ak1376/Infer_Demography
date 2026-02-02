@@ -33,4 +33,8 @@ ld_3pop_regress/
 ld_dbg_2pop_regress/
 debug_compare_gpu_cpu_ld_replicates.py
 debug_compare_gpu_cpu_ld_2pop.py
-check_dadi_moments.sh
+ld_3pop_debug/
+notebooks/investigating_drosophila.ipynb
+debug_experiments/
+debug_drosoph_*.py
+split_isolation_BGS_LD_stats_comparison.py

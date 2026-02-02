@@ -1,6 +1,0 @@
-# moments custom NLopt optimisation
-# finished: 2026-01-13T20:26:21
-# status: 3
-# best_ll: 263717.21579596493
-# opt_params: [2.71614797e+04 4.54890273e+02 1.61231762e+04 2.43660603e-05
- 1.37916868e+04]

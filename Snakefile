@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG = "config_files/experiment_config_split_migration.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -100,13 +100,14 @@ rule all:
             ## Aggregated optimizer results (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",   sid=SIM_IDS),
-            # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl", sid=SIM_IDS, opt=OPTIMS),
+            expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl", sid=SIM_IDS, opt=OPTIMS),
+            expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",   sid=SIM_IDS, opt=OPTIMS),
 
             ## Cleanup completion markers (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
             # LD artifacts (simulated; best-fit only)
-            # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+            expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
             # FIM (simulated)
             # expand(
@@ -526,19 +527,19 @@ rule ld_window:
             --r-bins       "{params.bins}" \
             --use-gpu
 
-        # EXIT_CODE=$?
+        EXIT_CODE=$?
 
-        # # If successful, clean up intermediate files
-        # if [ $EXIT_CODE -eq 0 ]; then
-        #     echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
-        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
-        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
-        #     rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
-        #     echo "🧹 Cleanup completed for window {wildcards.win}"
-        # else
-        #     echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
-        #     exit $EXIT_CODE
-        # fi
+        # If successful, clean up intermediate files
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
+            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
+            echo "🧹 Cleanup completed for window {wildcards.win}"
+        else
+            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
+            exit $EXIT_CODE
+        fi
         """
 
 ##############################################################################
