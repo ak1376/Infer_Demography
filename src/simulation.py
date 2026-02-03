@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 
 from src.demes_models import (  # noqa: E402
     bottleneck_model,
-    split_isolation_model,
+    IM_symmetric_model,
     split_migration_model,
     drosophila_three_epoch,
     split_migration_growth_model,
@@ -44,50 +44,16 @@ def sample_params(
     rng = rng or np.random.default_rng()
     params: Dict[str, float] = {}
 
-    # sample non-time params first
-    time_keys = {"T_AFR_ancient_change", "T_AFR_OOA", "T_OOA_EU_AS"}
     for k, bounds in priors.items():
-        if k in time_keys:
-            continue
         params[k] = float(rng.uniform(*bounds))
 
-    # Gutenkunst ordering: T_AFR_ancient_change > T_AFR_OOA > T_OOA_EU_AS >= 0
-    if time_keys.issubset(priors):
-        lo_eu, hi_eu = priors["T_OOA_EU_AS"]
-        lo_b, hi_b = priors["T_AFR_OOA"]
-        lo_af, hi_af = priors["T_AFR_ancient_change"]
-
-        max_tries = 1000
-        for _ in range(max_tries):
-            T_OOA_EU_AS = float(rng.uniform(lo_eu, hi_eu))
-
-            lo_b2 = max(lo_b, T_OOA_EU_AS + 1.0)
-            if lo_b2 >= hi_b:
-                continue
-            T_AFR_OOA = float(rng.uniform(lo_b2, hi_b))
-
-            lo_af2 = max(lo_af, T_AFR_OOA + 1.0)
-            if lo_af2 >= hi_af:
-                continue
-            T_AFR_ancient_change = float(rng.uniform(lo_af2, hi_af))
-
-            params["T_OOA_EU_AS"] = T_OOA_EU_AS
-            params["T_AFR_OOA"] = T_AFR_OOA
-            params["T_AFR_ancient_change"] = T_AFR_ancient_change
-            break
-        else:
-            raise RuntimeError(
-                "Could not sample valid Gutenkunst times after many tries. "
-                "Your prior bounds may be incompatible."
-            )
-
-    # keep bottleneck start > end if both are present
-    if {"t_bottleneck_start", "t_bottleneck_end"}.issubset(params):
-        if params["t_bottleneck_start"] <= params["t_bottleneck_end"]:
-            params["t_bottleneck_start"], params["t_bottleneck_end"] = (
-                params["t_bottleneck_end"],
-                params["t_bottleneck_start"],
-            )
+    # # keep bottleneck start > end if both are present
+    # if {"t_bottleneck_start", "t_bottleneck_end"}.issubset(params):
+    #     if params["t_bottleneck_start"] <= params["t_bottleneck_end"]:
+    #         params["t_bottleneck_start"], params["t_bottleneck_end"] = (
+    #             params["t_bottleneck_end"],
+    #             params["t_bottleneck_start"],
+    #         )
     return params
 
 
@@ -112,66 +78,51 @@ def next_sim_number(simulation_dir: Path) -> str:
 # Core simulators (your existing code)
 # ============================================================================
 
-def msprime_simulation(
-    g: demes.Graph, experiment_config: Dict[str, Any]
+
+# Make sampled_coverage optional 
+def simulation_runner(
+    g: demes.Graph, experiment_config: Dict[str, Any], sampled_coverage: Optional[float] = None
 ) -> Tuple[tskit.TreeSequence, demes.Graph]:
-    samples = {
-        pop_name: num_samples
-        for pop_name, num_samples in experiment_config["num_samples"].items()
-    }
 
-    demog = msprime.Demography.from_demes(g)
+    model = define_sps_model(g) 
 
-    ts = msprime.sim_ancestry(
-        samples=samples,
-        demography=demog,
-        sequence_length=experiment_config["genome_length"],
-        recombination_rate=experiment_config["recombination_rate"],
-        random_seed=experiment_config["seed"],
-    )
+    print(f'• Using engine: {experiment_config.get("engine")}')
 
-    ts = msprime.sim_mutations(
-        ts,
-        rate=experiment_config["mutation_rate"],
-        random_seed=experiment_config["seed"],
-    )
-
-    return ts, g
-
-
-def stdpopsim_slim_simulation(
-    g: demes.Graph,
-    experiment_config: Dict[str, Any],
-    sampled_coverage: float,
-    model_type: str,
-    sampled_params: Dict[str, float],
-) -> Tuple[tskit.TreeSequence, demes.Graph]:
-    # 1) Pick model (wrap Demes for stdpopsim)
-    model = define_sps_model(model_type, g, sampled_params)
-
-    # 2) Build contig and apply DFE intervals
-    sel = experiment_config.get("selection") or {}
-    contig = _contig_from_cfg(experiment_config, sel)
-    sel_summary = _apply_dfe_intervals(contig, sel, sampled_coverage=sampled_coverage)
-
-    # 3) Samples
     samples = {
         k: int(v) for k, v in (experiment_config.get("num_samples") or {}).items()
     }
     seed = experiment_config.get("seed", None)
+    sel = experiment_config.get("selection") or {}
+    contig = _contig_from_cfg(experiment_config, sel)
 
-    # 4) Run SLiM via stdpopsim
-    eng = sps.get_engine("slim")
-    ts = eng.simulate(
-        model,
-        contig,
-        samples,
-        slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
-        slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
-        seed=seed,
-    )
 
-    ts._bgs_selection_summary = sel_summary
+    if experiment_config.get("engine") == "slim":
+
+        sel_summary = _apply_dfe_intervals(contig, sel, sampled_coverage=sampled_coverage)
+
+        eng = sps.get_engine("slim")
+        ts = eng.simulate(
+            model,
+            contig,
+            samples,
+            slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
+            slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
+            seed=seed
+
+        )
+
+        ts._bgs_selection_summary = sel_summary
+    else: 
+
+        eng = sps.get_engine("msprime")
+
+        ts = eng.simulate(
+            model,
+            contig,
+            samples,
+            seed=seed
+        )
+
     return ts, g
 
 
@@ -182,39 +133,12 @@ def simulation(
     sampled_coverage: Optional[float] = None,
 ) -> Tuple[tskit.TreeSequence, demes.Graph]:
     # Build demes graph
-    if model_type == "bottleneck":
-        g = bottleneck_model(sampled_params, experiment_config)
-    elif model_type == "split_isolation":
-        g = split_isolation_model(sampled_params, experiment_config)
-    elif model_type == "split_migration":
-        g = split_migration_model(sampled_params)
-    elif model_type == "drosophila_three_epoch":
-        g = drosophila_three_epoch(sampled_params, experiment_config)
-    elif model_type == "split_migration_growth":
-        g = split_migration_growth_model(sampled_params, experiment_config)
-    elif model_type == "OOA_three_pop":
-        g = OOA_three_pop_model_simplified(sampled_params, experiment_config)
-    elif model_type == "OOA_three_pop_gutenkunst":
-        g = OOA_three_pop_Gutenkunst(sampled_params, experiment_config)
-    else:
-        raise ValueError(f"Unknown model_type: {model_type}")
 
-    engine = str(experiment_config.get("engine", "")).lower()
-    sel = experiment_config.get("selection") or {}
+    g = build_demes_graph(model_type, sampled_params, experiment_config)
 
-    if engine == "msprime":
-        return msprime_simulation(g, experiment_config)
-
-    if engine == "slim":
-        if not sel.get("enabled", False):
-            raise ValueError("engine='slim' requires selection.enabled=true in your config.")
-        if sampled_coverage is None:
-            raise ValueError("engine='slim' requires a non-None sampled_coverage.")
-        return stdpopsim_slim_simulation(
-            g, experiment_config, sampled_coverage, model_type, sampled_params
-        )
-
-    raise ValueError("engine must be 'slim' or 'msprime'.")
+    return simulation_runner(
+        g, experiment_config, sampled_coverage=sampled_coverage
+    )
 
 
 # ============================================================================
@@ -337,7 +261,6 @@ def write_bgs_meta_json(
 
 
 def run_one_simulation_to_dir(
-    *,
     simulation_dir: Path,
     experiment_config_path: Path,
     model_type: str,
@@ -379,8 +302,6 @@ def run_one_simulation_to_dir(
 
     # sample coverage if SLiM
     if engine == "slim":
-        if not sel_cfg.get("enabled", False):
-            raise ValueError("engine='slim' requires selection.enabled=true in your config.")
         if "coverage_percent" not in sel_cfg:
             raise ValueError("engine='slim' requires selection.coverage_percent=[low, high].")
         sampled_coverage = sample_coverage_percent(sel_cfg, rng=rng)
@@ -436,8 +357,8 @@ def build_demes_graph(
     cfg = cfg or {}
     if model_type == "bottleneck":
         return bottleneck_model(sampled_params, cfg)
-    if model_type == "split_isolation":
-        return split_isolation_model(sampled_params, cfg)
+    if model_type == "IM_symmetric":
+        return IM_symmetric_model(sampled_params, cfg)
     if model_type == "split_migration":
         return split_migration_model(sampled_params)
     if model_type == "drosophila_three_epoch":

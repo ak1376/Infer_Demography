@@ -2,7 +2,7 @@
   "genome_length": 1e7,
   "mutation_rate": 1.5e-08,
   "recombination_rate": 1.5e-08,
-  "demographic_model": "OOA_three_pop_gutenkunst",
+  "demographic_model": "OOA_three_pop_Gutenkunst",
   "log_dir": "OOA_three_pop/inferences/moments/logs",
   "num_samples": {
     "YRI": 10,
@@ -23,12 +23,9 @@
     "N_CEU_founder": [200, 8000],
     "N_CHB_founder": [150, 6000],
 
-    "r_CEU":         [0.0005, 0.012],
-    "r_CHB":         [0.0005, 0.015],
-
     "T_OOA_EU_AS":          [400, 2000],
     "T_AFR_OOA":            [3500, 10000],
-    "T_AFR_ancient_change": [6000, 16000],
+    "T_AFR_ancient_change": [10500, 16000],
 
     "m_YRI_OOA": [5e-5, 8e-4],
     "m_YRI_CEU": [1e-6, 3e-4],

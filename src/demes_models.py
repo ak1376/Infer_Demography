@@ -10,10 +10,16 @@ from typing import Dict, Optional
 import demes
 import numpy as np
 
+'''
+Just ensure before each demes model that all the params are in the dict.
+We could be passing in parameters that are named differently. 
+'''
+
 
 def bottleneck_model(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
 ) -> demes.Graph:
+
     b = demes.Builder()
     b.add_deme(
         "ANC",
@@ -32,28 +38,53 @@ def bottleneck_model(
     return b.resolve()
 
 
-def split_isolation_model(
-    sampled: Dict[str, float], cfg: Optional[Dict] = None
-) -> demes.Graph:
-    """Split + symmetric low migration (YRI/CEU)."""
-    N0 = float(sampled.get("N_anc", sampled.get("N0")))
-    N1 = float(sampled.get("N_YRI", sampled.get("N1")))
-    N2 = float(sampled.get("N_CEU", sampled.get("N2")))
-    T = float(sampled.get("T_split", sampled.get("t_split")))
-    # accept MANY possible keys; if both directions provided, average them
-    m_keys = ["m", "m_sym", "m12", "m21", "m_YRI_CEU", "m_CEU_YRI"]
-    vals = [float(sampled[k]) for k in m_keys if k in sampled]
-    m = float(np.mean(vals)) if vals else 0.0
+def IM_symmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+    """
+    Split + symmetric migration (YRI/CEU), but *no separate ancestral-only deme*.
+    YRI carries the ancestral epoch pre-split; CEU branches off at T_split.
 
-    b = demes.Builder()
-    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T)])
-    b.add_deme("YRI", ancestors=["ANC"], epochs=[dict(start_size=N1)])
-    b.add_deme("CEU", ancestors=["ANC"], epochs=[dict(start_size=N2)])
+    This keeps the first deme ("YRI") extant at time 0 => pop0 is extant after msprime.from_demes().
+    """
+
+    required_keys = ["N_anc", "N_YRI", "N_CEU", "m", "T_split"]
+    for k in required_keys:
+        assert k in sampled, f"Missing required key: {k}"
+
+    N0 = float(sampled["N_anc"])
+    N1 = float(sampled["N_YRI"])
+    N2 = float(sampled["N_CEU"])
+    T  = float(sampled["T_split"])
+    m  = float(sampled["m"])
+
+    assert T > 0, "T_split must be > 0"
+
+    b = demes.Builder(time_units="generations", generation_time=1)
+
+    # Root extant deme YRI:
+    #   - from present back to T: size N1
+    #   - older than T: ancestral size N0
+    b.add_deme(
+        "YRI",
+        epochs=[
+            dict(start_size=N0, end_time=T),  # older epoch (ancestral)
+            dict(start_size=N1, end_time=0),  # recent epoch (modern)
+        ],
+    )
+
+    # CEU branches off at split time
+    b.add_deme(
+        "CEU",
+        ancestors=["YRI"],
+        start_time=T,
+        epochs=[dict(start_size=N2, end_time=0)],
+    )
+
+    # Symmetric migration AFTER split (times when both exist: [0, T])
     if m > 0:
-        b.add_migration(source="YRI", dest="CEU", rate=m)
-        b.add_migration(source="CEU", dest="YRI", rate=m)
-    return b.resolve()
+        b.add_migration(source="YRI", dest="CEU", rate=m, start_time=T, end_time=0)
+        b.add_migration(source="CEU", dest="YRI", rate=m, start_time=T, end_time=0)
 
+    return b.resolve()
 
 def split_migration_model(sampled: Dict[str, float]) -> demes.Graph:
     """

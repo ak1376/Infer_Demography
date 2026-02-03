@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration.json"
+EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -100,14 +100,14 @@ rule all:
             ## Aggregated optimizer results (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",   sid=SIM_IDS),
-            expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl", sid=SIM_IDS, opt=OPTIMS),
-            expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",   sid=SIM_IDS, opt=OPTIMS),
+            # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl", sid=SIM_IDS, opt=OPTIMS),
+            # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",   sid=SIM_IDS, opt=OPTIMS),
 
             ## Cleanup completion markers (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
             # LD artifacts (simulated; best-fit only)
-            expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+            # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
             # FIM (simulated)
             # expand(
@@ -1085,13 +1085,13 @@ rule xgboost:
 ##############################################################################
 rule download_1000G_data:
     output:
-        vcf      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
-        tbi      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz.tbi",
-        yri      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI.samples",
-        ceu      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/CEU.samples",
-        chb      = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/CHB.samples",
-        popfile  = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
-        done     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/.download_done"
+        vcf      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
+        tbi      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz.tbi",
+        yri      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI.samples",
+        ceu      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/CEU.samples",
+        chb      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/CHB.samples",
+        popfile  = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
+        done     = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/.download_done"
     shell:
         r"""
         set -euo pipefail
@@ -1121,10 +1121,10 @@ rule download_1000G_data:
 ##############################################################################
 rule compute_real_data_sfs:
     input:
-        vcf     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
-        popfile = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
+        vcf     = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
+        popfile = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
     output:
-        sfs = f"experiments/{MODEL}/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl"
+        sfs = f"real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl"
     params:
         config = "config_files/experiment_config_OOA_three_pop.json",
     shell:
@@ -1149,17 +1149,17 @@ rule infer_moments_real:
     Uses the same model + config, but stores results in runs/run_real_{opt}.
     """
     input:
-        sfs = f"experiments/{MODEL}/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
+        sfs = f"real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
     output:
         # One run directory per opt, mirroring simulations:
-        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl"
+        pkl = f"real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl"
     params:
-        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/runs/run_{w.opt}",
+        run_dir  = lambda w: f"real_data_analysis/runs/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "src.simulation:drosophila_three_epoch"
+            if MODEL not in ["drosophila_three_epoch", "OOA_three_pop_Gutenkunst"]
+            else f"src.simulation:{MODEL}"
         ),
         fix      = ""  # you can plug in real-data fixes here if you want
     threads: 8
@@ -1196,8 +1196,8 @@ rule infer_dadi_real:
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "src.simulation:drosophila_three_epoch"
+            if MODEL not in ["drosophila_three_epoch", "OOA_three_pop_Gutenkunst"]
+            else f"src.simulation:{MODEL}"
         ),
         fix      = ""  # e.g. '--fix N0=10000' if you want to constrain N0 for real data
     threads: 8

@@ -21,7 +21,7 @@ def main():
         required=True,
         choices=[
             "bottleneck",
-            "split_isolation",
+            "IM_symmetric",
             "split_migration",
             "drosophila_three_epoch",
             "split_migration_growth",
