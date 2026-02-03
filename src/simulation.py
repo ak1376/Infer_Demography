@@ -16,6 +16,8 @@ import demesdraw
 import matplotlib.pyplot as plt
 
 import sys
+import gzip
+import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -476,11 +478,8 @@ def simulate_one_window_replicate(
     if model_type is None:
         raise KeyError("Config must contain either 'model_type' or 'demographic_model'.")
 
-    # Build demes graph
-    graph = build_demes_graph(model_type, sampled_params, cfg)
-
     # Reuse exact coverage for BGS (if engine=slim)
-    sampled_cov = load_sampled_coverage_from_meta(meta_file) if engine == "slim" else None
+    sampled_coverage = load_sampled_coverage_from_meta(meta_file) if engine == "slim" else None
 
     # Window seed
     base_seed = cfg.get("seed", None)
@@ -506,39 +505,50 @@ def simulate_one_window_replicate(
         "recombination_rate": float(window_cfg["recombination_rate"]),
         "num_samples": {k: int(v) for k, v in window_cfg["num_samples"].items()},
         "sampled_params": {k: float(v) for k, v in sampled_params.items()},
-        "sampled_coverage": sampled_cov,
+        "sampled_coverage": sampled_coverage,
         "selection_enabled": (bool(sel_cfg.get("enabled", False)) if engine == "slim" else False),
     }
 
     # Simulate
-    if engine == "msprime":
-        ts, _ = msprime_simulation(graph, window_cfg)
-    elif engine == "slim":
-        if not bool(sel_cfg.get("enabled", False)):
-            raise RuntimeError("engine='slim' requires selection.enabled=true in config.")
-        if sampled_cov is None:
-            raise RuntimeError("engine='slim' requires coverage; pass --meta-file from base sim.")
-        ts, _ = stdpopsim_slim_simulation(
-            g=graph,
-            experiment_config=window_cfg,
-            sampled_coverage=sampled_cov,
-            model_type=str(model_type),
-            sampled_params=sampled_params,
-        )
 
-        sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
-        window_metadata.update(
-            {
-                "species": str(sel_cfg.get("species", "HomSap")),
-                "dfe_id": str(sel_cfg.get("dfe_id", "Gamma_K17")),
-                "selected_bp": int(sel_summary.get("selected_bp", 0)),
-                "selected_frac": float(sel_summary.get("selected_frac", 0.0)),
-                "slim_scaling": float(sel_cfg.get("slim_scaling", 10.0)),
-                "slim_burn_in": float(sel_cfg.get("slim_burn_in", 5.0)),
-            }
-        )
-    else:
-        raise ValueError("engine must be 'slim' or 'msprime'.")
+    ts, g = simulation(sampled_params=sampled_params,
+                      model_type=model_type,
+                      experiment_config=window_cfg,
+                      sampled_coverage=sampled_coverage)
+
+    #     def simulation(
+    #     sampled_params: Dict[str, float],
+    #     model_type: str,
+    #     experiment_config: Dict[str, Any],
+    #     sampled_coverage: Optional[float] = None,
+    # ) -> Tuple[tskit.TreeSequence, demes.Graph]:
+
+    # if engine == "msprime":
+    #     ts, _ = msprime_simulation(graph, window_cfg)
+    # elif engine == "slim":
+    #     if not bool(sel_cfg.get("enabled", False)):
+    #         raise RuntimeError("engine='slim' requires selection.enabled=true in config.")
+    #     if sampled_coverage is None:
+    #         raise RuntimeError("engine='slim' requires coverage; pass --meta-file from base sim.")
+    #     ts, _ = stdpopsim_slim_simulation(
+    #         g=graph,
+    #         experiment_config=window_cfg,
+    #         sampled_coverage=sampled_coverage,
+    #         model_type=str(model_type),
+    #         sampled_params=sampled_params,
+    #     )
+
+    sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
+    window_metadata.update(
+        {
+            "species": str(sel_cfg.get("species", "HomSap")),
+            "dfe_id": str(sel_cfg.get("dfe_id", "Gamma_K17")),
+            "selected_bp": int(sel_summary.get("selected_bp", 0)),
+            "selected_frac": float(sel_summary.get("selected_frac", 0.0)),
+            "slim_scaling": float(sel_cfg.get("slim_scaling", 10.0)),
+            "slim_burn_in": float(sel_cfg.get("slim_burn_in", 5.0)),
+        }
+    )
 
     window_metadata["sequence_length"] = float(ts.sequence_length)
 
