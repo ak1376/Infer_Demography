@@ -38,3 +38,4 @@ notebooks/investigating_drosophila.ipynb
 debug_experiments/
 debug_drosoph_*.py
 split_isolation_BGS_LD_stats_comparison.py
+experiments_BGS_test/

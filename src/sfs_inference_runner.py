@@ -86,58 +86,74 @@ def load_ground_truth(path: Path) -> Dict[str, float]:
 # =============================================================================
 
 
-def handle_fixed_parameters(
-    config: Dict[str, Any],
-    sampled_params: Optional[Dict[str, float]],
-    param_names: List[str],
-) -> Dict[str, float]:
-    """
-    Parse config["fixed_parameters"] and return dict {param_name: fixed_value}.
+# def handle_fixed_parameters(
+#     config: Dict[str, Any],
+#     sampled_params: Optional[Dict[str, float]],
+#     param_names: List[str],
+# ) -> Dict[str, float]:
+#     """
+#     Parse config["fixed_parameters"] and return dict {param_name: fixed_value}.
 
-    fixed spec options:
-      - numeric: fix to that number
-      - "sampled" or "true": fix to sampled_params[param_name]
-    """
-    fixed_params: Dict[str, float] = {}
-    fixed_config = config.get("fixed_parameters", {}) or {}
+#     fixed spec options:
+#       - numeric: fix to that number
+#       - "sampled" or "true": fix to sampled_params[param_name]
+#     """
+#     fixed_params: Dict[str, float] = {}
+#     fixed_config = config.get("fixed_parameters", {}) or {}
 
-    for p in param_names:
-        if p not in fixed_config:
-            continue
-        spec = fixed_config[p]
+#     for p in param_names:
+#         if p not in fixed_config:
+#             continue
+#         spec = fixed_config[p]
 
-        if isinstance(spec, (int, float)):
-            fixed_params[p] = float(spec)
-        elif isinstance(spec, str) and spec.lower() in {"sampled", "true"}:
-            if sampled_params is None or p not in sampled_params:
-                raise ValueError(f"Cannot fix {p} to sampled value: not available")
-            fixed_params[p] = float(sampled_params[p])
-        else:
-            raise ValueError(f"Invalid fixed parameter spec for {p}: {spec}")
+#         if isinstance(spec, (int, float)):
+#             fixed_params[p] = float(spec)
+#         elif isinstance(spec, str) and spec.lower() in {"sampled", "true"}:
+#             if sampled_params is None or p not in sampled_params:
+#                 raise ValueError(f"Cannot fix {p} to sampled value: not available")
+#             fixed_params[p] = float(sampled_params[p])
+#         else:
+#             raise ValueError(f"Invalid fixed parameter spec for {p}: {spec}")
 
-    return fixed_params
+#     return fixed_params
 
 
-def create_start_dict_with_fixed(
-    config: Dict[str, Any],
-    fixed_params: Dict[str, float],
+# def create_start_dict_with_fixed(
+#     config: Dict[str, Any],
+#     fixed_params: Dict[str, float],
+# ) -> Dict[str, float]:
+#     """
+#     Starting dict aligned with config['priors'] iteration order.
+#     - fixed params: fixed value
+#     - free params: geometric mean sqrt(low*high)
+#     """
+#     priors: Dict[str, List[float]] = config["priors"]
+#     start_dict: Dict[str, float] = {}
+
+#     for p, (low, high) in priors.items():
+#         if p in fixed_params:
+#             start_dict[p] = float(fixed_params[p])
+#         else:
+#             start_dict[p] = float(np.sqrt(float(low) * float(high)))
+
+#     return start_dict
+
+def create_start_dict(
+    config: Dict[str, Any]
 ) -> Dict[str, float]:
     """
     Starting dict aligned with config['priors'] iteration order.
-    - fixed params: fixed value
     - free params: geometric mean sqrt(low*high)
     """
     priors: Dict[str, List[float]] = config["priors"]
     start_dict: Dict[str, float] = {}
 
     for p, (low, high) in priors.items():
-        if p in fixed_params:
-            start_dict[p] = float(fixed_params[p])
-        else:
-            start_dict[p] = float(np.sqrt(float(low) * float(high)))
+        start_dict[p] = float(np.sqrt(float(low) * float(high)))
+
+    print(f'Order of the parameters being inferred: {list(start_dict.keys())}')
 
     return start_dict
-
 
 # =============================================================================
 # Model loading: --model-py "module:function"
@@ -242,50 +258,50 @@ def ensure_moments_spectrum(sfs):
 # =============================================================================
 
 
-def classify_parameter_type(param_name: str) -> str:
-    """
-    Returns one of: 'population_size', 'time', 'migration', 'other'
-    """
-    p = param_name.lower()
+# def classify_parameter_type(param_name: str) -> str:
+#     """
+#     Returns one of: 'population_size', 'time', 'migration', 'other'
+#     """
+#     p = param_name.lower()
 
-    # NOTE: fixed a bug you had: missing comma between "n2" and "size"
-    if any(x in p for x in ["n0", "n1", "n2", "size", "anc", "afr", "eur", "bottleneck", "recover"]):
-        return "population_size"
-    if any(x in p for x in ["t", "time", "split", "expansion", "divergence"]):
-        return "time"
-    if any(x in p for x in ["m", "mig", "flow"]):
-        return "migration"
-    return "other"
+#     # NOTE: fixed a bug you had: missing comma between "n2" and "size"
+#     if any(x in p for x in ["n0", "n1", "n2", "size", "anc", "afr", "eur", "bottleneck", "recover"]):
+#         return "population_size"
+#     if any(x in p for x in ["t", "time", "split", "expansion", "divergence"]):
+#         return "time"
+#     if any(x in p for x in ["m", "mig", "flow"]):
+#         return "migration"
+#     return "other"
 
 
-def create_parameter_grid(
-    param_name: str,
-    fitted_value: float,
-    lower_bound: float,
-    upper_bound: float,
-    grid_points: int = 41,
-) -> np.ndarray:
-    """
-    Create a log-spaced grid around fitted_value, clipped to [lower_bound, upper_bound].
-    """
-    param_type = classify_parameter_type(param_name)
+# def create_parameter_grid(
+#     param_name: str,
+#     fitted_value: float,
+#     lower_bound: float,
+#     upper_bound: float,
+#     grid_points: int = 41,
+# ) -> np.ndarray:
+#     """
+#     Create a log-spaced grid around fitted_value, clipped to [lower_bound, upper_bound].
+#     """
+#     param_type = classify_parameter_type(param_name)
 
-    # fold ranges: choose wide multiplicative ranges
-    if param_type in {"population_size", "time"}:
-        fold_range = 50.0
-    elif param_type == "migration":
-        fold_range = 100.0
-    else:
-        fold_range = 20.0
+#     # fold ranges: choose wide multiplicative ranges
+#     if param_type in {"population_size", "time"}:
+#         fold_range = 50.0
+#     elif param_type == "migration":
+#         fold_range = 100.0
+#     else:
+#         fold_range = 20.0
 
-    gmin = max(float(lower_bound), float(fitted_value) / fold_range)
-    gmax = min(float(upper_bound), float(fitted_value) * fold_range)
+#     gmin = max(float(lower_bound), float(fitted_value) / fold_range)
+#     gmax = min(float(upper_bound), float(fitted_value) * fold_range)
 
-    gmin = max(gmin, 1e-12)
-    if gmax <= gmin * 1.0001:
-        gmax = min(float(upper_bound), gmin * 10.0)
+#     gmin = max(gmin, 1e-12)
+#     if gmax <= gmin * 1.0001:
+#         gmax = min(float(upper_bound), gmin * 10.0)
 
-    return np.logspace(np.log10(gmin), np.log10(gmax), int(grid_points))
+#     return np.logspace(np.log10(gmin), np.log10(gmax), int(grid_points))
 
 
 def _infer_sample_sizes_from_sfs(sfs) -> Dict[str, int]:
@@ -309,177 +325,177 @@ def _infer_sample_sizes_from_sfs(sfs) -> Dict[str, int]:
     return {f"pop{i}": (n - 1) // 2 for i, n in enumerate(sfs.shape)}
 
 
-def compute_likelihood_profile(
-    *,
-    mode: str,
-    param_values: np.ndarray,
-    param_idx: int,
-    grid_values: np.ndarray,
-    sfs,
-    demo_func,
-    config: Dict[str, Any],
-    fixed_params: Dict[str, float],
-) -> np.ndarray:
-    """
-    Compute Poisson log-likelihood across grid_values for one parameter.
+# def compute_likelihood_profile(
+#     *,
+#     mode: str,
+#     param_values: np.ndarray,
+#     param_idx: int,
+#     grid_values: np.ndarray,
+#     sfs,
+#     demo_func,
+#     config: Dict[str, Any],
+#     fixed_params: Dict[str, float],
+# ) -> np.ndarray:
+#     """
+#     Compute Poisson log-likelihood across grid_values for one parameter.
 
-    NOTE:
-    - We skip fixed param indices in the caller; this still works if called anyway.
-    - For moments expected SFS, this uses moments_inference._diffusion_sfs (private).
-    """
-    param_names = list(config["priors"].keys())
-    ll_vals: List[float] = []
+#     NOTE:
+#     - We skip fixed param indices in the caller; this still works if called anyway.
+#     - For moments expected SFS, this uses moments_inference._diffusion_sfs (private).
+#     """
+#     param_names = list(config["priors"].keys())
+#     ll_vals: List[float] = []
 
-    for val in grid_values:
-        test = np.asarray(param_values, float).copy()
-        test[param_idx] = float(val)
+#     for val in grid_values:
+#         test = np.asarray(param_values, float).copy()
+#         test[param_idx] = float(val)
 
-        try:
-            sample_sizes = _infer_sample_sizes_from_sfs(sfs)
+#         try:
+#             sample_sizes = _infer_sample_sizes_from_sfs(sfs)
 
-            if mode == "dadi":
-                expected = dadi_inference.diffusion_sfs_dadi(
-                    params_vec=test,
-                    param_names=param_names,
-                    sample_sizes=sample_sizes,
-                    demo_model=demo_func,
-                    mutation_rate=float(config["mutation_rate"]),
-                    sequence_length=float(config["genome_length"]),
-                    pts=[50, 60, 70],
-                    config=config,
-                )
-            elif mode == "moments":
-                expected = moments_inference._diffusion_sfs(
-                    init_vec=test,
-                    demo_model=demo_func,
-                    param_names=param_names,
-                    sample_sizes=sample_sizes,  # OrderedDict not strictly required by moments_inference
-                    experiment_config=config,
-                )
-            else:
-                raise ValueError("mode must be 'dadi' or 'moments'")
+#             if mode == "dadi":
+#                 expected = dadi_inference.diffusion_sfs_dadi(
+#                     params_vec=test,
+#                     param_names=param_names,
+#                     sample_sizes=sample_sizes,
+#                     demo_model=demo_func,
+#                     mutation_rate=float(config["mutation_rate"]),
+#                     sequence_length=float(config["genome_length"]),
+#                     pts=[50, 60, 70],
+#                     config=config,
+#                 )
+#             elif mode == "moments":
+#                 expected = moments_inference._diffusion_sfs(
+#                     init_vec=test,
+#                     demo_model=demo_func,
+#                     param_names=param_names,
+#                     sample_sizes=sample_sizes,  # OrderedDict not strictly required by moments_inference
+#                     experiment_config=config,
+#                 )
+#             else:
+#                 raise ValueError("mode must be 'dadi' or 'moments'")
 
-            if getattr(sfs, "folded", False):
-                expected = expected.fold()
+#             if getattr(sfs, "folded", False):
+#                 expected = expected.fold()
 
-            expected = np.maximum(np.array(expected), 1e-300)
-            obs = np.array(sfs)
-            ll = float(np.sum(obs * np.log(expected) - expected))
-            ll_vals.append(ll)
+#             expected = np.maximum(np.array(expected), 1e-300)
+#             obs = np.array(sfs)
+#             ll = float(np.sum(obs * np.log(expected) - expected))
+#             ll_vals.append(ll)
 
-        except Exception as e:
-            print(f"[profile:{mode}] error at {val}: {e}")
-            ll_vals.append(float("-inf"))
+#         except Exception as e:
+#             print(f"[profile:{mode}] error at {val}: {e}")
+#             ll_vals.append(float("-inf"))
 
-    return np.asarray(ll_vals, float)
-
-
-def create_likelihood_plot(
-    *,
-    param_name: str,
-    grid_values: np.ndarray,
-    likelihood_values: np.ndarray,
-    fitted_value: float,
-    true_value: Optional[float],
-    mode: str,
-    outdir: Path,
-) -> Path:
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    plt.figure(figsize=(8, 6), dpi=150)
-
-    plt.plot(
-        grid_values,
-        likelihood_values,
-        "-o",
-        linewidth=2.0,
-        markersize=4,
-        label="Profile LL",
-        alpha=0.85,
-    )
-    plt.axvline(x=float(fitted_value), linestyle="-", linewidth=2, label=f"MLE: {fitted_value:.4g}")
-    if true_value is not None and not np.isnan(true_value):
-        plt.axvline(x=float(true_value), linestyle="--", linewidth=2, label=f"True: {true_value:.4g}")
-
-    plt.xscale("log")
-    plt.ylabel("Log-likelihood")
-    plt.xlabel(param_name)
-    plt.title(f"{mode.title()} - Likelihood Profile: {param_name}")
-    plt.legend(frameon=True, fancybox=True, shadow=True)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-
-    outfile = outdir / f"likelihood_profile_{mode}_{param_name}.png"
-    plt.savefig(outfile, dpi=150, bbox_inches="tight")
-    plt.close()
-    return outfile
+#     return np.asarray(ll_vals, float)
 
 
-def generate_likelihood_profiles(
-    *,
-    mode: str,
-    sfs,
-    fitted_params: Dict[str, float],
-    config: Dict[str, Any],
-    demo_func,
-    ground_truth_params: Optional[Dict[str, float]],
-    outdir: Path,
-    fixed_params: Dict[str, float],
-    grid_points: int = 41,
-) -> List[Path]:
-    """
-    Generate 1D likelihood profiles for each free parameter.
-    """
-    profiles_dir = outdir / "likelihood_profiles"
-    profiles_dir.mkdir(parents=True, exist_ok=True)
+# def create_likelihood_plot(
+#     *,
+#     param_name: str,
+#     grid_values: np.ndarray,
+#     likelihood_values: np.ndarray,
+#     fitted_value: float,
+#     true_value: Optional[float],
+#     mode: str,
+#     outdir: Path,
+# ) -> Path:
+#     outdir.mkdir(parents=True, exist_ok=True)
 
-    param_names = list(config["priors"].keys())
-    param_values = np.array([fitted_params[name] for name in param_names], dtype=float)
-    lower_bounds = np.array([config["priors"][name][0] for name in param_names], dtype=float)
-    upper_bounds = np.array([config["priors"][name][1] for name in param_names], dtype=float)
+#     plt.figure(figsize=(8, 6), dpi=150)
 
-    print(f"[profiles:{mode}] generating profiles for {len(param_names)} params (skipping fixed)...")
+#     plt.plot(
+#         grid_values,
+#         likelihood_values,
+#         "-o",
+#         linewidth=2.0,
+#         markersize=4,
+#         label="Profile LL",
+#         alpha=0.85,
+#     )
+#     plt.axvline(x=float(fitted_value), linestyle="-", linewidth=2, label=f"MLE: {fitted_value:.4g}")
+#     if true_value is not None and not np.isnan(true_value):
+#         plt.axvline(x=float(true_value), linestyle="--", linewidth=2, label=f"True: {true_value:.4g}")
 
-    saved: List[Path] = []
-    for i, pname in enumerate(param_names):
-        if pname in fixed_params:
-            print(f"  - skip fixed: {pname}")
-            continue
+#     plt.xscale("log")
+#     plt.ylabel("Log-likelihood")
+#     plt.xlabel(param_name)
+#     plt.title(f"{mode.title()} - Likelihood Profile: {param_name}")
+#     plt.legend(frameon=True, fancybox=True, shadow=True)
+#     plt.grid(True, alpha=0.3)
+#     plt.tight_layout()
 
-        grid = create_parameter_grid(
-            param_name=pname,
-            fitted_value=float(param_values[i]),
-            lower_bound=float(lower_bounds[i]),
-            upper_bound=float(upper_bounds[i]),
-            grid_points=int(grid_points),
-        )
+#     outfile = outdir / f"likelihood_profile_{mode}_{param_name}.png"
+#     plt.savefig(outfile, dpi=150, bbox_inches="tight")
+#     plt.close()
+#     return outfile
 
-        ll = compute_likelihood_profile(
-            mode=mode,
-            param_values=param_values,
-            param_idx=i,
-            grid_values=grid,
-            sfs=sfs,
-            demo_func=demo_func,
-            config=config,
-            fixed_params=fixed_params,
-        )
 
-        true_val = ground_truth_params.get(pname) if ground_truth_params else None
-        out = create_likelihood_plot(
-            param_name=pname,
-            grid_values=grid,
-            likelihood_values=ll,
-            fitted_value=float(param_values[i]),
-            true_value=true_val,
-            mode=mode,
-            outdir=profiles_dir,
-        )
-        saved.append(out)
-        print(f"    saved {out.name}")
+# def generate_likelihood_profiles(
+#     *,
+#     mode: str,
+#     sfs,
+#     fitted_params: Dict[str, float],
+#     config: Dict[str, Any],
+#     demo_func,
+#     ground_truth_params: Optional[Dict[str, float]],
+#     outdir: Path,
+#     fixed_params: Dict[str, float],
+#     grid_points: int = 41,
+# ) -> List[Path]:
+#     """
+#     Generate 1D likelihood profiles for each free parameter.
+#     """
+#     profiles_dir = outdir / "likelihood_profiles"
+#     profiles_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[profiles:{mode}] done → {profiles_dir} ({len(saved)} plots)")
-    return saved
+#     param_names = list(config["priors"].keys())
+#     param_values = np.array([fitted_params[name] for name in param_names], dtype=float)
+#     lower_bounds = np.array([config["priors"][name][0] for name in param_names], dtype=float)
+#     upper_bounds = np.array([config["priors"][name][1] for name in param_names], dtype=float)
+
+#     print(f"[profiles:{mode}] generating profiles for {len(param_names)} params (skipping fixed)...")
+
+#     saved: List[Path] = []
+#     for i, pname in enumerate(param_names):
+#         if pname in fixed_params:
+#             print(f"  - skip fixed: {pname}")
+#             continue
+
+#         grid = create_parameter_grid(
+#             param_name=pname,
+#             fitted_value=float(param_values[i]),
+#             lower_bound=float(lower_bounds[i]),
+#             upper_bound=float(upper_bounds[i]),
+#             grid_points=int(grid_points),
+#         )
+
+#         ll = compute_likelihood_profile(
+#             mode=mode,
+#             param_values=param_values,
+#             param_idx=i,
+#             grid_values=grid,
+#             sfs=sfs,
+#             demo_func=demo_func,
+#             config=config,
+#             fixed_params=fixed_params,
+#         )
+
+#         true_val = ground_truth_params.get(pname) if ground_truth_params else None
+#         out = create_likelihood_plot(
+#             param_name=pname,
+#             grid_values=grid,
+#             likelihood_values=ll,
+#             fitted_value=float(param_values[i]),
+#             true_value=true_val,
+#             mode=mode,
+#             outdir=profiles_dir,
+#         )
+#         saved.append(out)
+#         print(f"    saved {out.name}")
+
+#     print(f"[profiles:{mode}] done → {profiles_dir} ({len(saved)} plots)")
+#     return saved
 
 
 # =============================================================================
@@ -493,7 +509,6 @@ class InferenceResult:
     best_params: Optional[Dict[str, float]]
     best_ll: Optional[float]
     param_order: List[str]
-    fixed_params: Dict[str, float]
     out_pkl: Path
 
 
@@ -505,10 +520,8 @@ def run_inference_mode(
     demo_func,
     start_dict: Dict[str, float],
     outdir: Path,
-    fixed_params: Dict[str, float],
     generate_profiles: bool = False,
     profile_grid_points: int = 41,
-    ground_truth_params: Optional[Dict[str, float]] = None,
 ) -> InferenceResult:
     """
     Run inference using either dadi or moments. Writes:
@@ -525,7 +538,6 @@ def run_inference_mode(
             start_dict=start_dict,
             demo_model=demo_func,
             experiment_config=config,
-            fixed_params=fixed_params,
         )
         sfs_used = sfs_dadi
 
@@ -556,7 +568,6 @@ def run_inference_mode(
         "best_params": best_params,
         "best_ll": (float(best_ll) if best_ll is not None else None),
         "param_order": list(start_dict.keys()),
-        "fixed_params": {k: float(v) for k, v in fixed_params.items()},
     }
 
     out_pkl = mode_outdir / "best_fit.pkl"
@@ -588,7 +599,6 @@ def run_inference_mode(
         best_params=best_params,
         best_ll=(float(best_ll) if best_ll is not None else None),
         param_order=list(start_dict.keys()),
-        fixed_params=fixed_params,
         out_pkl=out_pkl,
     )
 
@@ -600,7 +610,6 @@ def run_cli(
     config_file: Path,
     model_py: str,
     outdir: Path,
-    ground_truth: Optional[Path] = None,
     generate_profiles: bool = False,
     profile_grid_points: int = 41,
     verbose: int = 1,
@@ -615,33 +624,15 @@ def run_cli(
     config = load_config(config_file)
     sfs = load_sfs(sfs_file)
 
-    # Load ground truth / sampled params (optional)
-    sampled_params = None
-    ground_truth_params = None
-    if ground_truth is not None:
-        if ground_truth.exists():
-            try:
-                sampled_params = load_ground_truth(ground_truth)
-                ground_truth_params = sampled_params
-                if verbose:
-                    print(f"[INFO] Loaded ground truth from {ground_truth}")
-            except Exception as e:
-                print(f"[WARN] Could not load ground truth: {e}")
-        else:
-            print(f"[WARN] Ground truth path provided but not found: {ground_truth}")
-
     # Model function
     demo_func = load_demo_func(model_py)
 
     # Fixed params + start dict
     param_names = list(config["priors"].keys())
-    fixed_params = handle_fixed_parameters(config, sampled_params, param_names)
-    start_dict = create_start_dict_with_fixed(config, fixed_params)
+    start_dict = create_start_dict(config)
 
     if verbose:
         print(f"[runner] start_dict: {start_dict}")
-        if fixed_params:
-            print(f"[runner] fixed_params: {fixed_params}")
 
     results: Dict[str, Any] = {}
 
@@ -672,10 +663,8 @@ def run_cli(
             demo_func=demo_func,
             start_dict=start_dict,
             outdir=outdir,
-            fixed_params=fixed_params,
             generate_profiles=generate_profiles,
             profile_grid_points=profile_grid_points,
-            ground_truth_params=ground_truth_params,
         )
         results[mode] = {
             "best_params": res.best_params,

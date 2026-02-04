@@ -1,5 +1,5 @@
 {
-  "genome_length": 1e5,
+  "genome_length": 1e7,
   "mutation_rate": 1.29e-8,
   "recombination_rate": 1.2e-8,
   "demographic_model": "IM_symmetric",
@@ -10,7 +10,7 @@
   "seed": 42,
   "num_optimizations": 1,
   "top_k": 1,
-  "num_draws": 1,
+  "num_draws": 100,
   "priors": {
     "N_anc": [
       100,
@@ -38,7 +38,7 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      90
+      30
     ], 
     "slim_scaling": 10, 
     "slim_burn_in": 5
@@ -49,9 +49,32 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "slim",
+  "engine": "msprime",
   "use_gpu_ld": true,
+  "use_gpu_dadi": false,
   "gram_schmidt": false,
-  "gram_schmidt_k": 10
+  "gram_schmidt_k": 10, 
+
+  "optimization": {
+    "perturb_fold": 0.1,
+    "log10_floor": 1e-300,
+
+    "dadi": {
+      "ftol_rel": 1e-5,
+      "xtol_rel": 1e-4,
+      "maxeval": 5000,
+      "initial_step": 0.1,
+      "grad_step": 1e-4,
+      "pts": [50, 60, 70]
+    },
+
+    "moments": {
+      "ftol_rel": 1e-5,
+      "xtol_rel": 1e-4,
+      "maxeval": 5000,
+      "initial_step": 0.1,
+      "grad_step": 1e-4
+    }
+  }
 
 }

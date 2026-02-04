@@ -7,7 +7,13 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+import sys
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+sys.path.insert(0, str(PROJECT_ROOT))
 
+from sfs_inference_runner import run_cli
 
 def _parse_args():
     p = argparse.ArgumentParser("CLI wrapper for dadi/moments inference (thin)")
@@ -68,9 +74,6 @@ def main() -> None:
     sys.path.insert(0, str(SRC_DIR))
     sys.path.insert(0, str(PROJECT_ROOT))
 
-    # Import the shared runner (all heavy logic lives there)
-    from sfs_inference_runner import run_cli
-
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     run_cli(
@@ -79,7 +82,6 @@ def main() -> None:
         config_file=args.config,
         model_py=args.model_py,
         outdir=args.outdir,
-        ground_truth=args.ground_truth,
         generate_profiles=args.generate_profiles,
         profile_grid_points=args.profile_grid_points,
         verbose=args.verbose,
