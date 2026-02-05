@@ -1,23 +1,38 @@
+#!/usr/bin/env python3
+"""
+debug_moments_multiple_sims.py
+
+- Demes model with NO separate ancestral-only deme (A carries ancestral epoch)
+- Multiple simulations with randomly sampled parameters
+- Moments optimization for each simulation
+- Save true demes graph + params per simulation
+- Scatterplots of moments-inferred vs true parameters across simulations
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
 import numpy as np
 import msprime
 import demes
+import demesdraw
 import moments
 import nlopt
 import numdifftools as nd
 import matplotlib.pyplot as plt
 
 
-# def msprime_model_old(N_ANC, N_A, N_B, T, mAB, mBA):
-#     demogr = msprime.Demography()
-#     demogr.add_population(name="A", initial_size=N_A)
-#     demogr.add_population(name="B", initial_size=N_B)
-#     demogr.add_population(name="ANC", initial_size=N_ANC)
-#     demogr.add_population_split(time=T, ancestral="ANC", derived=["A", "B"])
-#     demogr.migration_matrix = np.array([[0, mAB, 0], [mBA, 0, 0], [0, 0, 0]])
-#     return demogr
+# =============================================================================
+# Utilities
+# =============================================================================
+
+PARAM_NAMES = ["N_ANC", "N_A", "N_B", "T", "mAB", "mBA"]
+
 
 def pop_id(ts, name: str) -> int:
-    import json
+    """Return population ID by name (robust to ordering)."""
     for pid in range(ts.num_populations):
         md = ts.population(pid).metadata
         if isinstance(md, (bytes, bytearray)):
@@ -27,23 +42,56 @@ def pop_id(ts, name: str) -> int:
     raise KeyError(f"Population {name!r} not found")
 
 
-def msprime_model(N_ANC, N_A, N_B, T, mAB, mBA):
-    b = demes.Builder()
+def sample_params_loguniform(rng, lb, ub):
+    """Log-uniform sampling between bounds."""
+    return 10 ** rng.uniform(np.log10(lb), np.log10(ub))
 
-    b.add_deme("ANC", epochs=[dict(start_size=float(N_ANC), end_time=float(T))])
-    b.add_deme("A", ancestors=["ANC"], epochs=[dict(start_size=float(N_A))])
-    b.add_deme("B", ancestors=["ANC"], epochs=[dict(start_size=float(N_B))])
+
+# =============================================================================
+# Demography: no separate ancestral deme
+# =============================================================================
+
+def msprime_model(N_ANC, N_A, N_B, T, mAB, mBA):
+    """
+    Demes graph (no separate ANC deme) -> msprime demography
+
+    A:
+      - ancestral epoch (older than T): size N_ANC
+      - recent epoch (T -> 0): size N_A
+    B:
+      - splits from A at time T
+      - size N_B from T -> 0
+    Asymmetric migration after split.
+    """
+    b = demes.Builder(time_units="generations", generation_time=1)
+
+    b.add_deme(
+        "A",
+        epochs=[
+            dict(start_size=float(N_ANC), end_time=float(T)),
+            dict(start_size=float(N_A),   end_time=0),
+        ],
+    )
+
+    b.add_deme(
+        "B",
+        ancestors=["A"],
+        start_time=float(T),
+        epochs=[dict(start_size=float(N_B), end_time=0)],
+    )
 
     if mAB > 0:
-        b.add_migration(source="A", dest="B", rate=float(mAB))
+        b.add_migration(source="A", dest="B", rate=float(mAB), start_time=T, end_time=0)
     if mBA > 0:
-        b.add_migration(source="B", dest="A", rate=float(mBA))
+        b.add_migration(source="B", dest="A", rate=float(mBA), start_time=T, end_time=0)
 
     dg = b.resolve()
-    demogr = msprime.Demography.from_demes(dg)
-    return demogr
+    return msprime.Demography.from_demes(dg)
 
-    
+
+# =============================================================================
+# Moments likelihood + optimization
+# =============================================================================
 
 def expected_sfs(log10_params, sample_size, mutation_rate):
     N_ANC, N_A, N_B, T, mAB, mBA = 10 ** log10_params
@@ -61,184 +109,154 @@ def optimize_lbfgs(
     lower_bounds,
     upper_bounds,
     observed_sfs,
-    mutation_rate,  # scaled by sequence length, e.g. per_base_mutation_rate * sequence_length
+    mutation_rate,
     verbose=False,
     rtol=1e-8,
 ):
-    assert isinstance(observed_sfs, moments.Spectrum)
     sample_size = [n - 1 for n in observed_sfs.shape]
-    
+
     def loglikelihood(log10_params):
         exp_sfs = expected_sfs(log10_params, sample_size, mutation_rate)
-        loglik = np.sum(np.log(exp_sfs) * observed_sfs - exp_sfs)
-        return loglik
-    
+        return np.sum(np.log(exp_sfs) * observed_sfs - exp_sfs)
+
     def gradient(log10_params):
-        return nd.Gradient(loglikelihood, n=1, step=1e-4)(log10_params)
-    
-    def negative_loss(log10_params, grad):
-        loglik = loglikelihood(log10_params)
+        return nd.Gradient(loglikelihood, step=1e-4)(log10_params)
+
+    def objective(log10_params, grad):
+        ll = loglikelihood(log10_params)
         if grad.size > 0:
             grad[:] = gradient(log10_params)
         if verbose:
-            print(f"loglik: {loglik}, params: {log10_params}")
-        return loglik
+            print("loglik:", ll, "params:", 10 ** log10_params)
+        return ll
 
-    opt = nlopt.opt(nlopt.LD_LBFGS, start_values.size)
+    opt = nlopt.opt(nlopt.LD_LBFGS, len(start_values))
     opt.set_lower_bounds(np.log10(lower_bounds))
     opt.set_upper_bounds(np.log10(upper_bounds))
-    opt.set_max_objective(negative_loss)
+    opt.set_max_objective(objective)
     opt.set_ftol_rel(rtol)
 
-    fitted_log10_params = opt.optimize(np.log10(start_values))
-    fitted_sfs = expected_sfs(fitted_log10_params, sample_size, mutation_rate)
-    max_loglik = opt.last_optimize_result()
-
-    return 10 ** fitted_log10_params, fitted_sfs, max_loglik
+    fitted_log10 = opt.optimize(np.log10(start_values))
+    return 10 ** fitted_log10
 
 
-def parameter_grid_loglik(
-    param_values,
-    what_to_vary: int,
-    grid_of_values: np.ndarray,
-    observed_sfs,
-    mutation_rate,  # scaled by sequence length, e.g. per_base_mutation_rate * sequence_length
-):
-    assert isinstance(observed_sfs, moments.Spectrum)
-    sample_size = [n - 1 for n in observed_sfs.shape]
-    
-    def loglikelihood(log10_params):
-        exp_sfs = expected_sfs(log10_params, sample_size, mutation_rate)
-        loglik = np.sum(np.log(exp_sfs) * observed_sfs - exp_sfs)
-        return loglik
+# =============================================================================
+# Per-simulation outputs
+# =============================================================================
 
-    loglik_surface = []
-    for p in grid_of_values:
-        log10_pars = np.log10(param_values)
-        log10_pars[what_to_vary] = np.log10(p)
-        loglik_surface.append(loglikelihood(log10_pars))
+def save_true_demes(sim_dir: Path, true_pars: np.ndarray):
+    sim_dir.mkdir(parents=True, exist_ok=True)
 
-    return loglik_surface
+    demogr = msprime_model(*true_pars)
+    dg = demogr.to_demes()
+
+    (sim_dir / "true_params.json").write_text(
+        json.dumps(dict(zip(PARAM_NAMES, map(float, true_pars))), indent=2)
+    )
+    (sim_dir / "demes_graph.yaml").write_text(demes.dumps(dg))
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    demesdraw.tubes(dg, ax=ax)
+    fig.tight_layout()
+    fig.savefig(sim_dir / "demes_graph.png", dpi=200)
+    plt.close(fig)
 
 
-#### sanity check
+# =============================================================================
+# Main multi-sim driver
+# =============================================================================
 
-def sanity_check(num_reps=100):
-    """
-    Check that msprime model spec (that is, what we simulate data from)
-    match moments model spec (that is, what we calculate expectation from)
-    """
-    seqlen = 1e6
+def main():
+    # ---------------- user controls ----------------
+    num_sims = 25
+    out_root = Path("debug_outputs_moments")
+    seqlen = 1e7
     mu = 1e-8
-    params = np.array([1e4, 1e3, 2e4, 1e4, 1e-6, 1e-5])
-    demogr = msprime_model(*params)
-    tsg = msprime.sim_ancestry(
-        samples={"A": 5, "B": 5},
-        sequence_length=seqlen,
-        recombination_rate=1e-8,
-        demography=demogr,
-        random_seed=1,
-        num_replicates=num_reps,
-    )
-    mc_sfs = None
-    for ts in tsg:
-        tmp = ts.allele_frequency_spectrum(
-            sample_sets=[list(ts.samples(population=p)) for p in [0, 1]],
-            mode='branch',
-            span_normalise=False,
-            polarised=True,
-        ) * mu
-        if mc_sfs is None:
-            mc_sfs = tmp
-        else:
-            mc_sfs += tmp
-    mc_sfs /= num_reps
-    exp_sfs = expected_sfs(np.log10(params), [n - 1 for n in mc_sfs.shape], mu * seqlen)
-    import matplotlib.pyplot as plt
-    plt.plot(exp_sfs, mc_sfs, "o", color="black", markersize=4)
-    mx = exp_sfs.mean()
-    plt.axline((mx, mx), (mx+1,mx+1), linestyle="dashed", color="red")
-    plt.xlabel("moments sfs")
-    plt.ylabel("msprime sfs")
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.savefig("sanity-check.png")
-    plt.clf()
+    recomb = 1e-8
+    nA = 5
+    nB = 5
+    rng = np.random.default_rng(123)
 
-# sanity_check()
+    lb = np.array([5e2, 5e2, 5e2, 5e2, 1e-8, 1e-8])
+    ub = np.array([5e4, 5e4, 5e4, 5e4, 1e-3, 1e-3])
+    st = (lb + ub) / 2
+    # ------------------------------------------------
 
-#### now test it out
+    sims_dir = out_root / "sims"
+    plots_dir = out_root / "plots"
+    sims_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
-true_pars = np.array([1e4, 1e3, 2e4, 2e4, 1e-6, 1e-5])
-seqlen = 5e7
-mu = 1e-8
-ts = msprime.sim_ancestry(
-    samples={"A": 5, "B": 5},
-    sequence_length=seqlen,
-    recombination_rate=1e-8,
-    demography=msprime_model(*true_pars),
-    random_seed=1,
-)
-ts = msprime.sim_mutations(ts, rate=mu, random_seed=2)
+    true_mat = np.zeros((num_sims, 6))
+    fit_mat  = np.zeros((num_sims, 6))
 
-A = pop_id(ts, "A")
-B = pop_id(ts, "B")
+    for i in range(num_sims):
+        true_pars = sample_params_loguniform(rng, lb, ub)
+        true_mat[i] = true_pars
 
-obs_sfs = moments.Spectrum(
-    ts.allele_frequency_spectrum(
-        sample_sets=[list(ts.samples(population=A)), list(ts.samples(population=B))],
-        mode="site",
-        span_normalise=False,
-        polarised=True,
-    )
-)
+        sim_dir = sims_dir / f"sim_{i:04d}"
+        save_true_demes(sim_dir, true_pars)
+
+        ts = msprime.sim_ancestry(
+            samples={"A": nA, "B": nB},
+            sequence_length=seqlen,
+            recombination_rate=recomb,
+            demography=msprime_model(*true_pars),
+            random_seed=int(rng.integers(1, 2**31)),
+        )
+        ts = msprime.sim_mutations(ts, rate=mu)
+
+        A = pop_id(ts, "A")
+        B = pop_id(ts, "B")
+        obs_sfs = moments.Spectrum(
+            ts.allele_frequency_spectrum(
+                sample_sets=[list(ts.samples(A)), list(ts.samples(B))],
+                mode="site",
+                polarised=True,
+                span_normalise=False,
+            )
+        )
+
+        fitted = optimize_lbfgs(st, lb, ub, obs_sfs, mu * seqlen)
+        fit_mat[i] = fitted
+
+        (sim_dir / "fitted_params.json").write_text(
+            json.dumps(dict(zip(PARAM_NAMES, map(float, fitted))), indent=2)
+        )
+
+        print(f"[{i+1:>3}/{num_sims}] true={true_pars}  fitted={fitted}")
+
+    # =============================================================================
+    # Scatterplots across simulations
+    # =============================================================================
+
+    for j, name in enumerate(PARAM_NAMES):
+        x = true_mat[:, j]
+        y = fit_mat[:, j]
+
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.plot(x, y, "o", markersize=3)
+        lo = min(x.min(), y.min())
+        hi = max(x.max(), y.max())
+        ax.plot([lo, hi], [lo, hi], "--")
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel(f"True {name}")
+        ax.set_ylabel(f"Moments inferred {name}")
+        ax.set_title(f"{name}: inferred vs true")
+
+        fig.tight_layout()
+        fig.savefig(plots_dir / f"scatter_{name}.png", dpi=200)
+        plt.close(fig)
+
+    np.save(out_root / "true_params.npy", true_mat)
+    np.save(out_root / "fitted_params.npy", fit_mat)
+
+    print("\nDone.")
+    print(f"Per-sim outputs: {sims_dir}")
+    print(f"Scatterplots:    {plots_dir}")
 
 
-
-# optimize it
-lb = np.array([5e2, 5e2, 5e2, 5e2, 1e-8, 1e-8])
-ub = np.array([5e4, 5e4, 5e4, 5e4, 1e-3, 1e-3])
-st = lb / 2 + ub / 2
-
-fitted_pars, _, _ = optimize_lbfgs(st, lb, ub, obs_sfs, mu * seqlen, verbose=True)
-print(fitted_pars)
-print(true_pars)
-
-
-
-param_names = ["N_ANC", "N_A", "N_B", "T", "mAB", "mBA"]
-
-# grids: log-spaced for all (works fine since all params are positive)
-# (you can tweak per-parameter ranges if you want tighter plots)
-grid_specs = {
-    "N_ANC": (np.log10(lb[0]), np.log10(ub[0]), 51),
-    "N_A":   (np.log10(lb[1]), np.log10(ub[1]), 51),
-    "N_B":   (np.log10(lb[2]), np.log10(ub[2]), 51),
-    "T":     (np.log10(lb[3]), np.log10(ub[3]), 51),
-    "mAB":   (np.log10(lb[4]), np.log10(ub[4]), 51),
-    "mBA":   (np.log10(lb[5]), np.log10(ub[5]), 51),
-}
-
-for j, name in enumerate(param_names):
-    lo, hi, n = grid_specs[name]
-    grid = np.logspace(lo, hi, n)
-
-    loglik_surface = parameter_grid_loglik(
-        fitted_pars,
-        what_to_vary=j,
-        grid_of_values=grid,
-        observed_sfs=obs_sfs,
-        mutation_rate=mu * seqlen,
-    )
-
-    plt.figure()
-    plt.plot(grid, loglik_surface, "-o", markersize=3)  # default color
-    plt.axvline(x=true_pars[j], linestyle="--")        # true value marker (default color)
-    plt.xscale("log")
-    plt.ylabel("Loglikelihood")
-    plt.xlabel(name)
-    plt.title(f"1D loglik profile at MLE: vary {name}")
-
-    plt.tight_layout()
-    plt.savefig(f"loglik_surface_{name}.png")
-    plt.close()
+if __name__ == "__main__":
+    main()
