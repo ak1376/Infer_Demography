@@ -2,29 +2,19 @@
 """
 debug_moments_compare_two_formulations_backend.py
 
-Paired sims comparing two demes formulations:
+Paired sims comparing two demes formulations (IM symmetric):
 
 (1) WITH explicit ancestral deme "ANC"
-(2) NO ancestral deme (A carries ancestral epoch)
+(2) NO ancestral deme (YRI carries ancestral epoch)
 
 Simulation backends:
 - SIM_BACKEND="msprime"   : msprime.sim_ancestry + msprime.sim_mutations
 - SIM_BACKEND="stdpopsim" : stdpopsim.get_engine("msprime").simulate(model, contig, samples)
 
-Adds expected-SFS equivalence checks:
+Expected-SFS equivalence checks:
 - For each sim (same theta for both formulations), compute
     moments expected SFS from demes graph for each formulation
-  and save:
-    - expected_sfs_with_anc.npy / expected_sfs_no_anc.npy
-    - expected_sfs_diff.npy, expected_sfs_relerr.npy
-    - expected_sfs_compare.png (scatter, log-log)
-    - expected_sfs_relerr.png (heatmap of log10 rel err)
-    - expected_sfs_summary.json
-
-Also aggregates across sims (only when running BOTH formulations):
-- max rel err per sim plot
-- mean rel err per sim plot
-- pooled scatter across all sims and all entries
+  and save artifacts.
 
 CLI:
   --backend {msprime,stdpopsim}
@@ -35,8 +25,8 @@ CLI:
   --seqlen FLOAT
   --mu FLOAT
   --recomb FLOAT
-  --nA INT
-  --nB INT
+  --nYRI INT
+  --nCEU INT
 
 NOTE: SLiM is intentionally ignored.
 """
@@ -58,7 +48,10 @@ import numdifftools as nd
 import matplotlib.pyplot as plt
 
 
-PARAM_NAMES = ["N_ANC", "N_A", "N_B", "T", "mAB", "mBA"]
+POP1 = "YRI"
+POP2 = "CEU"
+
+PARAM_NAMES = ["N_anc", "N_YRI", "N_CEU", "T_split", "m"]
 
 
 # =============================================================================
@@ -115,58 +108,56 @@ def save_demes_graph_and_params(sim_dir: Path, g: demes.Graph, true_pars: np.nda
 # Two formulations: return (demes_graph, msprime_demography)
 # =============================================================================
 
-def build_with_anc(N_ANC, N_A, N_B, T, mAB, mBA) -> Tuple[demes.Graph, msprime.Demography]:
+def build_with_anc(N_anc, N_YRI, N_CEU, T_split, m) -> Tuple[demes.Graph, msprime.Demography]:
     """
     Explicit ancestral deme:
-      ANC (size N_ANC) until time T
-      splits into A (N_A) and B (N_B) at T
-      asymmetric migration between A and B after split
+      ANC (size N_anc) until time T_split
+      splits into YRI (N_YRI) and CEU (N_CEU) at T_split
+      symmetric migration between YRI and CEU after split (0..T_split)
     """
     b = demes.Builder(time_units="generations", generation_time=1)
 
-    b.add_deme("ANC", epochs=[dict(start_size=float(N_ANC), end_time=float(T))])
-    b.add_deme("A", ancestors=["ANC"], epochs=[dict(start_size=float(N_A), end_time=0)])
-    b.add_deme("B", ancestors=["ANC"], epochs=[dict(start_size=float(N_B), end_time=0)])
+    b.add_deme("ANC", epochs=[dict(start_size=float(N_anc), end_time=float(T_split))])
+    b.add_deme(POP1, ancestors=["ANC"], epochs=[dict(start_size=float(N_YRI), end_time=0)])
+    b.add_deme(POP2, ancestors=["ANC"], epochs=[dict(start_size=float(N_CEU), end_time=0)])
 
-    if float(mAB) > 0:
-        b.add_migration(source="A", dest="B", rate=float(mAB), start_time=float(T), end_time=0)
-    if float(mBA) > 0:
-        b.add_migration(source="B", dest="A", rate=float(mBA), start_time=float(T), end_time=0)
+    if float(m) > 0:
+        b.add_migration(source=POP1, dest=POP2, rate=float(m), start_time=float(T_split), end_time=0)
+        b.add_migration(source=POP2, dest=POP1, rate=float(m), start_time=float(T_split), end_time=0)
 
     g = b.resolve()
     demogr = msprime.Demography.from_demes(g)
     return g, demogr
 
 
-def build_no_anc(N_ANC, N_A, N_B, T, mAB, mBA) -> Tuple[demes.Graph, msprime.Demography]:
+def build_no_anc(N_anc, N_YRI, N_CEU, T_split, m) -> Tuple[demes.Graph, msprime.Demography]:
     """
     No ancestral deme:
-      A carries ancestral epoch pre-split:
-        - older than T: N_ANC
-        - T->0: N_A
-      B splits from A at T: N_B from T->0
-      asymmetric migration after split
+      YRI carries ancestral epoch pre-split:
+        - older than T_split: N_anc
+        - T_split->0: N_YRI
+      CEU splits from YRI at T_split: N_CEU from T_split->0
+      symmetric migration after split (0..T_split)
     """
     b = demes.Builder(time_units="generations", generation_time=1)
 
     b.add_deme(
-        "A",
+        POP1,
         epochs=[
-            dict(start_size=float(N_ANC), end_time=float(T)),
-            dict(start_size=float(N_A), end_time=0),
+            dict(start_size=float(N_anc), end_time=float(T_split)),  # ancestral epoch
+            dict(start_size=float(N_YRI), end_time=0),               # modern epoch
         ],
     )
     b.add_deme(
-        "B",
-        ancestors=["A"],
-        start_time=float(T),
-        epochs=[dict(start_size=float(N_B), end_time=0)],
+        POP2,
+        ancestors=[POP1],
+        start_time=float(T_split),
+        epochs=[dict(start_size=float(N_CEU), end_time=0)],
     )
 
-    if float(mAB) > 0:
-        b.add_migration(source="A", dest="B", rate=float(mAB), start_time=float(T), end_time=0)
-    if float(mBA) > 0:
-        b.add_migration(source="B", dest="A", rate=float(mBA), start_time=float(T), end_time=0)
+    if float(m) > 0:
+        b.add_migration(source=POP1, dest=POP2, rate=float(m), start_time=float(T_split), end_time=0)
+        b.add_migration(source=POP2, dest=POP1, rate=float(m), start_time=float(T_split), end_time=0)
 
     g = b.resolve()
     demogr = msprime.Demography.from_demes(g)
@@ -191,8 +182,8 @@ def simulate_ts(
     seqlen: float,
     mu: float,
     recomb: float,
-    nA: int,
-    nB: int,
+    nYRI: int,
+    nCEU: int,
     seed: int,
     experiment_config: Optional[Dict[str, Any]] = None,
 ):
@@ -200,16 +191,11 @@ def simulate_ts(
     Return a mutated tree sequence.
 
     - msprime backend: uses demogr + seqlen/recomb + then adds mutations at rate mu.
-    - stdpopsim backend: uses define_sps_model(g) + a contig.
-      If experiment_config and _contig_from_cfg exist, uses them.
-      Else uses sp.get_contig(...) fallback.
-
-    Note: In stdpopsim(msprime engine), mutations are added according to contig's mutation rate,
-    so we DO NOT add mutations again.
+    - stdpopsim backend: uses define_sps_model(g) + a contig (optional pipeline contig builder).
     """
     if sim_backend == "msprime":
         ts = msprime.sim_ancestry(
-            samples={"A": nA, "B": nB},
+            samples={POP1: nYRI, POP2: nCEU},
             sequence_length=float(seqlen),
             recombination_rate=float(recomb),
             demography=demogr,
@@ -230,7 +216,7 @@ def simulate_ts(
             ) from e
 
         model = define_sps_model(g)
-        samples = {"A": int(nA), "B": int(nB)}
+        samples = {POP1: int(nYRI), POP2: int(nCEU)}
 
         contig = None
         if experiment_config is not None:
@@ -251,7 +237,6 @@ def simulate_ts(
                     recombination_rate=float(recomb),
                 )
             except TypeError:
-                # Older stdpopsim versions ignore recombination_rate kwarg
                 contig = sp.get_contig(
                     chromosome=None,
                     length=float(seqlen),
@@ -270,12 +255,9 @@ def simulate_ts(
 # =============================================================================
 
 def expected_sfs_from_graph(g: demes.Graph, sample_size, theta: float) -> moments.Spectrum:
-    """
-    Expected SFS from demes graph.
-    """
     return moments.Spectrum.from_demes(
         g,
-        sampled_demes=["A", "B"],
+        sampled_demes=[POP1, POP2],
         sample_sizes=sample_size,
         theta=float(theta),
     )
@@ -288,10 +270,6 @@ def compare_expected_sfs_and_save(
     out_dir: Path,
     eps: float = 1e-30,
 ) -> Dict[str, float]:
-    """
-    Save per-sim expected-SFS comparison artifacts into out_dir.
-    Returns summary stats.
-    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     exp_with = np.asarray(exp_with, dtype=float)
@@ -332,8 +310,8 @@ def compare_expected_sfs_and_save(
     fig, ax = plt.subplots(figsize=(6, 5))
     img = ax.imshow(np.log10(relerr + eps), aspect="auto")
     ax.set_title("log10(relative error) of expected SFS")
-    ax.set_xlabel("B freq bin")
-    ax.set_ylabel("A freq bin")
+    ax.set_xlabel(f"{POP2} freq bin")
+    ax.set_ylabel(f"{POP1} freq bin")
     fig.colorbar(img, ax=ax, shrink=0.8)
     fig.tight_layout()
     fig.savefig(out_dir / "expected_sfs_relerr.png", dpi=200)
@@ -353,18 +331,18 @@ def compare_expected_sfs_and_save(
 # Moments likelihood + optimization
 # =============================================================================
 
-def expected_sfs(log10_params, sample_size, mutation_rate, builder_fn):
+def expected_sfs(log10_params, sample_size, mut_rate_times_L, builder_fn):
     """
     Expected SFS used inside optimization.
-    We compute expectation directly from demes graph produced by builder_fn.
+    mut_rate_times_L == mu * L (so theta = 4 * N_anc * mu * L)
     """
-    N_ANC, N_A, N_B, T, mAB, mBA = 10 ** log10_params
-    g, _ = builder_fn(N_ANC, N_A, N_B, T, mAB, mBA)
+    N_anc, N_YRI, N_CEU, T_split, m = 10 ** log10_params
+    g, _ = builder_fn(N_anc, N_YRI, N_CEU, T_split, m)
     return moments.Spectrum.from_demes(
         g,
-        sampled_demes=["A", "B"],
+        sampled_demes=[POP1, POP2],
         sample_sizes=sample_size,
-        theta=4 * float(N_ANC) * float(mutation_rate),
+        theta=4 * float(N_anc) * float(mut_rate_times_L),
     )
 
 
@@ -373,7 +351,7 @@ def optimize_lbfgs(
     lower_bounds,
     upper_bounds,
     observed_sfs,
-    mutation_rate,
+    mut_rate_times_L,
     builder_fn,
     verbose=False,
     rtol=1e-8,
@@ -382,7 +360,7 @@ def optimize_lbfgs(
     sample_size = [n - 1 for n in observed_sfs.shape]
 
     def loglikelihood(log10_params):
-        exp_sfs = expected_sfs(log10_params, sample_size, mutation_rate, builder_fn)
+        exp_sfs = expected_sfs(log10_params, sample_size, mut_rate_times_L, builder_fn)
         return np.sum(np.log(exp_sfs) * observed_sfs - exp_sfs)
 
     def gradient(log10_params):
@@ -418,8 +396,8 @@ def simulate_and_fit_one(
     seqlen: float,
     mu: float,
     recomb: float,
-    nA: int,
-    nB: int,
+    nYRI: int,
+    nCEU: int,
     lb: np.ndarray,
     ub: np.ndarray,
     st: np.ndarray,
@@ -434,11 +412,10 @@ def simulate_and_fit_one(
     """
     g, demogr = builder_fn(*true_pars)
 
-    # save graph + params
     save_demes_graph_and_params(sim_dir, g, true_pars)
 
-    # expected SFS for this formulation (for model equivalence checks)
-    sample_size = [int(nA) - 1, int(nB) - 1]
+    # expected SFS for this formulation (equivalence checks)
+    sample_size = [int(nYRI) - 1, int(nCEU) - 1]
     theta = 4 * float(true_pars[0]) * (float(mu) * float(seqlen))
     exp = np.asarray(expected_sfs_from_graph(g, sample_size=sample_size, theta=theta), dtype=float)
     np.save(sim_dir / "expected_sfs.npy", exp)
@@ -450,24 +427,27 @@ def simulate_and_fit_one(
         seqlen=seqlen,
         mu=mu,
         recomb=recomb,
-        nA=nA,
-        nB=nB,
+        nYRI=nYRI,
+        nCEU=nCEU,
         seed=seed,
         experiment_config=experiment_config,
     )
 
-    A = pop_id(ts, "A")
-    B = pop_id(ts, "B")
+    YRI = pop_id(ts, POP1)
+    CEU = pop_id(ts, POP2)
+
     obs_sfs = moments.Spectrum(
         ts.allele_frequency_spectrum(
-            sample_sets=[list(ts.samples(A)), list(ts.samples(B))],
+            sample_sets=[list(ts.samples(YRI)), list(ts.samples(CEU))],
             mode="site",
             polarised=True,
             span_normalise=False,
         )
     )
 
-    fitted = optimize_lbfgs(st, lb, ub, obs_sfs, float(mu) * float(seqlen), builder_fn, verbose=verbose_opt)
+    fitted = optimize_lbfgs(
+        st, lb, ub, obs_sfs, float(mu) * float(seqlen), builder_fn, verbose=verbose_opt
+    )
 
     (sim_dir / "fitted_params.json").write_text(
         json.dumps({k: float(v) for k, v in zip(PARAM_NAMES, fitted)}, indent=2),
@@ -585,7 +565,7 @@ def plot_expected_sfs_pooled_scatter(pooled_with, pooled_no, out_dir: Path):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Compare moments inference under two demes formulations (with_anc vs no_anc)."
+        description="Compare moments inference under two IM-symmetric demes formulations (with_anc vs no_anc)."
     )
     p.add_argument("--backend", choices=["msprime", "stdpopsim"], default="msprime")
     p.add_argument("--formulations", choices=["with_anc", "no_anc", "both"], default="both")
@@ -595,8 +575,8 @@ def parse_args():
     p.add_argument("--seqlen", type=float, default=1e6)
     p.add_argument("--mu", type=float, default=1e-8)
     p.add_argument("--recomb", type=float, default=1e-8)
-    p.add_argument("--nA", type=int, default=5)
-    p.add_argument("--nB", type=int, default=5)
+    p.add_argument("--nYRI", type=int, default=5)
+    p.add_argument("--nCEU", type=int, default=5)
     return p.parse_args()
 
 
@@ -613,24 +593,22 @@ def main():
     out_root = Path(args.out_root)
     plots = ensure_dir(out_root / "plots")
 
-    # user bounds + start
-    lb = np.array([5e2, 5e2, 5e2, 5e2, 1e-8, 1e-8], dtype=float)
-    ub = np.array([5e4, 5e4, 5e4, 5e4, 1e-3, 1e-3], dtype=float)
+    # user bounds + start (log-uniform sampling)
+    # order: N_anc, N_YRI, N_CEU, T_split, m
+    lb = np.array([5e2, 5e2, 5e2, 5e2, 1e-8], dtype=float)
+    ub = np.array([5e4, 5e4, 5e4, 5e4, 1e-3], dtype=float)
     st = (lb + ub) / 2
 
     seqlen = float(args.seqlen)
     mu = float(args.mu)
     recomb = float(args.recomb)
-    nA = int(args.nA)
-    nB = int(args.nB)
+    nYRI = int(args.nYRI)
+    nCEU = int(args.nCEU)
 
     rng = np.random.default_rng(int(args.seed))
 
-    # Optional: if you want stdpopsim to use your pipeline contig builder,
-    # pass a config dict (otherwise fallback contig is used).
     experiment_config: Optional[Dict[str, Any]] = None
 
-    # Decide what to run
     if args.formulations == "both":
         run_formulations = ["with_anc", "no_anc"]
         do_pairwise = True
@@ -638,15 +616,13 @@ def main():
         run_formulations = [args.formulations]
         do_pairwise = False
 
-    # Setup dirs + arrays per formulation
     fit = {}
     for f in run_formulations:
         ensure_dir(out_root / f / "sims")
-        fit[f] = np.zeros((num_sims, 6), dtype=float)
+        fit[f] = np.zeros((num_sims, len(PARAM_NAMES)), dtype=float)
 
-    true_mat = np.zeros((num_sims, 6), dtype=float)
+    true_mat = np.zeros((num_sims, len(PARAM_NAMES)), dtype=float)
 
-    # expected-SFS comparison aggregates only if both
     if do_pairwise:
         max_relerrs = np.zeros(num_sims, dtype=float)
         mean_relerrs = np.zeros(num_sims, dtype=float)
@@ -654,14 +630,12 @@ def main():
         pooled_no = []
 
     for i in range(num_sims):
-        # sample theta ONCE per sim (shared across formulations)
         theta = sample_params_loguniform(rng, lb, ub)
         true_mat[i, :] = theta
 
-        # base seed differs per sim; formulation-specific offsets for reproducibility
         seed_base = int(rng.integers(1, 2**31 - 1000))
 
-        results = {}  # f -> (fitted, graph, expected_sfs)
+        results = {}
         for f in run_formulations:
             builder_fn = FORMULATION_BUILDERS[f]
             sim_dir = out_root / f / "sims" / f"sim_{i:04d}"
@@ -674,8 +648,8 @@ def main():
                 seqlen=seqlen,
                 mu=mu,
                 recomb=recomb,
-                nA=nA,
-                nB=nB,
+                nYRI=nYRI,
+                nCEU=nCEU,
                 lb=lb,
                 ub=ub,
                 st=st,
@@ -688,12 +662,10 @@ def main():
             fit[f][i, :] = fitted
             results[f] = (fitted, g, exp)
 
-        # expected SFS compare only if we ran both
         if do_pairwise:
             exp_with = results["with_anc"][2]
             exp_no = results["no_anc"][2]
 
-            # Save comparison artifacts into BOTH dirs (convenience)
             sim_dir_with = out_root / "with_anc" / "sims" / f"sim_{i:04d}"
             sim_dir_no = out_root / "no_anc" / "sims" / f"sim_{i:04d}"
 
@@ -705,15 +677,12 @@ def main():
             pooled_with.append(np.asarray(exp_with).ravel())
             pooled_no.append(np.asarray(exp_no).ravel())
 
-        print(f"[{i+1:>3}/{num_sims}] theta={theta}")
+        print(f"[{i+1:>3}/{num_sims}] true={theta}")
         for f in run_formulations:
             print(f"    {f} fit: {fit[f][i, :]}")
         if do_pairwise:
-            print(
-                f"    expected-SFS max_relerr={max_relerrs[i]:.3e}, mean_relerr={mean_relerrs[i]:.3e}"
-            )
+            print(f"    expected-SFS max_relerr={max_relerrs[i]:.3e}, mean_relerr={mean_relerrs[i]:.3e}")
 
-    # Save shared truth + per-formulation fits
     ensure_dir(out_root)
     np.save(out_root / "true_params.npy", true_mat)
 
@@ -721,10 +690,8 @@ def main():
         np.save(out_root / f"fit_{f}.npy", fit[f])
         scatter_true_vs_fit(true_mat, fit[f], plots, prefix=f"{f.upper()}_{SIM_BACKEND}")
 
-    # Pairwise plots only if both
     if do_pairwise:
         scatter_fit_vs_fit(fit["with_anc"], fit["no_anc"], plots)
-
         plot_expected_sfs_error_across_sims(max_relerrs, mean_relerrs, plots)
 
         pooled_with_arr = np.concatenate(pooled_with) if len(pooled_with) else np.array([])
