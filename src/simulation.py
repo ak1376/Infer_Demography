@@ -6,7 +6,6 @@ import pickle
 from pathlib import Path
 
 import demes
-import msprime
 import numpy as np
 import stdpopsim as sps
 import tskit
