@@ -1,56 +1,56 @@
 # moments_inference.py ── “split-models” helper mirroring dadi version
 # -------------------------------------------------------------------
-# ➊ Uses the same parameter-dict convention as dadi_inference.py.
-# ➋ Grid-points (pts) are *not* passed to moments.Spectrum.from_demes()
-#    because that function doesn’t accept them.  Moments chooses
-#    integration points internally.
-# ➌ Lower/upper bounds for the optimiser are taken directly from the
-#    JSON priors, so you edit them only in one place.
-#
-# NOTE:  scatter-plot helper is unchanged and kept verbatim.
+# Changes vs your current version:
+#   1) demes order comes from sfs.pop_ids (NOT from priors or diploid sample_sizes)
+#   2) haploid sample sizes passed to moments are [n-1 for n in sfs.shape] (debug-script match)
+#   3) composite Poisson log-likelihood uses log(exp + eps) to avoid -inf
+#   4) saves fitted expected SFS to out_dir if provided in experiment_config
+#   5) keeps nlopt LD_LBFGS + log10 parameterization exactly like your debug script
 
 from __future__ import annotations
+
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Callable, Any
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm, colors
 import moments
+import nlopt
+import numdifftools as nd
 
 
 # ───────────────────────── diffusion helper ────────────────────────────
+# NOTE: This helper is now made consistent with the debug-script convention:
+# sample_sizes passed to moments.from_demes are HAPLOID sizes = (axis_len - 1).
 def _diffusion_sfs(
     init_vec: np.ndarray,
-    demo_model,  # callable(param_dict) → demes.Graph
+    demo_model: Callable[[Dict[str, float]], Any],  # callable(param_dict) → demes.Graph
     param_names: List[str],
-    sample_sizes: OrderedDict[str, int],
+    sampled_demes: List[str],
+    haploid_sizes: List[int],
     experiment_config: Dict,
 ) -> moments.Spectrum:
     """
-    Build a frequency spectrum for a given parameter vector (`init_vec`).
-    No `pts` argument is supplied – moments picks a sensible grid itself.
+    Build a moments expected SFS for a given parameter vector.
+    Uses debug-script conventions:
+      - sampled_demes ordering is explicit (typically sfs.pop_ids)
+      - sample_sizes are haploid sizes (axis_len - 1)
+      - theta = 4 * N0 * mu * L, where N0 is param_names[0]
     """
-    p_dict = dict(zip(param_names, init_vec))
-    # print(f"Fitting parameters: {p_dict}")
-
+    p_dict = dict(zip(param_names, map(float, init_vec)))
+    print("p_dict being passed to demo_model:", p_dict)
     graph = demo_model(p_dict)
 
-    haploid_sizes = [2 * n for n in sample_sizes.values()]
-    sampled_demes = list(sample_sizes.keys())
-
-    theta = (
-        p_dict[param_names[0]]  # N0 as reference
-        * 4
-        * experiment_config["mutation_rate"]
-        * experiment_config["genome_length"]
-    )
+    muL = float(experiment_config["mutation_rate"]) * float(experiment_config["genome_length"])
+    N0 = float(p_dict[param_names[0]])
+    theta = 4.0 * N0 * muL
 
     return moments.Spectrum.from_demes(
         graph,
-        sample_sizes=haploid_sizes,
         sampled_demes=sampled_demes,
+        sample_sizes=haploid_sizes,
         theta=theta,
     )
 
@@ -68,26 +68,11 @@ def save_scatterplots(
     """
     Draw one scatter panel per parameter, coloured by log-likelihood, and
     place a single colour-bar outside the grid.
-
-    Parameters
-    ----------
-    true_vecs, est_vecs : list[dict]
-        Matching dictionaries of “true” and estimated parameter values.
-    ll_vec : list[float]
-        Log-likelihoods (one per point) – used only for colour scale.
-    param_names : list[str]
-        Order of parameters to plot.
-    outfile : pathlib.Path
-        PNG file to write.
-    label : str, default "moments"
-        Text prefix on the y–axis (“moments N0”, …).
     """
-    # ── colour mapping ────────────────────────────────────────────────
     norm = colors.Normalize(vmin=min(ll_vec), vmax=max(ll_vec))
     cmap = cm.get_cmap("viridis")
     colour = cmap(norm(ll_vec))
 
-    # ── scatter panels ────────────────────────────────────────────────
     n = len(param_names)
     fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
 
@@ -102,16 +87,14 @@ def save_scatterplots(
         ax.set_xlabel(f"true {p}")
         ax.set_ylabel(f"{label} {p}")
 
-    # ── reserve space & add colour-bar axis ───────────────────────────
-    fig.subplots_adjust(right=0.88)  # grid occupies left 88 %
-    cax = fig.add_axes([0.90, 0.15, 0.02, 0.7])  # [l, b, w, h] in figure coords
+    fig.subplots_adjust(right=0.88)
+    cax = fig.add_axes([0.90, 0.15, 0.02, 0.7])
 
     fig.colorbar(
         cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, label="log-likelihood"
     )
 
-    # ── final tweaks & save ───────────────────────────────────────────
-    fig.tight_layout(rect=[0, 0, 0.88, 1])  # keep panels inside the grid box
+    fig.tight_layout(rect=[0, 0, 0.88, 1])
     fig.savefig(outfile, dpi=300)
     plt.close(fig)
 
@@ -119,229 +102,110 @@ def save_scatterplots(
 # ───────────────────────── optimisation wrapper ────────────────────────
 def fit_model(
     sfs,
-    start_dict: Dict[str, float],  # initial parameter *dict*
-    demo_model,  # callable → demes.Graph
+    start_vec: np.ndarray,
+    demo_model: Callable[[Dict[str, float]], Any],  # callable → demes.Graph
     experiment_config: Dict,
-    *,
-    sampled_params: Dict | None = None,
-    fixed_params: Dict[str, float] | None = None,
 ) -> Tuple[List[np.ndarray], List[float]]:
     """
-    Run a **single** moments optimisation and return the best parameter
-    vector / log‑likelihood wrapped in 1‑element lists.
+    Run a **single** moments optimisation (nlopt.LD_LBFGS) in log10 space,
+    matching your debugging script.
 
-    Args:
-        sfs: Observed site frequency spectrum
-        start_dict: Starting parameter values
-        demo_model: Demographic model function
-        experiment_config: Configuration dictionary
-        sampled_params: Legacy parameter for bottleneck model (kept for compatibility)
-        fixed_params: Dictionary of parameter names and values to fix during optimization
+    Also saves the final fitted expected SFS if experiment_config["out_dir"] is set.
     """
-    # ----- pull settings ------------------------------------------------
+    # ----- settings / priors ------------------------------------------
     priors = experiment_config["priors"]
-    # # we keep TOP_K in the cfg for symmetry, but enforce it to be 1 here
-    # top_k  = experiment_config.get("top_k", 1)
-    # assert top_k == 1, "Using one optimiser run ⇒ top_k must be 1"
+    param_names = list(priors.keys())  # must match demo_model expected ordering
 
-    # ----- order & initial vector --------------------------------------
-    param_names = list(start_dict.keys())
-    start_vec = np.array([start_dict[p] for p in param_names])
+    lb_full = np.array([priors[p][0] for p in param_names], dtype=float)
+    ub_full = np.array([priors[p][1] for p in param_names], dtype=float)
 
-    # ----- sample sizes (convert SFS axes → diploid counts) -------------
-    sample_sizes = OrderedDict(
-        (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
-    )
+    # ----- match debug script sample-size semantics --------------------
+    # moments.from_demes expects HAPLOID sample sizes (n_hap = axis_len - 1)
+    haploid_sizes = [int(n) - 1 for n in sfs.shape]
 
-    # --- PARAM → GRAPH sanity check -----------------------------------
-    p_dict = dict(zip(param_names, start_vec))
-    g = demo_model(p_dict)
+    # very important: keep deme order aligned to the observed SFS
+    # (this is the cleanest + most consistent convention)
+    sampled_demes = list(getattr(sfs, "pop_ids", []))
+    if not sampled_demes:
+        raise ValueError("sfs.pop_ids is missing/empty; cannot determine sampled_demes order.")
 
-    def _list_migs(graph):
-        rows = []
-        for m in getattr(graph, "migrations", []):
-            # demes.Graph has either 'demes=[a,b]' (old) or (source,dest) (new)
-            src = getattr(m, "source", None)
-            dst = getattr(m, "dest", None)
-            if src is None or dst is None:
-                # older demes uses 'demes' 2-list
-                pair = getattr(m, "demes", None)
-                if pair:
-                    src, dst = pair[0], pair[1]
-            rate = getattr(m, "rate", None)
-            rows.append((src, dst, rate))
-        return rows
+    # ----- constants ---------------------------------------------------
+    muL = float(experiment_config["mutation_rate"]) * float(experiment_config["genome_length"])
+    eps = float(experiment_config.get("moments_ll_eps", 1e-300))
+    ftol_rel = float(experiment_config.get("nlopt_ftol_rel", 1e-8))
 
-    print("[CHECK] param_names:", param_names)
-    print("[CHECK] start_vec  :", start_vec)
-    print("[CHECK] fixed_params:", fixed_params if fixed_params else {})
-    print("[CHECK] migrations in graph (src→dst, rate):", _list_migs(g))
+    # ----- expected SFS under params (log10 space) ---------------------
+    def expected_sfs_from_log10(log10_params: np.ndarray) -> moments.Spectrum:
+        params = 10.0 ** np.asarray(log10_params, dtype=float)
+        init_vec = np.asarray(params, dtype=float)
 
-    # ----- bounds from priors ------------------------------------------
-    lower_bounds = [priors[p][0] for p in param_names]
-    upper_bounds = [priors[p][1] for p in param_names]
-
-    # ----- single optimisation call ------------------------------------
-    import datetime
-    from pathlib import Path
-
-    log_dir = Path(experiment_config.get("log_dir", ".")) / "moments"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "optim_single.txt"
-
-    # (optional) add a small perturbation; remove if you want deterministic starts
-    seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
-
-    # Handle fixed parameters ----------------------------------------------
-    import inference_utils
-
-    fixed_params_list = None
-    if fixed_params:
-        # Use flexible parameter fixing
-        free_indices, fixed_indices, _ = inference_utils.build_fixed_param_mapper(
-            param_names, fixed_params
+        # use the unified helper so conventions are identical everywhere
+        return _diffusion_sfs(
+            init_vec=init_vec,
+            demo_model=demo_model,
+            param_names=param_names,
+            sampled_demes=sampled_demes,
+            haploid_sizes=haploid_sizes,
+            experiment_config=experiment_config,
         )
 
-        # Validate bounds for fixed parameters
-        inference_utils.validate_fixed_params_bounds(
-            fixed_params, param_names, lower_bounds, upper_bounds
-        )
+    # ----- composite Poisson log-likelihood (debug-script match) -------
+    def loglikelihood(log10_params: np.ndarray) -> float:
+        exp_sfs = expected_sfs_from_log10(log10_params)
+        exp_arr = np.asarray(exp_sfs, dtype=float)
+        obs_arr = np.asarray(sfs, dtype=float)
+        return float(np.sum(np.log(exp_arr + eps) * obs_arr - exp_arr))
 
-        # Create fixed params list for moments
-        fixed_params_list = inference_utils.create_fixed_params_list_for_moments(
-            param_names, fixed_params
-        )
+    grad_fun = nd.Gradient(loglikelihood, n=1, step=1e-4)
 
-        print(f"  fixing parameters: {fixed_params}")
+    def objective(x, grad):
+        ll = loglikelihood(x)
+        if grad.size > 0:
+            grad[:] = grad_fun(x)
+        return ll
 
-    elif experiment_config["demographic_model"] == "bottleneck" and sampled_params:
-        # Legacy bottleneck-specific fixing (kept for backwards compatibility)
-        fixed_params_list = [
-            sampled_params.get("N0"),
-            sampled_params.get("N_bottleneck"),
-            None,
-            None,
-            None,
-        ]
+    # Checking
+    print("param_names:", param_names)
+    print("start_vec:", start_vec)
+    print("lb:", lb_full)
+    print("ub:", ub_full)
+    print("sfs type:", type(sfs))
+    print("sfs.pop_ids:", getattr(sfs, "pop_ids", None))
+    print("sfs.shape:", sfs.shape)
+    print("haploid_sizes:", haploid_sizes)
+    print("sampled_demes used:", sampled_demes)
 
-    # Custom NLopt optimization (based on original sfs_optimize_cli.py patterns)
-    import datetime
-    import nlopt
-    import numdifftools as nd
-    from pathlib import Path
+    # sanity: expected SFS at start
+    exp0 = expected_sfs_from_log10(np.log10(start_vec))
+    print("exp0 min/max:", np.min(exp0), np.max(exp0), "zeros:", np.sum(np.asarray(exp0)==0))
 
-    log_dir = Path(experiment_config.get("log_dir", ".")) / "moments"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "optim_single.txt"
 
-    # (optional) add a small perturbation; remove if you want deterministic starts
-    seed_vec = moments.Misc.perturb_params(start_vec, fold=0.1)
+    # ----- nlopt (LBFGS) in log10 space --------------------------------
+    x0 = np.log10(np.asarray(start_vec, dtype=float))
+    lb = np.log10(lb_full)
+    ub = np.log10(ub_full)
 
-    # Convert to numpy arrays
-    lb_full = np.array(lower_bounds, float)
-    ub_full = np.array(upper_bounds, float)
-    start_full = np.clip(seed_vec, lb_full, ub_full)
+    opt = nlopt.opt(nlopt.LD_LBFGS, len(param_names))
+    opt.set_lower_bounds(lb)
+    opt.set_upper_bounds(ub)
+    opt.set_max_objective(objective)
+    opt.set_ftol_rel(ftol_rel)
 
-    # Prepare fixed parameters
-    fixed_by_name = fixed_params if fixed_params else {}
+    x_hat = opt.optimize(x0)  # log10 params
+    ll_val = float(opt.last_optimum_value())
+    opt_params = 10.0 ** np.asarray(x_hat, dtype=float)  # natural-space params
 
-    # Build parameter packing for fixed parameters
-    fixed_idx = [i for i, n in enumerate(param_names) if n in fixed_by_name]
-    free_idx = [i for i, n in enumerate(param_names) if n not in fixed_by_name]
+    # ----- fitted expected SFS under the optimized params --------------
+    fitted_sfs = expected_sfs_from_log10(np.log10(opt_params))
 
-    # Initialize full parameter vector with fixed values
-    x_full0 = start_full.copy()
-    for i in fixed_idx:
-        x_full0[i] = float(fixed_by_name[param_names[i]])
+    # Save if out_dir provided
+    out_dir = experiment_config.get("out_dir", None)
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        np.save(out_dir / "moments_fitted_expected_sfs.npy", np.asarray(fitted_sfs, dtype=float))
 
-    # Validate fixed parameter bounds
-    for i in fixed_idx:
-        v = x_full0[i]
-        if not (lb_full[i] <= v <= ub_full[i]):
-            raise ValueError(
-                f"Fixed value {param_names[i]}={v} outside bounds [{lb_full[i]}, {ub_full[i]}]."
-            )
-
-    print(f"  fixing parameters: {fixed_by_name}")
-
-    # If all parameters are fixed, just evaluate and return
-    if len(free_idx) == 0:
-        opt_params = x_full0
-        expected = _diffusion_sfs(
-            opt_params, demo_model, param_names, sample_sizes, experiment_config
-        )
-        ll_val = float(np.sum(sfs * np.log(np.maximum(expected, 1e-300)) - expected))
-    else:
-        # Prepare free parameter optimization
-        lb_free = np.array([lb_full[i] for i in free_idx], float)
-        ub_free = np.array([ub_full[i] for i in free_idx], float)
-        x0_free = np.array([x_full0[i] for i in free_idx], float)
-
-        def pack_free_to_full(x_free):
-            x_full = x_full0.copy()
-            for j, i in enumerate(free_idx):
-                x_full[i] = float(x_free[j])
-            return x_full
-
-        def obj_free_log10(xlog10_free):
-            """Objective function in log10 space for free parameters"""
-            x_free = 10.0 ** np.asarray(xlog10_free, float)
-            x_full = pack_free_to_full(x_free)
-            try:
-                expected = _diffusion_sfs(
-                    x_full, demo_model, param_names, sample_sizes, experiment_config
-                )
-                expected = np.maximum(expected, 1e-300)
-                ll = float(np.sum(sfs * np.log(expected) - expected))
-                return ll
-            except Exception as e:
-                print(f"Error in objective: {e}")
-                return -np.inf
-
-        # Finite difference gradient
-        grad_fn = nd.Gradient(obj_free_log10, step=1e-4)
-
-        def nlopt_objective(xlog10_free, grad):
-            ll = obj_free_log10(xlog10_free)
-            if grad.size > 0:
-                grad[:] = grad_fn(xlog10_free)
-            print(
-                f"[LL={ll:.6g}] log10_free={np.array2string(np.asarray(xlog10_free), precision=4)}"
-            )
-            return ll
-
-        # Set up NLopt optimizer
-        opt = nlopt.opt(nlopt.LD_LBFGS, len(free_idx))
-        opt.set_lower_bounds(np.log10(lb_free))
-        opt.set_upper_bounds(np.log10(ub_free))
-        opt.set_max_objective(nlopt_objective)
-        opt.set_ftol_rel(1e-8)
-        opt.set_maxeval(500)
-
-        try:
-            x_free_hat_log10 = opt.optimize(np.log10(x0_free))
-            ll_val = opt.last_optimum_value()
-            status = opt.last_optimize_result()
-        except Exception as e:
-            print(f"NLopt optimization failed: {e}")
-            x_free_hat_log10 = np.log10(x0_free)
-            ll_val = obj_free_log10(x_free_hat_log10)
-            status = nlopt.FAILURE
-
-        # Convert back to full parameter space
-        x_free_hat = 10.0**x_free_hat_log10
-        opt_params = pack_free_to_full(x_free_hat)
-
-    # write short optimiser log
-    log_file.write_text(
-        "# moments custom NLopt optimisation\n"
-        f"# finished: {datetime.datetime.now().isoformat(timespec='seconds')}\n"
-        f"# status: {status}\n"
-        f"# best_ll: {ll_val}\n"
-        f"# opt_params: {opt_params}\n"
-    )
-
-    # ----- wrap & return ------------------------------------------------
-    best_params = [opt_params]  # lists of length 1
+    # ----- wrap & return ----------------------------------------------
+    best_params = [opt_params]  # list length 1
     best_lls = [ll_val]
     return best_params, best_lls

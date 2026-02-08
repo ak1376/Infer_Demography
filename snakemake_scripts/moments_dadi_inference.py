@@ -82,9 +82,10 @@ def main() -> None:
         config_file=args.config,
         model_py=args.model_py,
         outdir=args.outdir,
+        ground_truth=args.ground_truth, # This is optional and can be None. When evaluating on real data you won't have ground truth params.
         generate_profiles=args.generate_profiles,
         profile_grid_points=args.profile_grid_points,
-        verbose=args.verbose,
+        verbose=args.verbose
     )
 
 

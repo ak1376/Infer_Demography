@@ -101,7 +101,7 @@ rule all:
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",   sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl", sid=SIM_IDS, opt=OPTIMS),
-            expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",   sid=SIM_IDS, opt=OPTIMS),
+            # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",   sid=SIM_IDS, opt=OPTIMS),
 
             ## Cleanup completion markers (simulated)
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
