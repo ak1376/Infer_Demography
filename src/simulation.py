@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 from src.demes_models import (  # noqa: E402
     bottleneck_model,
     IM_symmetric_model,
-    split_migration_model,
+    IM_asymmetric_model,
     drosophila_three_epoch,
     split_migration_growth_model,
     OOA_three_pop_Gutenkunst,
@@ -95,6 +95,10 @@ def simulation_runner(
     seed = experiment_config.get("seed", None)
     sel = experiment_config.get("selection") or {}
     contig = _contig_from_cfg(experiment_config, sel)
+    print("contig.length:", contig.length)
+    print("contig.mutation_rate:", contig.mutation_rate)
+    print("contig.recombination_map.mean_rate:", contig.recombination_map.mean_rate)
+
 
 
     if experiment_config.get("engine") == "slim":
@@ -163,6 +167,11 @@ def create_SFS(ts: tskit.TreeSequence) -> moments.Spectrum:
     )
     sfs = moments.Spectrum(arr)
     sfs.pop_ids = pop_ids
+
+    print("ts.sequence_length:", ts.sequence_length)
+    print("ts.num_sites:", ts.num_sites)
+    print("sum(obs_sfs):", float(np.sum(np.asarray(sfs))))
+
     return sfs
 
 
@@ -321,6 +330,45 @@ def run_one_simulation_to_dir(
     ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
     sfs = create_SFS(ts)
 
+    # --- DEBUG: site vs branch vs moments expectation ---
+
+    # Reconstruct sample_sets and pop_ids EXACTLY like create_SFS
+    sample_sets = []
+    pop_ids = []
+    for pop in ts.populations():
+        samps = ts.samples(population=pop.id)
+        if len(samps):
+            sample_sets.append(samps)
+            meta = pop.metadata if isinstance(pop.metadata, dict) else {}
+            pop_ids.append(meta.get("name", f"pop{pop.id}"))
+
+    # Site-mode SFS (what you already save)
+    arr_site = ts.allele_frequency_spectrum(
+        sample_sets=sample_sets,
+        mode="site",
+        polarised=True,
+        span_normalise=False,
+    )
+    sfs_site = moments.Spectrum(arr_site)
+    sfs_site.pop_ids = pop_ids
+
+    # Branch-mode SFS (expected mutations on realized genealogy)
+    arr_branch = ts.allele_frequency_spectrum(
+        sample_sets=sample_sets,
+        mode="branch",
+        polarised=True,
+        span_normalise=False,
+    )
+
+    mu = float(sim_cfg["mutation_rate"])
+    arr_branch = arr_branch * mu
+    sfs_branch = moments.Spectrum(arr_branch)
+    sfs_branch.pop_ids = pop_ids
+
+    print("DEBUG sum(site):", float(arr_site.sum()))
+    print("DEBUG sum(branch * mu):", float(arr_branch.sum()))
+
+
     # save artifacts
     (out_dir / "sampled_params.pkl").write_bytes(pickle.dumps(sampled_params))
     (out_dir / "SFS.pkl").write_bytes(pickle.dumps(sfs))
@@ -360,8 +408,8 @@ def build_demes_graph(
         return bottleneck_model(sampled_params, cfg)
     if model_type == "IM_symmetric":
         return IM_symmetric_model(sampled_params, cfg)
-    if model_type == "split_migration":
-        return split_migration_model(sampled_params)
+    if model_type == "IM_asymmetric":
+        return IM_asymmetric_model(sampled_params, cfg)
     if model_type == "drosophila_three_epoch":
         return drosophila_three_epoch(sampled_params, cfg)
     if model_type == "split_migration_growth":

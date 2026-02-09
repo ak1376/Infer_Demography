@@ -86,26 +86,63 @@ def IM_symmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) ->
 
     return b.resolve()
 
-def split_migration_model(sampled: Dict[str, float]) -> demes.Graph:
+
+def IM_asymmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
     """
-    Split + asymmetric migration (two rates).
-    Deme names: 'YRI' and 'CEU'.
+    Split + asymmetric migration (two rates), but *no separate ancestral-only deme*.
+    YRI carries the ancestral epoch pre-split; CEU branches off at T_split.
+
+    This keeps the first deme ("YRI") extant at time 0 => pop0 is extant after msprime.from_demes().
+
+    Required keys (preferred):
+      - N_anc, N_YRI, N_CEU, T_split, m_YRI_CEU, m_CEU_YRI
+
+    Backward-compatible aliases are supported (see parsing below).
     """
+
+    # ---- parameter parsing (with aliases) ----
     N0 = float(sampled.get("N_anc", sampled.get("N0")))
     N1 = float(sampled.get("N_YRI", sampled.get("N1")))
     N2 = float(sampled.get("N_CEU", sampled.get("N2")))
-    T = float(sampled.get("T_split", sampled.get("t_split")))
-    m12 = float(sampled.get("m_YRI_CEU", sampled.get("m12", sampled.get("m", 0.0))))
-    m21 = float(sampled.get("m_CEU_YRI", sampled.get("m21", sampled.get("m", 0.0))))
 
-    b = demes.Builder()
-    b.add_deme("ANC", epochs=[dict(start_size=N0, end_time=T)])
-    b.add_deme("YRI", ancestors=["ANC"], epochs=[dict(start_size=N1)])
-    b.add_deme("CEU", ancestors=["ANC"], epochs=[dict(start_size=N2)])
+    T = float(sampled.get("T_split", sampled.get("t_split")))
+
+    # directional migration rates
+    m12 = float(sampled.get("m_YRI_CEU", sampled.get("m12", 0.0)))  # YRI -> CEU
+    m21 = float(sampled.get("m_CEU_YRI", sampled.get("m21", 0.0)))  # CEU -> YRI
+
+    assert T > 0, "T_split must be > 0"
+    assert N0 > 0 and N1 > 0 and N2 > 0, "Population sizes must be > 0"
+    assert m12 >= 0 and m21 >= 0, "Migration rates must be >= 0"
+
+    # ---- build demes graph (IM_symmetric-style: no 'ANC' deme) ----
+    b = demes.Builder(time_units="generations", generation_time=1)
+
+    # Root extant deme YRI:
+    #   - from present back to T: size N1
+    #   - older than T: ancestral size N0
+    b.add_deme(
+        "YRI",
+        epochs=[
+            dict(start_size=N0, end_time=T),  # ancestral epoch (older than split)
+            dict(start_size=N1, end_time=0),  # modern epoch
+        ],
+    )
+
+    # CEU branches off at split time
+    b.add_deme(
+        "CEU",
+        ancestors=["YRI"],
+        start_time=T,
+        epochs=[dict(start_size=N2, end_time=0)],
+    )
+
+    # Asymmetric migration AFTER split only (when both demes exist: [0, T])
     if m12 > 0:
-        b.add_migration(source="YRI", dest="CEU", rate=m12)
+        b.add_migration(source="YRI", dest="CEU", rate=m12, start_time=T, end_time=0)
     if m21 > 0:
-        b.add_migration(source="CEU", dest="YRI", rate=m21)
+        b.add_migration(source="CEU", dest="YRI", rate=m21, start_time=T, end_time=0)
+
     return b.resolve()
 
 

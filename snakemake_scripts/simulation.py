@@ -22,7 +22,7 @@ def main():
         choices=[
             "bottleneck",
             "IM_symmetric",
-            "split_migration",
+            "IM_asymmetric",
             "drosophila_three_epoch",
             "split_migration_growth",
             "OOA_three_pop",
