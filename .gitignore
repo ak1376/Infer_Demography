@@ -39,3 +39,5 @@ debug_experiments/
 debug_drosoph_*.py
 split_isolation_BGS_LD_stats_comparison.py
 experiments_BGS_test/
+pipeline_debugging_scripts/IM_asymmetric_Nate.py
+run_inference.py
