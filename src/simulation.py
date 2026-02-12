@@ -150,30 +150,51 @@ def simulation(
 # SFS utility (your existing code)
 # ============================================================================
 
-def create_SFS(ts: tskit.TreeSequence) -> moments.Spectrum:
-    """Build a moments.Spectrum using pops that have sampled individuals."""
-    sample_sets: List[np.ndarray] = []
-    pop_ids: List[str] = []
+def pop_id_by_name(ts: tskit.TreeSequence, name: str) -> int:
     for pop in ts.populations():
-        samps = ts.samples(population=pop.id)
-        if len(samps):
-            sample_sets.append(samps)
-            meta = pop.metadata if isinstance(pop.metadata, dict) else {}
-            pop_ids.append(meta.get("name", f"pop{pop.id}"))
-    if not sample_sets:
-        raise ValueError("No sampled populations found.")
-    arr = ts.allele_frequency_spectrum(
-        sample_sets=sample_sets, mode="site", polarised=True, span_normalise=False
+        meta = pop.metadata if isinstance(pop.metadata, dict) else {}
+        if meta.get("name") == name:
+            return pop.id
+    raise ValueError(
+        f"Population with metadata name='{name}' not found. "
+        "Available names: "
+        + ", ".join(
+            str((p.id, (p.metadata.get('name') if isinstance(p.metadata, dict) else None)))
+            for p in ts.populations()
+        )
     )
-    sfs = moments.Spectrum(arr)
-    sfs.pop_ids = pop_ids
 
+def create_SFS(ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")) -> moments.Spectrum:
+    """
+    Create a 2D site-frequency spectrum for exactly the two populations in pop_names,
+    using ts population metadata 'name' field (robust to population ID ordering).
+    """
+    sample_sets: List[np.ndarray] = []
+    for name in pop_names:
+        pid = pop_id_by_name(ts, name)
+        samps = ts.samples(population=pid)
+        if len(samps) == 0:
+            raise ValueError(f"Population '{name}' (id={pid}) has zero samples in this TS.")
+        sample_sets.append(samps)
+
+    arr = ts.allele_frequency_spectrum(
+        sample_sets=sample_sets,
+        mode="site",
+        polarised=True,
+        span_normalise=False,
+    )
+
+    # sfs = moments.Spectrum(arr)
+    # sfs.pop_ids = list(pop_names)
+
+    # Debug prints (optional)
+    print("create_SFS using:", list(pop_names))
     print("ts.sequence_length:", ts.sequence_length)
     print("ts.num_sites:", ts.num_sites)
     print("sum(obs_sfs):", float(np.sum(np.asarray(sfs))))
+    print("sfs.shape:", sfs.shape)
 
     return sfs
-
 
 # ============================================================================
 # Plotting + metadata + run-to-disk (moved from script)

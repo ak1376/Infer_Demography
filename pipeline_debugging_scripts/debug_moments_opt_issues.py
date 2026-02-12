@@ -440,7 +440,7 @@ def main():
         param_names=param_names,
         verbose=True,
         model_source="demes",
-        demes_builder=IM_asymmetric_model,
+        demes_builder=IM_asymmetric_model_no_anc,
     )
 
     print("Optimized parameters from stdpopsim-simulated data:\n", optim_pars_sim)

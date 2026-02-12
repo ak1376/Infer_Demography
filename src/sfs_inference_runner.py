@@ -38,7 +38,7 @@ from collections import Counter
 import numpy as np
 import matplotlib
 import moments
-
+import dadi 
 # Ensure headless behavior for cluster jobs
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -150,6 +150,41 @@ def _build_start_dict_from_config(
 
     return start_dict
 
+def _save_results(
+    mode: str,
+    best_params: Optional[Dict[str, float]],
+    best_ll: Optional[float],
+    param_order: List[str],
+    fixed_params: Dict[str, float],
+    outdir: Path,
+) -> Path:
+    """
+    Save inference results to best_fit.pkl file (compatible with Snakemake expectations).
+    
+    Returns:
+        Path to the saved file
+    """
+    mode_outdir = outdir / mode
+    mode_outdir.mkdir(parents=True, exist_ok=True)
+    
+    result = {
+        "mode": mode,
+        "best_params": best_params,
+        "best_ll": float(best_ll) if best_ll is not None else None,
+        "param_order": param_order,
+        "fixed_params": fixed_params,
+    }
+    
+    out_pkl = mode_outdir / "best_fit.pkl"
+    with out_pkl.open("wb") as f:
+        pickle.dump(result, f)
+    
+    ll_str = f"{best_ll:.6g}" if best_ll is not None else "None"
+    print(f"[{mode}] Results saved: LL={ll_str} → {out_pkl}")
+    
+    return out_pkl
+
+
 
 # =============================================================================
 # Main CLI entry
@@ -255,6 +290,13 @@ def run_cli(
 
     # Example: moments inference
     if mode == "moments":
+
+        sfs = moments.Spectrum(sfs)
+        sfs.pop_ids = list(config['num_samples'].keys())
+
+        print(sfs)
+        print(sfs.pop_ids)
+
         assert isinstance(
             sfs, moments.Spectrum
         ), "SFS must be a moments.Spectrum when mode is moments"
@@ -270,8 +312,55 @@ def run_cli(
         print(f'Fitted parameters (ordered): {fitted_real}')
         print(f'Max log-likelihood: {ll_value}')
 
+        # Convert fitted array back to dict for saving
+        best_params = {param_order[i]: float(fitted_real[i]) for i in range(len(param_order))}
+        
+        # Save results
+        _save_results(
+            mode=mode,
+            best_params=best_params,
+            best_ll=ll_value,
+            param_order=param_order,
+            fixed_params=fixed_params,
+            outdir=outdir,
+        )
 
     # Example: dadi inference
+
+    if mode == "dadi":
+
+        sfs = dadi.Spectrum(sfs)
+        sfs.pop_ids = list(config['num_samples'].keys())
+        print(sfs)
+        print(sfs.pop_ids)
+
+        # assert isinstance(
+        #     sfs, dadi.Spectrum
+        # ), "SFS must be a dadi.Spectrum when mode is dadi"
+        fitted_params, ll_value = dadi_inference.fit_model(
+            sfs=sfs,
+            demo_model=model_func,
+            experiment_config=config,
+            start_vec=start_perturbed,
+            param_order=param_order,   # <-- add this
+            verbose=verbose,
+        )
+
+        print(f'Fitted parameters (ordered): {fitted_params}')
+        print(f'Max log-likelihood: {ll_value}')
+
+        # Save results
+        _save_results(
+            mode=mode,
+            best_params=fitted_params,
+            best_ll=ll_value,
+            param_order=param_order,
+            fixed_params=fixed_params,
+            outdir=outdir,
+        )
+
+
+
     # if mode == "dadi":
     #     ... call dadi_inference.fit_model(...)
 
