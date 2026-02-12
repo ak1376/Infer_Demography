@@ -13,6 +13,7 @@ import demesdraw
 import tskit
 import sys
 import stdpopsim as sps
+import msprime
 
 # Make repo importable (for define_sps_model)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -32,12 +33,17 @@ def _diffusion_sfs(
     haploid_sizes: List[int],
     genome_scaled_mutation_rate: float, # mu * L
     *,
+    demogr: Optional[msprime.Demography] = False,  # <-- ADDED FOR msprime DEMOGRAPHY SUPPORT
     return_graph: bool = False,   # <--- ADD
 ):
     real_space_vec = 10 ** log_space_vec
     p_dict = {k: float(v) for k, v in zip(param_names, real_space_vec)}
 
-    graph = demo_model(p_dict)
+    if demogr is not False: # If a demography object is provided, use it to create the graph
+        demography = msprime_demography_directly(p_dict)
+        graph = demography.to_demes()
+    else:
+        graph = demo_model(p_dict)
 
     muL = genome_scaled_mutation_rate
     N0 = float(p_dict[param_names[0]])
@@ -194,6 +200,7 @@ def fit_model(
     verbose: bool = False,
     rtol: float = 1e-8,
     eps: float = 1e-12,
+
 ) -> Tuple[List[np.ndarray], List[float]]:
     """
     Run a **single** moments optimisation (nlopt.LD_LBFGS) in log10 space.
@@ -339,8 +346,77 @@ def simulation_runner(
     return ts, model
 
 
+# def msprime_demography_directly(sampled_params: Dict) -> msprime.Demography:
+#     N_ANC = float(sampled_params["N_anc"])
+#     N_YRI = float(sampled_params["N_YRI"])
+#     N_CEU = float(sampled_params["N_CEU"])
+#     T_split = float(sampled_params["T_split"])
+#     m_YRI_CEU = float(sampled_params["m_YRI_CEU"])
+#     m_CEU_YRI = float(sampled_params["m_CEU_YRI"])
+
+#     demogr = msprime.Demography()
+#     demogr.add_population(name="YRI", initial_size=N_YRI)
+#     demogr.add_population(name="CEU", initial_size=N_CEU)
+#     demogr.add_population(name="ANC", initial_size=N_ANC)
+
+#     # migration after split only (both exist for time in [0, T_split])
+#     demogr.set_migration_rate(source="YRI", dest="CEU", rate=m_YRI_CEU)
+#     demogr.set_migration_rate(source="CEU", dest="YRI", rate=m_CEU_YRI)
+
+#     demogr.add_population_split(time=T_split, ancestral="ANC", derived=["YRI", "CEU"])
+#     return demogr
+
+def msprime_demography_directly(sampled_params: Dict) -> msprime.Demography:
+    """
+    Build an msprime.Demography where the *parameter meanings* match demes:
+
+      m_YRI_CEU := forward-time migration rate YRI -> CEU
+      m_CEU_YRI := forward-time migration rate CEU -> YRI
+
+    Since msprime migration rates are specified as *backward-time lineage movement*,
+    we flip directions when calling set_migration_rate:
+
+      forward-time A -> B  <=>  backward-time B -> A
+    """
+    N_ANC = float(sampled_params["N_anc"])
+    N_YRI = float(sampled_params["N_YRI"])
+    N_CEU = float(sampled_params["N_CEU"])
+    T_split = float(sampled_params["T_split"])
+
+    # These are FORWARD-TIME meanings (demes convention):
+    m_YRI_CEU = float(sampled_params["m_YRI_CEU"])  # forward-time YRI -> CEU
+    m_CEU_YRI = float(sampled_params["m_CEU_YRI"])  # forward-time CEU -> YRI
+
+    demogr = msprime.Demography()
+    demogr.add_population(name="YRI", initial_size=N_YRI)
+    demogr.add_population(name="CEU", initial_size=N_CEU)
+    demogr.add_population(name="ANC", initial_size=N_ANC)
+
+    # Apply rates in msprime with FLIPPED direction (backward-time):
+    # forward-time YRI -> CEU  ==> backward-time CEU -> YRI
+    demogr.set_migration_rate(source="CEU", dest="YRI", rate=m_YRI_CEU)
+
+    # forward-time CEU -> YRI  ==> backward-time YRI -> CEU
+    demogr.set_migration_rate(source="YRI", dest="CEU", rate=m_CEU_YRI)
+
+    # Split at T_split (backward-time: merge YRI and CEU into ANC at T_split)
+    demogr.add_population_split(time=T_split, ancestral="ANC", derived=["YRI", "CEU"])
+
+    return demogr
 
 
+def simulate_msprime(demogr: msprime.Demography, seqlen: int, mutation_rate: float, recomb_rate: float, seed: Optional[int] = 295) -> tskit.TreeSequence:
+    
+    ts = msprime.sim_ancestry(
+        samples={"YRI": 20, "CEU": 20},
+        sequence_length=seqlen,
+        recombination_rate=recomb_rate,
+        demography=demogr,
+        random_seed=seed,
+    )
+    ts = msprime.sim_mutations(ts, rate=mutation_rate, random_seed=seed)
+
+    return ts
 
 
 def main():
@@ -374,10 +450,10 @@ def main():
     )
     np.testing.assert_allclose(optim_pars, start_vec, rtol=0.1)
 
-    # test with simulation
-
-    # Create a dict with the sampled parameters
     sampled_params = {name: val for name, val in zip(param_names, start_vec)}
+
+
+    # -------------------------- Simulate and Inference: Stdpopsim version --------------------------
     g = IM_asymmetric_model(sampled_params)
 
     ts, model = simulation_runner(
@@ -403,10 +479,34 @@ def main():
         verbose=True,
     )
 
-    print("Optimized parameters from simulated data:\n", optim_pars_sim)
-    print("Ground Truth parameters from simulated data:\n", start_vec)
-    print("True SFS from diffusion:\n", np.round(np.log10(np.asarray(true_sfs)), 2))
-    print("Simulated SFS from ts:\n", np.round(np.log10(np.asarray(sim_sfs)), 2))
+    # print("Optimized parameters from simulated data:\n", optim_pars_sim)
+    # print("Ground Truth parameters from simulated data:\n", start_vec)
+    # print("True SFS from diffusion:\n", np.round(np.log10(np.asarray(true_sfs)), 2))
+    # print("Simulated SFS from ts:\n", np.round(np.log10(np.asarray(sim_sfs)), 2))
+
+    # -------------------------- Simulate and Inference: msprime version --------------------------
+
+    demogr = msprime_demography_directly(sampled_params)
+    print(f'Demography for msprime simulation:\n{demogr.debug()}')
+    ts_msprime = simulate_msprime(demogr, seqlen=L, mutation_rate=mu, recomb_rate=1e-8)
+    sim_sfs_msprime = create_SFS(ts_msprime, pop_names=["YRI", "CEU"]) # Observed SFS from msprime simulation
+
+    # Now let's create the theoretical SFS from the diffusion approximation for the same parameters
+    true_sfs_msprime = _diffusion_sfs(
+        log_space_vec=np.log10(start_vec),
+        demo_model=IM_asymmetric_model,
+        param_names=param_names,
+        sampled_demes=["YRI", "CEU"],
+        haploid_sizes=[20, 20],
+        genome_scaled_mutation_rate=genome_scaled_mutation_rate, 
+        demogr = True
+    )
+
+    print(f'True SFS from diffusion (msprime demography):\n', np.round(np.log10(np.asarray(true_sfs_msprime)), 2))
+    print(f'Simulated SFS from msprime:\n', np.round(np.log10(np.asarray(sim_sfs_msprime)), 2))
+
+
+
 
 if __name__ == "__main__":
     main()
