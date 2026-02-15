@@ -177,22 +177,22 @@ def create_SFS(ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")
             raise ValueError(f"Population '{name}' (id={pid}) has zero samples in this TS.")
         sample_sets.append(samps)
 
-    arr = ts.allele_frequency_spectrum(
+    sfs = ts.allele_frequency_spectrum(
         sample_sets=sample_sets,
         mode="site",
         polarised=True,
         span_normalise=False,
     )
 
-    # sfs = moments.Spectrum(arr)
-    # sfs.pop_ids = list(pop_names)
+    sfs = moments.Spectrum(sfs)
+    sfs.pop_ids = list(pop_names)
 
     # Debug prints (optional)
-    print("create_SFS using:", list(pop_names))
-    print("ts.sequence_length:", ts.sequence_length)
-    print("ts.num_sites:", ts.num_sites)
-    print("sum(obs_sfs):", float(np.sum(np.asarray(sfs))))
-    print("sfs.shape:", sfs.shape)
+    # print("create_SFS using:", list(pop_names))
+    # print("ts.sequence_length:", ts.sequence_length)
+    # print("ts.num_sites:", ts.num_sites)
+    # print("sum(obs_sfs):", float(np.sum(np.asarray(sfs))))
+    # print("sfs.shape:", sfs.shape)
 
     return sfs
 
@@ -349,7 +349,7 @@ def run_one_simulation_to_dir(
         sim_cfg["seed"] = simulation_seed
 
     ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
-    sfs = create_SFS(ts)
+    sfs = create_SFS(ts, pop_names = tuple(list(cfg['num_samples'].keys())))
 
     # --- DEBUG: site vs branch vs moments expectation ---
 

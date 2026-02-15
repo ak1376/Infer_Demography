@@ -146,33 +146,29 @@ def IM_asymmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -
     return b.resolve()
 
 
-def drosophila_three_epoch(
-    sampled: Dict[str, float], cfg: Optional[Dict] = None
-) -> demes.Graph:
+def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
     """
     Demes equivalent of stdpopsim OutOfAfrica_2L06 (Li & Stephan 2006),
-    but using your parameter names.
+    using your parameter names.
 
-    Backward-time ordering should be:
-      T_AFR_expansion > T_AFR_EUR_split > T_EUR_expansion > 0
-
-    Interpretation (matching stdpopsim):
-      - AFR has modern size AFR from present back to T_AFR_expansion,
-        then ancestral size N0 older than that.
-      - EUR has modern size EUR_recover from present back to T_EUR_expansion,
-        then bottleneck size EUR_bottleneck from T_EUR_expansion back to the split.
-      - At T_AFR_EUR_split, EUR merges into AFR (equivalently: EUR splits from AFR forward time).
+    Matches msprime events:
+      - AFR: size AFR from 0..T_AFR_expansion, then size N0 older than T_AFR_expansion.
+      - EUR: size EUR_recover from 0..T_EUR_expansion, then size EUR_bottleneck from
+             T_EUR_expansion..T_split, then merges into AFR at T_split.
     """
 
-    N0 = float(sampled["N0"])  # ancestral AFR size (N_A1)
-    AFR = float(sampled["AFR"])  # modern AFR size (N_A0)
+    # AFR sizes
+    N0  = float(sampled["N0"])    # N_A1 (older)
+    AFR = float(sampled["AFR"])   # N_A0 (recent)
 
+    # EUR sizes
     EUR_bottleneck = float(sampled["EUR_bottleneck"])  # N_E1
-    EUR_recover = float(sampled["EUR_recover"])  # N_E0
+    EUR_recover    = float(sampled["EUR_recover"])     # N_E0
 
-    T_AFR_expansion = float(sampled["T_AFR_expansion"])  # t_A0
-    T_split = float(sampled["T_AFR_EUR_split"])  # t_AE
-    T_EUR_exp = float(sampled["T_EUR_expansion"])  # t_E1
+    # Times (backward, generations)
+    T_AFR_expansion = float(sampled["T_AFR_expansion"])   # t_A0
+    T_split         = float(sampled["T_AFR_EUR_split"])   # t_AE
+    T_EUR_exp       = float(sampled["T_EUR_expansion"])   # t_E1
 
     if not (T_AFR_expansion > T_split > T_EUR_exp > 0):
         raise ValueError(
@@ -182,82 +178,110 @@ def drosophila_three_epoch(
 
     b = demes.Builder()
 
-    # AFR is the root lineage (no explicit ANC deme needed)
+    # IMPORTANT: epochs are oldest -> youngest, and youngest must end_time=0.
     b.add_deme(
         "AFR",
         epochs=[
-            dict(start_size=N0, end_time=T_AFR_expansion),  # older (ancestral)
-            dict(start_size=AFR, end_time=0),               # recent (modern)
+            dict(start_size=N0,  end_time=T_AFR_expansion),  # older than T_AFR_expansion
+            dict(start_size=AFR, end_time=0),                # 0 .. T_AFR_expansion
         ],
     )
 
-    # EUR branches off AFR at the split time
     b.add_deme(
         "EUR",
         ancestors=["AFR"],
         start_time=T_split,
         epochs=[
-            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),  # older part (near split)
-            dict(start_size=EUR_recover, end_time=0),             # recent (modern)
+            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),  # T_EUR_exp .. T_split
+            dict(start_size=EUR_recover,    end_time=0),          # 0 .. T_EUR_exp
         ],
     )
+
     return b.resolve()
+
+
 
 def split_migration_growth_model(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
 ) -> demes.Graph:
     """
-    Split + asymmetric migration + growth in FR.
+    CO trunk carries the ancestral epoch implicitly, then splits to FR at time T.
+    Migration between CO and FR (forward-time rates), with optional growth in FR.
+
     Deme names: 'CO' and 'FR'.
 
-    Parameters:
-    - N_CO:    Size of CO population (constant).
-    - N_FR1:   Size of FR population at present (time 0).
-    - G_FR:    Growth rate of FR population.
-    - N_ANC:   Ancestral size.
-    - m_CO_FR: Migration rate CO -> FR (forward time).
-    - m_FR_CO: Migration rate FR -> CO (forward time).
-    - T:       Split time (generations ago).
+    Parameters (preferred names):
+    - N_CO:    CO size (0..T), constant.
+    - N_FR1:   FR size at present (time 0).
+    - G_FR:    FR growth rate (if provided); used to infer N_FR0 at time T.
+              If G_FR not provided, you can provide N_FR0 explicitly, else no growth.
+    - N_ANC:   ancestral size (older than T; the trunk before split).
+    - m_CO_FR: migration CO -> FR (forward time).
+    - m_FR_CO: migration FR -> CO (forward time).
+    - T:       split time (generations ago, backward-time).
     """
-    N_CO = float(sampled.get("N_CO", sampled.get("N1")))
-    N_FR1 = float(sampled.get("N_FR1", sampled.get("N2")))
-    N_ANC = float(sampled.get("N_ANC", sampled.get("N0")))
+
+    # --- pull params with your fallbacks ---
+    N_CO   = float(sampled.get("N_CO", sampled.get("N1")))
+    N_FR1  = float(sampled.get("N_FR1", sampled.get("N2")))
+    N_ANC  = float(sampled.get("N_ANC", sampled.get("N0")))
     m_CO_FR = float(sampled.get("m_CO_FR", 0.0))
     m_FR_CO = float(sampled.get("m_FR_CO", 0.0))
-    T = float(sampled.get("T", sampled.get("T_split")))
+    T      = float(sampled.get("T", sampled.get("T_split")))
 
-    # Handle growth rate or start/end sizes
-    # We need N_FR0 (size at split, time T) and N_FR1 (size at present, time 0)
+    # --- basic validation (helps catch silent weirdness) ---
+    if not (T > 0):
+        raise ValueError(f"Need T > 0 (generations ago). Got {T=}.")
+    for name, val in [("N_CO", N_CO), ("N_FR1", N_FR1), ("N_ANC", N_ANC)]:
+        if not (val > 0):
+            raise ValueError(f"Need {name} > 0. Got {val}.")
+    for name, val in [("m_CO_FR", m_CO_FR), ("m_FR_CO", m_FR_CO)]:
+        if val < 0:
+            raise ValueError(f"Need {name} >= 0. Got {val}.")
+
+    # --- handle FR growth ---
+    # Need N_FR0 = size at split time T (backward-time). Present size is N_FR1 at time 0.
     if "G_FR" in sampled:
         G_FR = float(sampled["G_FR"])
-        # N(T) = N(0) * exp(-rT)
+        # If forward-time growth rate is G_FR, then going backward T gens:
+        # N_FR0 = N_FR1 * exp(-G_FR * T)
         N_FR0 = N_FR1 * np.exp(-G_FR * T)
     elif "N_FR0" in sampled:
         N_FR0 = float(sampled["N_FR0"])
-        # G_FR not strictly needed for demes if we have start/end sizes,
-        # but good to have consistent logic if we wanted it.
     else:
-        # Default no growth
         N_FR0 = N_FR1
 
+    if not (N_FR0 > 0):
+        raise ValueError(f"Need N_FR0 > 0 (inferred or provided). Got {N_FR0=}.")
+
     b = demes.Builder()
-    b.add_deme("ANC", epochs=[dict(start_size=N_ANC, end_time=T)])
-    b.add_deme("CO", ancestors=["ANC"], epochs=[dict(start_size=N_CO)])
+
+    # CO is the trunk population:
+    # - older than T: size N_ANC
+    # - from T to present: size N_CO
+    #
+    # IMPORTANT: epochs are ordered oldest -> youngest; youngest must end_time=0.
     b.add_deme(
-        "FR",
-        ancestors=["ANC"],
-        # Epoch goes from T (start) to 0 (end).
-        # start_size is size at T (N_FR0). end_size is size at 0 (N_FR1).
-        epochs=[dict(start_size=N_FR0, end_size=N_FR1)],
+        "CO",
+        epochs=[
+            dict(start_size=N_ANC, end_time=T),  # older trunk (implicit ANC)
+            dict(start_size=N_CO,  end_time=0),  # CO after split to present
+        ],
     )
 
-    # Migration
-    # m_CO_FR: Forward CO -> FR.
-    # Demes uses forward-time semantics: source=Origin of genes, dest=Destination of genes.
+    # FR splits off at time T from CO (so CO is the ancestor).
+    # If FR has growth, encode via start_size at T and end_size at 0.
+    b.add_deme(
+        "FR",
+        ancestors=["CO"],
+        start_time=T,
+        epochs=[dict(start_size=N_FR0, end_size=N_FR1, end_time=0)],
+    )
+
+    # Migration (forward-time semantics in demes)
+    # Only applies when both demes exist (i.e., after split).
     if m_CO_FR > 0:
         b.add_migration(source="CO", dest="FR", rate=m_CO_FR)
-
-    # m_FR_CO: Forward FR -> CO.
     if m_FR_CO > 0:
         b.add_migration(source="FR", dest="CO", rate=m_FR_CO)
 
