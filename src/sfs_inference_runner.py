@@ -2,33 +2,15 @@
 """
 src/sfs_inference_runner.py
 
-Shared inference “glue” for dadi + moments. This is the module that lets your
-Snakemake wrapper stay lightweight.
+Shared inference “glue” for dadi + moments.
 
-Responsibilities:
-- Load SFS + experiment config
-- Load demography model function (--model-py "module:function")
-- Parse/validate fixed parameters (same semantics as MomentsLD)
-- Build start_dict (geometric mean for free params, fixed value for fixed params)
-- Run dadi and/or moments inference using src/dadi_inference.py and src/moments_inference.py
-- (Optional) generate 1D likelihood profiles + plots per parameter
-
-Your thin CLI wrapper should just parse args and call run_cli(...).
-
-Notes / deliberate choices:
-- We avoid any Snakemake assumptions about directory layout.
-- We keep conversion between dadi/moments Spectrum types here.
-- We DO NOT reach into moments_inference internals except _diffusion_sfs.
-  If you want cleaner separation later, expose a public expected_sfs() in
-  both dadi_inference and moments_inference.
-
-CHANGES (requested):
-- dadi_inference.fit_model now returns a DadiFitResult dataclass with fields:
-    .params (np.ndarray), .loglik (float), .debug_txt (Optional[str])
-- If .debug_txt is not None, we save it next to best_fit.pkl under:
-    outdir/mode/dadi_runtime_debug_sim{sim}_run{run}.txt
-- sim/run are read from config if present (simulation_number/run_number) OR
-  from config["_simulation_number"] / config["_run_number"] if your wrapper injects them.
+Key behaviors:
+- fixed parameters come from config["fixed_parameters"] and are filled from ground_truth
+- start vector uses fixed values for fixed params
+- only FREE params are perturbed (fixed params are NOT perturbed)
+- FIXED params are ALSO CONSTRAINED during optimization by setting their bounds to [v, v]
+  in the config passed to the backend (moments/dadi), so they truly cannot move.
+- dadi runtime debug txt is saved next to best_fit.pkl if present
 """
 
 from __future__ import annotations
@@ -40,33 +22,25 @@ import importlib
 import json
 import pickle
 from collections import Counter
+import copy
 
 import numpy as np
 import matplotlib
 import moments
 import dadi
 
-# Ensure headless behavior for cluster jobs
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: F401
 
-# ---------------------------------------------------------------------
-# Imports for inference backends
-# ---------------------------------------------------------------------
 import dadi_inference
 import moments_inference
 
 
 # =============================================================================
-# Parameter ordering / validation helpers (general across demographic models)
+# Parameter ordering / validation helpers
 # =============================================================================
 
 def _validate_parameter_order(config: Dict[str, Any]) -> List[str]:
-    """
-    Returns the canonical parameter order (from config) and validates:
-      - parameter_order exists and is non-empty
-      - no duplicate names
-    """
     if "parameter_order" not in config or not config["parameter_order"]:
         raise ValueError("Config must include a non-empty 'parameter_order' list.")
     order = list(config["parameter_order"])
@@ -84,12 +58,6 @@ def _validate_parameterization(
     priors: Dict[str, Any],
     fixed_params: Dict[str, float],
 ) -> None:
-    """
-    Enforces that:
-      - every param in param_order is either fixed or has a prior
-      - priors do not contain params not present in param_order
-      - fixed_params do not contain params not present in param_order
-    """
     order_set = set(param_order)
     prior_set = set(priors.keys())
     fixed_set = set(fixed_params.keys())
@@ -121,11 +89,6 @@ def _build_start_dict_from_config(
     priors: Dict[str, Any],
     fixed_params: Dict[str, float],
 ) -> Dict[str, float]:
-    """
-    Returns a dict with exactly the keys in param_order:
-      - fixed param value if fixed
-      - midpoint of (lower, upper) if free  (kept as your current behavior)
-    """
     start_dict: Dict[str, float] = {}
 
     for p in param_order:
@@ -151,6 +114,33 @@ def _build_start_dict_from_config(
     return start_dict
 
 
+def _perturb_only_free_params(
+    start_arr: np.ndarray,
+    param_order: List[str],
+    fixed_params: Dict[str, float],
+    *,
+    fold: float = 0.1,
+) -> np.ndarray:
+    """
+    Perturb only parameters that are NOT fixed.
+    Fixed params are re-imposed exactly.
+    """
+    start_arr = np.asarray(start_arr, dtype=float)
+    out = start_arr.copy()
+
+    free_idx = [i for i, p in enumerate(param_order) if p not in fixed_params]
+    if free_idx:
+        free_vals = out[free_idx]
+        free_perturbed = moments.Misc.perturb_params(free_vals, fold=fold)
+        out[free_idx] = free_perturbed
+
+    for i, p in enumerate(param_order):
+        if p in fixed_params:
+            out[i] = float(fixed_params[p])
+
+    return out
+
+
 def _save_results(
     mode: str,
     best_params: Optional[Dict[str, float]],
@@ -159,12 +149,6 @@ def _save_results(
     fixed_params: Dict[str, float],
     outdir: Path,
 ) -> Path:
-    """
-    Save inference results to best_fit.pkl file (compatible with Snakemake expectations).
-
-    Returns:
-        Path to the saved file
-    """
     mode_outdir = outdir / mode
     mode_outdir.mkdir(parents=True, exist_ok=True)
 
@@ -186,6 +170,31 @@ def _save_results(
     return out_pkl
 
 
+def _apply_fixed_bounds_to_config(
+    config: Dict[str, Any],
+    priors: Dict[str, Any],
+    fixed_params: Dict[str, float],
+) -> Dict[str, Any]:
+    """
+    Return a config copy where fixed params have bounds exactly [v, v],
+    so the optimizer cannot move them.
+    Also writes the merged priors dict back to BOTH keys ("priors" and "parameters")
+    because your backends may read either.
+    """
+    cfg = copy.deepcopy(config)
+    pri = copy.deepcopy(priors)
+
+    for p, v in fixed_params.items():
+        v = float(v)
+        if v <= 0:
+            raise ValueError(f"Fixed parameter '{p}' must be > 0 for log10 optimization; got {v}")
+        pri[p] = [v, v]
+
+    cfg["priors"] = pri
+    cfg["parameters"] = pri
+    return cfg
+
+
 # =============================================================================
 # Main entry
 # =============================================================================
@@ -201,41 +210,25 @@ def run_cli(
     profile_grid_points: int = 41,
     verbose: bool = False,
 ) -> None:
-    """
-    mode: "dadi", "moments", or "both"
-    sfs_file: filepath of the pickle file that contains the SFS (dadi.Spectrum or moments.Spectrum)
-    config_file: filepath of the JSON experiment config (see example in configs/)
-    model_py: "module:function" returning a demes.Graph given a param dict
-    outdir: parent output directory. For --mode both writes into outdir/{dadi,moments}
-    ground_truth: Optional pickle/JSON with ground truth sim parameters (only needed if fixed_parameters is used)
-    generate_profiles: unused here (kept for API compatibility)
-    profile_grid_points: unused here (kept for API compatibility)
-    verbose: Whether to print verbose output during inference.
-    """
-
-    # Load the SFS
+    # Load SFS
     with open(sfs_file, "rb") as f:
         sfs = pickle.load(f)
 
-    # Load the experiment config
+    # Load config
     with open(config_file, "r") as f:
         config = json.load(f)
 
-    # Load the model function
+    # Load model function
     module_name, func_name = model_py.split(":")
     module = importlib.import_module(module_name)
     model_func = getattr(module, func_name)
 
-    # For saving outputs
-    mode_outdir = outdir / mode
-    mode_outdir.mkdir(parents=True, exist_ok=True)
-
-    # Get model function signature for parameter validation (optional / informational)
+    # Signature (informational)
     import inspect
     sig = inspect.signature(model_func)
 
     # ------------------------------------------------------------------
-    # Step 1: Build fixed_params (if any)
+    # Step 1: fixed params
     # ------------------------------------------------------------------
     fixed_params: Dict[str, float] = {}
     fixed_param_names = list(config.get("fixed_parameters", {}).keys())
@@ -245,10 +238,8 @@ def run_cli(
             raise ValueError(
                 f"fixed_parameters specified ({fixed_param_names}) but no ground_truth provided"
             )
-
         with open(ground_truth, "rb") as f:
             gt_params = pickle.load(f)
-
         for p in fixed_param_names:
             if p not in gt_params:
                 raise ValueError(
@@ -257,52 +248,60 @@ def run_cli(
             fixed_params[p] = float(gt_params[p])
 
     # ------------------------------------------------------------------
-    # Step 2: Parameter ordering + priors validation
+    # Step 2: ordering + priors
     # ------------------------------------------------------------------
     param_order = _validate_parameter_order(config)
 
-    priors = config.get("parameters", config.get("priors", {}))
+    # Build priors dict (support either key)
+    priors = config.get("priors", config.get("parameters", {}))
     if not priors:
         raise ValueError("Config must include 'priors' (or 'parameters') with bounds.")
 
     _validate_parameterization(param_order, priors, fixed_params)
 
+    # IMPORTANT: create a backend config where fixed params have bounds [v, v]
+    config_fit = _apply_fixed_bounds_to_config(config, priors, fixed_params)
+    priors_fit = config_fit["priors"]
+
     # ------------------------------------------------------------------
-    # Step 3: Build start_dict and ordered vectors
+    # Step 3: start vector (fixed values) + perturb only free
     # ------------------------------------------------------------------
-    start_dict = _build_start_dict_from_config(param_order, priors, fixed_params)
+    start_dict = _build_start_dict_from_config(param_order, priors_fit, fixed_params)
 
     print(f"Model function: {module_name}:{func_name}  signature={sig}")
     print(f"Parameter order: {param_order}")
+    print(f"Fixed params: {fixed_params}")
     print(f"Start dict (ordered): {[ (p, start_dict[p]) for p in param_order ]}")
 
     start_arr = np.array([start_dict[p] for p in param_order], dtype=float)
-
-    # Perturb the starting value slightly (order preserved)
-    start_perturbed = moments.Misc.perturb_params(start_arr, fold=0.1)
+    start_perturbed = _perturb_only_free_params(
+        start_arr=start_arr,
+        param_order=param_order,
+        fixed_params=fixed_params,
+        fold=0.1,
+    )
     print(f"Starting values for optimization (ordered): {start_perturbed}")
 
     # ------------------------------------------------------------------
-    # Step 4: Run inference
+    # Step 4: inference
     # ------------------------------------------------------------------
-
-    # -------------------------
-    # moments
-    # -------------------------
     if mode == "moments":
         sfs_m = moments.Spectrum(sfs)
-        sfs_m.pop_ids = list(config["num_samples"].keys())
+        sfs_m.pop_ids = list(config_fit["num_samples"].keys())
 
         fitted_real, ll_value = moments_inference.fit_model(
             sfs=sfs_m,
             demo_model=model_func,
-            experiment_config=config,
+            experiment_config=config_fit,   # <-- uses fixed bounds
             start_vec=start_perturbed,
             param_order=param_order,
             verbose=verbose,
         )
 
         best_params = {param_order[i]: float(fitted_real[i]) for i in range(len(param_order))}
+        # enforce fixed exactly (belt + suspenders)
+        for p, v in fixed_params.items():
+            best_params[p] = float(v)
 
         _save_results(
             mode=mode,
@@ -312,21 +311,16 @@ def run_cli(
             fixed_params=fixed_params,
             outdir=outdir,
         )
-
         return
 
-    # -------------------------
-    # dadi
-    # -------------------------
     if mode == "dadi":
         sfs_d = dadi.Spectrum(sfs)
-        sfs_d.pop_ids = list(config["num_samples"].keys())
+        sfs_d.pop_ids = list(config_fit["num_samples"].keys())
 
-        # NOTE: dadi_inference.fit_model now returns a DadiFitResult dataclass
         result = dadi_inference.fit_model(
             sfs=sfs_d,
             demo_model=model_func,
-            experiment_config=config,
+            experiment_config=config_fit,   # <-- uses fixed bounds
             start_vec=start_perturbed,
             param_order=param_order,
             verbose=verbose,
@@ -335,11 +329,9 @@ def run_cli(
         fitted_params = result.params
         ll_value = result.loglik
 
-        print(f"Fitted parameters (ordered): {fitted_params}")
-        print(f"Max log-likelihood: {ll_value}")
-
-        # Convert fitted array back to dict for saving (matches _save_results contract)
         best_params = {param_order[i]: float(fitted_params[i]) for i in range(len(param_order))}
+        for p, v in fixed_params.items():
+            best_params[p] = float(v)
 
         _save_results(
             mode=mode,
@@ -350,23 +342,16 @@ def run_cli(
             outdir=outdir,
         )
 
-        # Save debug txt only if present
         if result.debug_txt is not None:
-            # Prefer explicit injected values, else fall back to config values, else NA
-            sim = config.get("_simulation_number", config.get("simulation_number", "NA"))
-            run = config.get("_run_number", config.get("run_number", "NA"))
+            sim = config_fit.get("_simulation_number", config_fit.get("simulation_number", "NA"))
+            run = config_fit.get("_run_number", config_fit.get("run_number", "NA"))
             dbg_path = (outdir / mode) / f"dadi_runtime_debug_sim{sim}_run{run}.txt"
             dbg_path.write_text(result.debug_txt)
             print(f"[dadi] Runtime debug saved → {dbg_path}")
 
         return
 
-    # -------------------------
-    # both (optional)
-    # -------------------------
     if mode == "both":
-        # Minimal safe behavior: run moments then dadi into separate subdirs
-        # (You can expand this if you want profiles/etc.)
         run_cli(
             mode="moments",
             sfs_file=sfs_file,
