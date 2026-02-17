@@ -43,3 +43,4 @@ pipeline_debugging_scripts/IM_asymmetric_Nate.py
 run_inference.py
 pipeline_debugging_scripts/comparing_sfs_w_and_wo_anc_graph.py
 plot_dadi_vs_moments.py
+check_dadi_moments.sh

@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -436,6 +436,16 @@ rule cleanup_optimization_runs:
 
         sid = wildcards.sid
 
+        # --- skip conditions ---
+        if NUM_OPTIMS <= 1 or TOP_K >= NUM_OPTIMS:
+            pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(output.cleanup_done).write_text(
+                f"Cleanup skipped for simulation {sid} (NUM_OPTIMS={NUM_OPTIMS}, TOP_K={TOP_K}).\n"
+            )
+            print(f"✅ cleanup skipped sid={sid}")
+            return
+
+        # --- existing cleanup logic ---
         with open(input.dadi, "rb") as f:
             dadi_data = pickle.load(f)
         with open(input.moments, "rb") as f:
@@ -456,21 +466,18 @@ rule cleanup_optimization_runs:
                 opt = int(p.name.rsplit("_", 1)[1])
             except Exception:
                 continue
-
             if opt in keep_indices:
                 continue
 
-            print(f"🗑️ removing sid={sid} opt={opt}: {p}")
             subprocess.run(["rm", "-rf", str(p)], check=False)
             cleaned += 1
 
         pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.cleanup_done, "w") as f:
-            f.write(f"Cleanup completed for simulation {sid}\n")
-            f.write(f"Removed {cleaned} optimization directories\n")
-            f.write(f"Kept optimizations: {sorted(keep_indices)}\n")
-
-        print(f"✅ cleanup sid={sid}: removed {cleaned}, kept {sorted(keep_indices)}")
+        pathlib.Path(output.cleanup_done).write_text(
+            f"Cleanup completed for simulation {sid}\n"
+            f"Removed {cleaned} optimization directories\n"
+            f"Kept optimizations: {sorted(keep_indices)}\n"
+        )
 
 ##############################################################################
 # RULE simulate_window – one VCF window
@@ -807,16 +814,16 @@ rule combine_features:
         train_y       = f"experiments/{MODEL}/modeling/datasets/train_targets.pkl",
         tune_X        = f"experiments/{MODEL}/modeling/datasets/tune_features.pkl",
         tune_y        = f"experiments/{MODEL}/modeling/datasets/tune_targets.pkl",
-        val_X         = f"experiments/{MODEL}/modeling/datasets/validation_features.pkl",
-        val_y         = f"experiments/{MODEL}/modeling/datasets/validation_targets.pkl",
+        val_X         = f"experiments/{MODEL}/modeling/datasets/val_features.pkl",
+        val_y         = f"experiments/{MODEL}/modeling/datasets/val_targets.pkl",
 
         # normalized splits
         ntrain_X      = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
         ntrain_y      = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
         ntune_X       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
         ntune_y       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
-        nval_X        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        nval_y        = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        nval_X        = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
+        nval_y        = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
 
         # split indices + plots/metrics
         split_idx     = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
@@ -840,26 +847,43 @@ rule combine_features:
             --experiment-config "{input.cfg}" \
             --out-dir "{params.outdir}"
 
-        # sanity checks
-        test -f "{output.features_df}"   && \
-        test -f "{output.targets_df}"    && \
-        test -f "{output.train_X}"       && \
-        test -f "{output.train_y}"       && \
-        test -f "{output.tune_X}"        && \
-        test -f "{output.tune_y}"        && \
-        test -f "{output.val_X}"         && \
-        test -f "{output.val_y}"         && \
-        test -f "{output.ntrain_X}"      && \
-        test -f "{output.ntrain_y}"      && \
-        test -f "{output.ntune_X}"       && \
-        test -f "{output.ntune_y}"       && \
-        test -f "{output.nval_X}"        && \
-        test -f "{output.nval_y}"        && \
-        test -f "{output.split_idx}"     && \
-        test -f "{output.scatter_png}"   && \
-        test -f "{output.mse_val_png}"   && \
-        test -f "{output.mse_train_png}" && \
-        test -f "{output.metrics_all}"
+        echo "=== AFTER feature_extraction, listing outputs ==="
+        ls -lah "experiments/{MODEL}/modeling/datasets" || true
+
+        echo "=== Expected files ==="
+        for f in \
+        "{output.features_df}" \
+        "{output.targets_df}" \
+        "{output.train_X}" \
+        "{output.train_y}" \
+        "{output.tune_X}" \
+        "{output.tune_y}" \
+        "{output.val_X}" \
+        "{output.val_y}" \
+        "{output.ntrain_X}" \
+        "{output.ntrain_y}" \
+        "{output.ntune_X}" \
+        "{output.ntune_y}" \
+        "{output.nval_X}" \
+        "{output.nval_y}" \
+        "{output.split_idx}" \
+        "{output.scatter_png}" \
+        "{output.mse_val_png}" \
+        "{output.mse_train_png}" \
+        "{output.metrics_all}" \
+        "{output.metrics_dadi}" \
+        "{output.metrics_moments}" \
+        "{output.metrics_momentsLD}" \
+        "{output.outliers_tsv}" \
+        "{output.outliers_txt}" \
+        ; do
+        if [ -f "$f" ]; then
+            echo "OK   $f"
+        else
+            echo "MISS $f"
+            exit 1
+        fi
+        done
         """
 
 ##############################################################################
@@ -897,8 +921,8 @@ rule linear_regression:
         X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
         y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
 
-        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         mdlcfg  = "config_files/model_config.yaml"
@@ -947,8 +971,8 @@ rule random_forest:
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
         X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
         y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         expcfg  = EXP_CFG,
@@ -1017,8 +1041,8 @@ rule xgboost:
         y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
         X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
         y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_validation_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         expcfg  = EXP_CFG,

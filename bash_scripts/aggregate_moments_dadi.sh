@@ -25,7 +25,7 @@ DRYRUN="${DRYRUN:-0}"              # 1 => add -n to snakemake (no execution)
 # -----------------------------
 # Paths & config
 # -----------------------------
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json}"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 export EXP_CFG="$CFG"

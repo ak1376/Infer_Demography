@@ -10,7 +10,7 @@
   "seed": 42,
   "num_optimizations": 1,
   "top_k": 1,
-  "num_draws": 1,
+  "num_draws": 100,
   "priors": {
     "N_anc": [
       100,
@@ -33,6 +33,14 @@
       20000
     ]
   },
+
+  "parameter_order": [
+    "N_anc",
+    "N_YRI",
+    "N_CEU",
+    "m",
+    "T_split"
+  ],
   "selection": {
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
@@ -49,32 +57,10 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "gram_schmidt": false,
-  "gram_schmidt_k": 10, 
-
-  "optimization": {
-    "perturb_fold": 0.1,
-    "log10_floor": 1e-300,
-
-    "dadi": {
-      "ftol_rel": 1e-5,
-      "xtol_rel": 1e-4,
-      "maxeval": 5000,
-      "initial_step": 0.1,
-      "grad_step": 1e-4,
-      "pts": [50, 60, 70]
-    },
-
-    "moments": {
-      "ftol_rel": 1e-5,
-      "xtol_rel": 1e-4,
-      "maxeval": 5000,
-      "initial_step": 0.1,
-      "grad_step": 1e-4
-    }
-  }
+  "gram_schmidt_k": 10
 
 }

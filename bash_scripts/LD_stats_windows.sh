@@ -6,8 +6,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
-#SBATCH --partition=gpu,kerngpu,gpulong
-#SBATCH --gres=gpu:1
+#SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -23,7 +22,6 @@ module --ignore_cache purge || true
 # Example (replace with your working module):
 module --ignore_cache load cuda/11.8
 
-
 # --- Conda env ---
 source ~/miniforge3/etc/profile.d/conda.sh
 conda activate snakemake-env
@@ -36,10 +34,10 @@ export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
 mkdir -p "$CUPY_CACHE_DIR"
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=50
+BATCH_SIZE=1
 # ----------------------------------------------------------------------------
 
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

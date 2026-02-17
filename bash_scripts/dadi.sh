@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer_cpu
-#SBATCH --array=0-9999
+#SBATCH --array=0-99
 #SBATCH --output=logs/dadi_cpu_%A_%a.out
 #SBATCH --error=logs/dadi_cpu_%A_%a.err
 #SBATCH --time=15:00:00
@@ -15,12 +15,12 @@
 
 set -euo pipefail
 
-BATCH_SIZE=50
+BATCH_SIZE=1
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_drosophila_three_epoch.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json}"
 export EXP_CFG="$CFG"
 
 # Hard-disable GPU visibility (belt + suspenders)

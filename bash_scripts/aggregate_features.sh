@@ -9,7 +9,7 @@
 #SBATCH --account=kernlab
 #SBATCH --requeue
 set -euo pipefail
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_isolation.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json"
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
@@ -22,14 +22,14 @@ DATA_TARGETS=(
   "experiments/${MODEL}/modeling/datasets/train_targets.pkl"
   "experiments/${MODEL}/modeling/datasets/tune_features.pkl"
   "experiments/${MODEL}/modeling/datasets/tune_targets.pkl"
-  "experiments/${MODEL}/modeling/datasets/validation_features.pkl"
-  "experiments/${MODEL}/modeling/datasets/validation_targets.pkl"
+  "experiments/${MODEL}/modeling/datasets/val_features.pkl"
+  "experiments/${MODEL}/modeling/datasets/val_targets.pkl"
   "experiments/${MODEL}/modeling/datasets/normalized_train_features.pkl"
   "experiments/${MODEL}/modeling/datasets/normalized_train_targets.pkl"
   "experiments/${MODEL}/modeling/datasets/normalized_tune_features.pkl"
   "experiments/${MODEL}/modeling/datasets/normalized_tune_targets.pkl"
-  "experiments/${MODEL}/modeling/datasets/normalized_validation_features.pkl"
-  "experiments/${MODEL}/modeling/datasets/normalized_validation_targets.pkl"
+  "experiments/${MODEL}/modeling/datasets/normalized_val_features.pkl"
+  "experiments/${MODEL}/modeling/datasets/normalized_val_targets.pkl"
   "experiments/${MODEL}/modeling/datasets/split_indices.json"
   "experiments/${MODEL}/modeling/datasets/features_scatterplot.png"
   "experiments/${MODEL}/modeling/datasets/mse_bars_train_normalized.png"
