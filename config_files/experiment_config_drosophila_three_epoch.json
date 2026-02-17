@@ -11,7 +11,7 @@
   "seed": 42,
   "num_optimizations": 1,
   "top_k": 1,
-  "num_draws": 500,
+  "num_draws": 50,
   "priors": {
     "N0": [
       5000,
@@ -42,7 +42,17 @@
       9000
     ]
   },
+  "parameter_order": [
+    "N0",
+    "AFR",
+    "EUR_bottleneck",
+    "EUR_recover",
+    "T_AFR_expansion",
+    "T_AFR_EUR_split",
+    "T_EUR_expansion"
+  ],
   "fixed_parameters": {
+    "N0": "sampled"
   }, 
   "selection": {
     "enabled": true,
@@ -60,7 +70,7 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": false,
+  "use_gpu_ld": true,
   "use_gpu_dadi": false, 
   "gram_schmidt": true,
   "gram_schmidt_k": 10

@@ -1,5 +1,5 @@
 {
-    "genome_length": 1e5,
+    "genome_length": 1e6,
     "mutation_rate": 1.45e-09,
     "recombination_rate": 1.45e-09,
     "demographic_model": "split_migration_growth",
@@ -9,9 +9,9 @@
         "FR": 20
     },
     "seed": 42,
-    "num_optimizations": 100,
-    "top_k": 5,
-    "num_draws": 1,
+    "num_optimizations": 1,
+    "top_k": 1,
+    "num_draws": 10,
     "priors": {
         "N_ANC": [
             3162,
@@ -42,6 +42,17 @@
             1e-3
         ]
     },
+    "fixed_parameters": {
+    },
+    "parameter_order": [
+    "N_ANC",
+    "N_CO", 
+    "N_FR0",
+    "N_FR1",
+    "T",
+    "m_CO_FR", 
+    "m_FR_CO"
+  ], 
     "selection": {
         "enabled": true,
         "species": "HomSap",
@@ -58,6 +69,6 @@
     ],
     "use_residuals": false,
     "residual_engines": "moments",
-    "engine": "slim",
+    "engine": "msprime",
     "use_gpu_ld": true
 }

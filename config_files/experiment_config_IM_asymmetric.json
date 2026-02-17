@@ -1,5 +1,5 @@
 {
-  "genome_length": 5e7,
+  "genome_length": 1e7,
   "mutation_rate": 1.5e-08,
   "recombination_rate": 1.5e-08,
   "demographic_model": "IM_asymmetric",
@@ -10,7 +10,7 @@
   "seed": 295,
   "num_optimizations": 1,
   "top_k": 1,
-  "num_draws": 1,
+  "num_draws": 100,
   "parameter_order": [
     "N_anc",
     "N_YRI", 
@@ -60,7 +60,7 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": false,
   "use_gpu_dadi": false
 }
