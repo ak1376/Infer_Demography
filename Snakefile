@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
+EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -107,7 +107,7 @@ rule all:
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
 
             # LD artifacts (simulated; best-fit only)
-            expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+            # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
 
             # FIM (simulated)
             # expand(
@@ -1104,53 +1104,42 @@ rule xgboost:
         test -f "{output.fi}"
         """
 
-##############################################################################
-# RULE download_1000G_data – Download and prepare 1000 Genomes data         #
-##############################################################################
-rule download_1000G_data:
+rule recode_haploid_to_diploid_Chr2L:
+    """
+    Recode haploid-coded GTs in Chr2L.vcf.gz to diploid-coded GTs,
+    BGZF-compress, and tabix-index.
+    """
+    input:
+        vcf="drosophila_data/data/Chr2L.vcf.gz",
+        tbi="drosophila_data/data/Chr2L.vcf.gz.tbi",
     output:
-        vcf      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
-        tbi      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz.tbi",
-        yri      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI.samples",
-        ceu      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/CEU.samples",
-        chb      = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/CHB.samples",
-        popfile  = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
-        done     = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/.download_done"
+        vcf="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
+        tbi="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
+    params:
+        script="/sietch_colab/akapoor/Infer_Demography/snakemake_scripts/recode_haploid_to_diploid.py",
+        tmp_vcf="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf",  # Changed to match output dir
+    threads: 1
     shell:
         r"""
         set -euo pipefail
 
-        # Run the download and preparation script, passing the output directory
-        bash bash_scripts/download_and_prepare_1000G_YRI_CEU_CHB.sh \
-          "$(dirname {output.vcf})"
-
-        # Verify all expected outputs exist
-        test -f "{output.vcf}" && \
-        test -f "{output.tbi}" && \
-        test -f "{output.yri}" && \
-        test -f "{output.ceu}" && \
-        test -f "{output.chb}" && \
-        test -f "{output.popfile}"
-
-        # Create completion marker
-        touch "{output.done}"
-
-        echo "✓ 1000 Genomes data download and preparation complete"
+        # Ensure output directory exists
+        mkdir -p "$(dirname "{params.tmp_vcf}")"
+        
+        python "{params.script}" "{input.vcf}" "{params.tmp_vcf}"
+        bgzip -f "{params.tmp_vcf}"
+        tabix -f -p vcf "{output.vcf}"
         """
 
-
-
 ##############################################################################
-# RULE compute_real_data_sfs – build 3D SFS from YRI/CEU/CHB VCF             #
+# RULE compute_real_data_sfs            
 ##############################################################################
 rule compute_real_data_sfs:
     input:
-        vcf     = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
-        popfile = "real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile",
+        vcf     = "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
+        popfile = "real_data_analysis/data/drosophila/popfile.txt",
     output:
-        sfs = f"real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl"
-    params:
-        config = "config_files/experiment_config_OOA_three_pop.json",
+        sfs = f"real_data_analysis/data/drosophila/drosophila.sfs.pkl"
     shell:
         r"""
         set -euo pipefail
@@ -1158,10 +1147,8 @@ rule compute_real_data_sfs:
         python snakemake_scripts/real_data_sfs.py \
           --input-vcf {input.vcf} \
           --popfile   {input.popfile} \
-          --config    {params.config} \
           --output-sfs {output.sfs}
         """
-
 
 
 ##############################################################################
@@ -1173,7 +1160,7 @@ rule infer_moments_real:
     Uses the same model + config, but stores results in runs/run_real_{opt}.
     """
     input:
-        sfs = f"real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
+        sfs = f"real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
         # One run directory per opt, mirroring simulations:
         pkl = f"real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl"

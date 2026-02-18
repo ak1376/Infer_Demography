@@ -69,6 +69,6 @@
     ],
     "use_residuals": false,
     "residual_engines": "moments",
-    "engine": "msprime",
+    "engine": "slim",
     "use_gpu_ld": true
 }
