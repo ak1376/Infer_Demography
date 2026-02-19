@@ -128,14 +128,29 @@ def normalise_df(df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]
 
 def param_dicts(tool: str, blob: dict) -> List[Dict[str, float]]:
     """Return a list of {param: value} dicts (1 per replicate) from all_inferences.pkl."""
-    if not blob:
+    if not isinstance(blob, dict) or not blob:
         return []
-    if tool.lower() == "momentsld" and isinstance(blob.get("opt_params"), dict):
-        return [blob["opt_params"]]
+
+    t = tool.lower()
+
+    # MomentsLD stores a single best-fit dict under best_params (no replicates)
+    if t == "momentsld":
+        bp = blob.get("best_params")
+        if isinstance(bp, dict):
+            return [bp]
+        op = blob.get("opt_params")  # support older formats just in case
+        if isinstance(op, dict):
+            return [op]
+        return []
+
+    # dadi/moments store a list (one per replicate) or a single dict
     bp = blob.get("best_params")
     if isinstance(bp, list):
-        return bp
-    return [bp] if isinstance(bp, dict) else []
+        return [d for d in bp if isinstance(d, dict)]
+    if isinstance(bp, dict):
+        return [bp]
+    return []
+
 
 
 def infer_common_params(features_df: pd.DataFrame, targets_df: pd.DataFrame, tools: Sequence[str]) -> List[str]:
@@ -556,6 +571,8 @@ def filter_extreme_outliers(
                 fh.write(counts.to_string(index=False))
                 fh.write("\n")
         else:
+            # Write an empty TSV with headers so Snakemake outputs are consistent.
+            outliers_df.to_csv(outliers_path, sep="\t", index=False)
             with open(preview_path, "w") as fh:
                 fh.write("Outlier filtering summary\n")
                 fh.write("=========================\n")

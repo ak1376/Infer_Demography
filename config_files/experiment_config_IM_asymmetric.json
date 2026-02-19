@@ -1,5 +1,5 @@
 {
-  "genome_length": 1e7,
+  "genome_length": 1e6,
   "mutation_rate": 1.5e-08,
   "recombination_rate": 1.5e-08,
   "demographic_model": "IM_asymmetric",
@@ -10,7 +10,7 @@
   "seed": 295,
   "num_optimizations": 1,
   "top_k": 1,
-  "num_draws": 100,
+  "num_draws": 50,
   "parameter_order": [
     "N_anc",
     "N_YRI", 
@@ -46,21 +46,25 @@
     ]
   },
   "selection": {
-    "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
       30
-    ]
+    ], 
+    "slim_scaling": 10, 
+    "slim_burn_in": 5
   },
-  "use_fim_features": true,
+  "use_fim_features": false,
   "fim_engines": [
     "moments"
   ],
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "slim",
-  "use_gpu_ld": false,
-  "use_gpu_dadi": false
+  "use_gpu_ld": true,
+  "use_gpu_dadi": false,
+  "gram_schmidt": false,
+  "gram_schmidt_k": 10
+
 }

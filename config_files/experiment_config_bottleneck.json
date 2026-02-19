@@ -8,9 +8,9 @@
         "ANC": 10
     }, 
     "seed": 42, 
-    "num_optimizations": 100, 
-    "top_k": 5, 
-    "num_draws": 5000,
+    "num_optimizations": 1, 
+    "top_k": 1, 
+    "num_draws": 50,
     "priors": {
     "N0"                : [2000, 20000],
     "N_bottleneck"      : [100, 1999],
@@ -18,19 +18,36 @@
     "t_bottleneck_start": [1701, 3000],
     "t_bottleneck_end"  : [ 100,  1700]
     }, 
+    "parameter_order": [
+    "N0",
+    "N_bottleneck",
+    "N_recover",
+    "t_bottleneck_start",
+    "t_bottleneck_end"
+    ],
     
     "fixed_parameters": {
-    }, 
+    },   
     "selection": {
-    "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
-    "coverage_percent": [1, 30]
-    },
-    "use_fim_features": true,
-    "fim_engines": ["moments"],
-    "use_residuals": true,
-    "residual_engines": "moments", 
-    "engine": "msprime", 
-    "use_gpu_ld": true
+    "coverage_percent": [
+      1,
+      30
+    ], 
+    "slim_scaling": 10, 
+    "slim_burn_in": 5
+  },
+  "use_fim_features": false,
+  "fim_engines": [
+    "moments"
+  ],
+  "use_residuals": false,
+  "residual_engines": "moments",
+  "engine": "slim",
+  "use_gpu_ld": false,
+  "use_gpu_dadi": false,
+  "gram_schmidt": false,
+  "gram_schmidt_k": 10
+
 }

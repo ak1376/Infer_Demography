@@ -198,7 +198,7 @@ def fit_model(
         opt = _make_opt(nlopt.LD_LBFGS)
         xhat = opt.optimize(x0)
 
-    except nlopt.runtime_error:
+    except RuntimeError:
         print("[DADI DEBUG] LD_LBFGS runtime_error; capturing debug state and falling back to LN_COBYLA")
         debug_txt = _build_debug_txt("lbfgs_runtime_error")
 
@@ -209,7 +209,7 @@ def fit_model(
         opt_fb = _make_opt(nlopt.LN_COBYLA)
         try:
             xhat = opt_fb.optimize(np.asarray(x_start, float))
-        except nlopt.runtime_error:
+        except RuntimeError:
             print("[DADI DEBUG] LN_COBYLA runtime_error too; capturing debug state and re-raising")
             debug_txt = _build_debug_txt("cobyla_runtime_error")
             raise

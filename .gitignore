@@ -50,3 +50,5 @@ pipeline_debugging_scripts/create_sfs_from_real_data_test.py
 pipeline_debugging_scripts/split_migration_growth_debug.py
 pipeline_debugging_scripts/scaling_comparison_metrics.csv
 test_theta_profiled_moments.py
+old_experiments_full_range_BGS/
+test_experiments/

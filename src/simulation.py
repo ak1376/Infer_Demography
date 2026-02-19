@@ -99,7 +99,12 @@ def simulation_runner(
     print("contig.mutation_rate:", contig.mutation_rate)
     print("contig.recombination_map.mean_rate:", contig.recombination_map.mean_rate)
 
-
+    # Ensure that the sampled_params and the parameter_order have the same parameter names 
+    # assert set(experiment_config.get("sampled_params", {}).keys()) == set(experiment_config.get("parameter_order", [])), (
+    #     "Mismatch between sampled_params and parameter_order keys. "
+    #     f"sampled_params keys: {set(experiment_config.get('sampled_params', {}).keys())}, " 
+    #     f"parameter_order: {experiment_config.get('parameter_order', [])}"
+    # )
 
     if experiment_config.get("engine") == "slim":
 
@@ -176,6 +181,16 @@ def create_SFS(ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")
         if len(samps) == 0:
             raise ValueError(f"Population '{name}' (id={pid}) has zero samples in this TS.")
         sample_sets.append(samps)
+
+    # Ensure that the order of the sample_sets matches the order of pop_names (and thus moments SFS axes)
+    assert len(sample_sets) == len(pop_names), "Mismatch between sample_sets and pop_names lengths."
+    for i, name in enumerate(pop_names):
+        assert pop_id_by_name(ts, name) == ts.populations()[i].id, (
+            f"Population '{name}' is not in the expected order."
+        )
+        assert pop_id_by_name(ts, name) == ts.populations()[i].id, (
+            f"Population '{name}' is not in the expected order."
+        )
 
     sfs = ts.allele_frequency_spectrum(
         sample_sets=sample_sets,
@@ -347,6 +362,10 @@ def run_one_simulation_to_dir(
     sim_cfg = dict(cfg)
     if simulation_seed is not None:
         sim_cfg["seed"] = simulation_seed
+
+    # Some common pitfalls to avoid:
+    # - Having different parameters in the parameter order vs the sampled params
+    # - Ensure the order of the populations (make sure they are not flipped in the SFS) 
 
     ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
     sfs = create_SFS(ts, pop_names = tuple(list(cfg['num_samples'].keys())))
