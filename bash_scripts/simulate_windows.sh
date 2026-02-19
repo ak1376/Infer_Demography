@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=win_sim
-#SBATCH --array=0-4999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/win_sim_%A_%a.out
 #SBATCH --error=logs/win_sim_%A_%a.err
 #SBATCH --time=6:00:00
@@ -18,14 +18,14 @@ set -euo pipefail
 # --- config ---
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json}"
 export EXP_CFG="$CFG"
 
 NUM_DRAWS=$(jq -r '.num_draws' "$CFG")
 MODEL=$(jq -r '.demographic_model' "$CFG")
 
 NUM_WINDOWS="${NUM_WINDOWS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-1}"
+BATCH_SIZE="${BATCH_SIZE:-50}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-200}"
 
 TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))

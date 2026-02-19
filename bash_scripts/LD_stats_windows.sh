@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=ld_stats
-#SBATCH --array=0-4999
+#SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -34,10 +34,10 @@ export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
 mkdir -p "$CUPY_CACHE_DIR"
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1
+BATCH_SIZE=50
 # ----------------------------------------------------------------------------
 
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json"
+CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 

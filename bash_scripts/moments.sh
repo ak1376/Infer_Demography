@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=moments_infer
-#SBATCH --array=0-49
+#SBATCH --array=0-9999
 #SBATCH --output=logs/moments_%A_%a.out
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=15:00:00
@@ -16,13 +16,13 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=1   # number of (sim,opt) pairs per array element
+BATCH_SIZE=50   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json}"
+CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json}"
 export EXP_CFG="$CFG"
 
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
