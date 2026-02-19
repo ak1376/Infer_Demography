@@ -33,7 +33,7 @@ NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
 NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
-WINDOW_SIZE   = 1_000_000
+WINDOW_SIZE   = 10_000_000
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
@@ -83,6 +83,9 @@ LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 
 # Real-data LD mirrors LD_ROOT but without sid
 REAL_LD_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD"
+REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis/runs"
+REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences"
+REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
 
 # LD r-bins
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
@@ -170,22 +173,22 @@ rule all:
             # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
             # "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
 
-            # # ---------------- REAL DATA: per-opt inference ----------------
-            # expand(
-            #     "real_data_analysis/runs/run_{opt}/inferences/moments/best_fit.pkl",
-            #     opt=OPTIMS
-            # ),
-            # expand(
-            #     "real_data_analysis/runs/run_{opt}/inferences/dadi/best_fit.pkl",
-            #     opt=OPTIMS
-            # ),
+            # ---------------- REAL DATA: per-opt inference ----------------
+            expand(
+                f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl",
+                opt=REAL_OPTIMS
+            ),
+            expand(
+                f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl",
+                opt=REAL_OPTIMS
+            ),
 
-            # # ---------------- REAL DATA: aggregated inference ----------------
-            # "real_data_analysis/inferences/moments/best_fit.pkl",
-            # "real_data_analysis/inferences/dadi/best_fit.pkl",
+            # ---------------- REAL DATA: aggregated inference ----------------
+            f"{REAL_INF_ROOT}/moments/best_fit.pkl",
+            f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
 
             # ---------------- REAL DATA: LD (single window test) ----------------
-            expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
+            # expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
             # expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
         )
 
@@ -1197,9 +1200,9 @@ rule infer_moments_real:
     input:
         sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        pkl = "real_data_analysis/runs/run_{opt}/inferences/moments/best_fit.pkl"
+        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl"
     params:
-        run_dir  = lambda w: f"real_data_analysis/runs/run_{w.opt}",
+        run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
@@ -1221,6 +1224,7 @@ rule infer_moments_real:
         """
 
 
+
 ##############################################################################
 # REAL DATA – NLopt Poisson SFS optimisation (dadi)
 ##############################################################################
@@ -1228,9 +1232,9 @@ rule infer_dadi_real:
     input:
         sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        pkl = "real_data_analysis/runs/run_{opt}/inferences/dadi/best_fit.pkl"
+        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl"
     params:
-        run_dir  = lambda w: f"real_data_analysis/runs/run_{w.opt}",
+        run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
@@ -1254,12 +1258,9 @@ rule infer_dadi_real:
 # ── REAL DATA: MOMENTS ONLY ────────────────────────────────────────────────
 rule aggregate_opts_moments_real:
     input:
-        mom = [
-            f"real_data_analysis/runs/run_{o}/inferences/moments/best_fit.pkl"
-            for o in range(NUM_REAL_OPTIMS)
-        ]
+        mom = [f"{REAL_RUN_ROOT}/run_{o}/inferences/moments/best_fit.pkl" for o in range(NUM_REAL_OPTIMS)]
     output:
-        mom = "real_data_analysis/inferences/moments/best_fit.pkl"
+        mom = f"{REAL_INF_ROOT}/moments/best_fit.pkl"
     run:
         import pickle, numpy as np, pathlib
 
@@ -1302,12 +1303,9 @@ rule aggregate_opts_moments_real:
 # ── REAL DATA: DADI ONLY ───────────────────────────────────────────────────
 rule aggregate_opts_dadi_real:
     input:
-        dadi = [
-            f"real_data_analysis/runs/run_{o}/inferences/dadi/best_fit.pkl"
-            for o in range(NUM_REAL_OPTIMS)
-        ]
+        dadi = [f"{REAL_RUN_ROOT}/run_{o}/inferences/dadi/best_fit.pkl" for o in range(NUM_REAL_OPTIMS)]
     output:
-        dadi = "real_data_analysis/inferences/dadi/best_fit.pkl"
+        dadi = f"{REAL_INF_ROOT}/dadi/best_fit.pkl"
     run:
         import pickle, numpy as np, pathlib
 

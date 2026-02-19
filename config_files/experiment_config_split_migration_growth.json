@@ -9,8 +9,8 @@
         "FR": 20
     },
     "seed": 42,
-    "num_optimizations": 1,
-    "top_k": 1,
+    "num_optimizations": 100,
+    "top_k": 5,
     "num_draws": 10,
     "priors": {
         "N_ANC": [
@@ -84,5 +84,6 @@
     "profile_points": 41,
     "profile_widen": 0.5,
     "profile_make_plots": true,
-    "profile_theta": true
+    "profile_theta": true, 
+    "start_jitter_sigma": 0.05
 }
