@@ -1,5 +1,5 @@
 {
-    "genome_length": 1e6,
+    "genome_length": 23011544,
     "mutation_rate": 1.45e-09,
     "recombination_rate": 1.45e-09,
     "demographic_model": "split_migration_growth",
@@ -42,6 +42,15 @@
             1e-3
         ]
     },
+    "priors_real_data_analysis": {
+        "N_ANC":   [1, 1],          
+        "N_CO":    [1e-3, 10.0],    
+        "N_FR0":   [1e-3, 10.0],   
+        "N_FR1":   [1e-4, 10.0],    
+        "T":       [1e-4, 10.0], 
+        "m_CO_FR": [1e-6, 2.0], 
+        "m_FR_CO": [1e-6, 2.0]
+    },
     "fixed_parameters": {
     },
     "parameter_order": [
@@ -74,5 +83,6 @@
     "generate_profiles": true,
     "profile_points": 41,
     "profile_widen": 0.5,
-    "profile_make_plots": true
+    "profile_make_plots": true,
+    "profile_theta": true
 }

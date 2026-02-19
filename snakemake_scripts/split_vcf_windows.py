@@ -131,10 +131,8 @@ def main():
     # Generate the requested window(s)
     for i in window_indices:
         w_start = int(start_pos + i * step_size)
-        w_end = w_start + args.window_size
-
-        # Ensure we don't go beyond VCF end (allow small buffer)
-        if w_end > end_pos + 1000:
+        w_end = w_start + args.window_size - 1
+        if w_end > end_pos:
             w_end = end_pos
 
         print(f"Generating window {i}: {chrom}:{w_start}-{w_end}")
@@ -142,8 +140,7 @@ def main():
         win_vcf = args.out_dir / f"window_{i}.vcf.gz"
         cmd = f"bcftools view -r {chrom}:{w_start}-{w_end} -O z -o '{win_vcf}' '{args.input_vcf}'"
         run_command(cmd)
-        # Indexing the window VCF is optional here
-        # run_command(f"bcftools index -t '{win_vcf}'")
+        run_command(f"bcftools index -t '{win_vcf}'")
 
     # Generate the single flat_map.txt covering the whole VCF range
     map_out = args.out_dir / "flat_map.txt"

@@ -33,6 +33,7 @@ NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
 NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
+WINDOW_SIZE   = 1_000_000
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
@@ -41,6 +42,11 @@ USE_GPU_LD = CFG.get("use_gpu_ld", False)
 USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 
 USE_GS = bool(CFG.get("gram_schmidt", False))
+
+# Make sure these match files that actually exist in your repo
+REAL_VCF     = "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz"
+REAL_POPFILE = "real_data_analysis/data/drosophila/popfile.txt"
+
 
 def _resid_vector_fname():
     # which vector do we want to feed into all_inferences.pkl?
@@ -85,71 +91,104 @@ R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 SIM_IDS  = [i for i in range(NUM_DRAWS)]
 WINDOWS  = range(NUM_WINDOWS)
 
-# ##############################################################################
-# # RULE all – final targets the workflow must create                          #
-# ##############################################################################
+##############################################################################
+# RULE all – final targets the workflow must create
+##############################################################################
 rule all:
     input:
-        [
-            ## ---------------- SIMULATED DATA PIPELINE ----------------
-            expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+        (
+            # ---------------- SIMULATED DATA ----------------
+            # expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
+            # expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
+            # expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
+            # expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-            ## Aggregated optimizer results (simulated)
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",   sid=SIM_IDS),
-            # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl", sid=SIM_IDS, opt=OPTIMS),
-            # expand(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",   sid=SIM_IDS, opt=OPTIMS),
+            # # ---------------- SIMULATED: per-opt inference ----------------
+            # expand(
+            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+            #     sid=SIM_IDS, opt=OPTIMS
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
+            #     sid=SIM_IDS, opt=OPTIMS
+            # ),
 
-            ## Cleanup completion markers (simulated)
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt", sid=SIM_IDS),
+            # # ---------------- SIMULATED: aggregated inference ----------------
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
+            #     sid=SIM_IDS
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
+            #     sid=SIM_IDS
+            # ),
 
-            # LD artifacts (simulated; best-fit only)
-            # expand(f"{LD_ROOT}/best_fit.pkl", sid=SIM_IDS),
+            # # ---------------- SIMULATED: cleanup marker ----------------
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",
+            #     sid=SIM_IDS
+            # ),
 
-            # FIM (simulated)
+            # # ---------------- SIMULATED: LD best-fit ----------------
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
+            #     sid=SIM_IDS
+            # ),
+
+            # # ---------------- SIMULATED: FIM ----------------
             # expand(
             #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
             #     sid=SIM_IDS, engine=FIM_ENGINES
             # ),
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json",
+            #     sid=SIM_IDS, engine=FIM_ENGINES
+            # ),
 
-            # Residuals (simulated)
+            # # ---------------- SIMULATED: residuals ----------------
             # expand(
             #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
             #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
             # ),
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
+            #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
+            # ),
 
-            # Combined per-sim inference blobs (simulated)
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
+            # # ---------------- SIMULATED: combined blob ----------------
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
+            #     sid=SIM_IDS
+            # ),
 
-            # ---------------- MODELING (on simulated inferences) ----------------
+            # # ---------------- MODELING ----------------
             # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
             # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
 
-            # ---------------- REAL DATA ----------------
-            # Real-data SFS
-            # f"experiments/{MODEL}/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
+            # # ---------------- REAL DATA (DROSOPHILA) ----------------
+            # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
+            # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
+            # "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
 
-            # # REAL DATA: per-optimization SFS inferences
-            # *expand(
-            #     f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl",
-            #     opt=OPTIMS,
+            # # ---------------- REAL DATA: per-opt inference ----------------
+            # expand(
+            #     "real_data_analysis/runs/run_{opt}/inferences/moments/best_fit.pkl",
+            #     opt=OPTIMS
             # ),
-            # *expand(
-            #     f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/dadi/fit_params.pkl",
-            #     opt=OPTIMS,
+            # expand(
+            #     "real_data_analysis/runs/run_{opt}/inferences/dadi/best_fit.pkl",
+            #     opt=OPTIMS
             # ),
 
-            # # REAL DATA: aggregated inferences
-            # f"experiments/{MODEL}/real_data_analysis/inferences/moments/fit_params.pkl",
-            # f"experiments/{MODEL}/real_data_analysis/inferences/dadi/fit_params.pkl",
+            # # ---------------- REAL DATA: aggregated inference ----------------
+            # "real_data_analysis/inferences/moments/best_fit.pkl",
+            # "real_data_analysis/inferences/dadi/best_fit.pkl",
 
-            # *expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
-            # *expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS)
+            # ---------------- REAL DATA: LD (single window test) ----------------
+            expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
+            # expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
+        )
 
-        ]
 
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS
@@ -1155,15 +1194,10 @@ rule compute_real_data_sfs:
 # REAL DATA – NLopt Poisson SFS optimisation (moments)
 ##############################################################################
 rule infer_moments_real:
-    """
-    Run moments-based SFS inference on the real CEU/YRI SFS.
-    Uses the same model + config, but stores results in runs/run_real_{opt}.
-    """
     input:
-        sfs = f"real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+        sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        # One run directory per opt, mirroring simulations:
-        pkl = f"real_data_analysis/runs/run_{{opt}}/inferences/moments/fit_params.pkl"
+        pkl = "real_data_analysis/runs/run_{opt}/inferences/moments/best_fit.pkl"
     params:
         run_dir  = lambda w: f"real_data_analysis/runs/run_{w.opt}",
         cfg      = EXP_CFG,
@@ -1172,68 +1206,60 @@ rule infer_moments_real:
             if MODEL not in ["drosophila_three_epoch", "OOA_three_pop_Gutenkunst"]
             else f"src.simulation:{MODEL}"
         ),
-        fix      = ""  # you can plug in real-data fixes here if you want
     threads: 8
     shell:
         r"""
         set -euo pipefail
         PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
+        python snakemake_scripts/moments_dadi_inference_real.py \
           --mode moments \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
-          --generate-profiles \
-          {params.fix}
-
-        cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
+          -v
         """
+
 
 ##############################################################################
 # REAL DATA – NLopt Poisson SFS optimisation (dadi)
 ##############################################################################
 rule infer_dadi_real:
-    """
-    Run dadi-based SFS inference on the real CEU/YRI SFS.
-    Stores results in runs/run_real_{opt}.
-    """
     input:
-        sfs = f"experiments/{MODEL}/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.sfs.pkl",
+        sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        pkl = f"experiments/{MODEL}/real_data_analysis/runs/run_{{opt}}/inferences/dadi/fit_params.pkl"
+        pkl = "real_data_analysis/runs/run_{opt}/inferences/dadi/best_fit.pkl"
     params:
-        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/runs/run_{w.opt}",
+        run_dir  = lambda w: f"real_data_analysis/runs/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"src.simulation:{MODEL}_model"
             if MODEL not in ["drosophila_three_epoch", "OOA_three_pop_Gutenkunst"]
             else f"src.simulation:{MODEL}"
         ),
-        fix      = ""  # e.g. '--fix N0=10000' if you want to constrain N0 for real data
     threads: 8
     shell:
         r"""
         set -euo pipefail
         PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
+        python snakemake_scripts/moments_dadi_inference_real.py \
           --mode dadi \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
-          {params.fix}
-
-        cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
+          -v
         """
 
 # ── REAL DATA: MOMENTS ONLY ────────────────────────────────────────────────
 rule aggregate_opts_moments_real:
     input:
-        mom = [f"experiments/{MODEL}/real_data_analysis/runs/run_{o}/inferences/moments/fit_params.pkl"
-               for o in range(NUM_REAL_OPTIMS)]
+        mom = [
+            f"real_data_analysis/runs/run_{o}/inferences/moments/best_fit.pkl"
+            for o in range(NUM_REAL_OPTIMS)
+        ]
     output:
-        mom = f"experiments/{MODEL}/real_data_analysis/inferences/moments/fit_params.pkl"
+        mom = "real_data_analysis/inferences/moments/best_fit.pkl"
     run:
         import pickle, numpy as np, pathlib
 
@@ -1241,6 +1267,7 @@ rule aggregate_opts_moments_real:
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
 
         params, lls, opt_ids = [], [], []
+        thetas, nancs = [], []
 
         for opt_idx, pkl in enumerate(input.mom):
             d = pickle.load(open(pkl, "rb"))
@@ -1251,28 +1278,36 @@ rule aggregate_opts_moments_real:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
+            # optional useful metadata (safe even if missing)
+            thetas.extend(_as_list(d.get("theta_hat", np.nan)))
+            nancs.extend(_as_list(d.get("N_ANC_implied_from_theta", np.nan)))
+
         keep = np.argsort(lls)[::-1][:TOP_K]
 
         best = {
+            "mode": "moments",
             "best_params": [params[i] for i in keep],
             "best_ll":     [lls[i]    for i in keep],
             "opt_index":   [opt_ids[i] for i in keep],
+            "theta_hat":   [thetas[i] for i in keep],
+            "N_ANC_implied_from_theta": [nancs[i] for i in keep],
         }
 
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.mom, "wb"))
 
         print(f"✅ [REAL] Aggregated {len(params)} moments optimization results → {output.mom}")
-        print(f"✅ [REAL] Kept top-{TOP_K} moments optimizations (opts={sorted(set(best['opt_index']))})")
 
 
 # ── REAL DATA: DADI ONLY ───────────────────────────────────────────────────
 rule aggregate_opts_dadi_real:
     input:
-        dadi = [f"experiments/{MODEL}/real_data_analysis/runs/run_{o}/inferences/dadi/fit_params.pkl"
-                for o in range(NUM_REAL_OPTIMS)]
+        dadi = [
+            f"real_data_analysis/runs/run_{o}/inferences/dadi/best_fit.pkl"
+            for o in range(NUM_REAL_OPTIMS)
+        ]
     output:
-        dadi = f"experiments/{MODEL}/real_data_analysis/inferences/dadi/fit_params.pkl"
+        dadi = "real_data_analysis/inferences/dadi/best_fit.pkl"
     run:
         import pickle, numpy as np, pathlib
 
@@ -1280,6 +1315,7 @@ rule aggregate_opts_dadi_real:
             return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
 
         params, lls, opt_ids = [], [], []
+        thetas, nancs = [], []
 
         for opt_idx, pkl in enumerate(input.dadi):
             d = pickle.load(open(pkl, "rb"))
@@ -1290,51 +1326,53 @@ rule aggregate_opts_dadi_real:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
+            thetas.extend(_as_list(d.get("theta_hat", np.nan)))
+            nancs.extend(_as_list(d.get("N_ANC_implied_from_theta", np.nan)))
+
         keep = np.argsort(lls)[::-1][:TOP_K]
 
         best = {
+            "mode": "dadi",
             "best_params": [params[i] for i in keep],
             "best_ll":     [lls[i]    for i in keep],
             "opt_index":   [opt_ids[i] for i in keep],
+            "theta_hat":   [thetas[i] for i in keep],
+            "N_ANC_implied_from_theta": [nancs[i] for i in keep],
         }
 
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.dadi, "wb"))
 
         print(f"✅ [REAL] Aggregated {len(params)} dadi optimization results → {output.dadi}")
-        print(f"✅ [REAL] Kept top-{TOP_K} dadi optimizations (opts={sorted(set(best['opt_index']))})")
-
 
 
 ##############################################################################
 # REAL DATA LD ANALYSIS
 ##############################################################################
 
-# One job per window
 rule split_real_vcf_window:
     input:
-        vcf     = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.chr1.no_exons.vcf.gz",
-        popfile = "experiments/OOA_three_pop/real_data_analysis/data/data_chr1_YRI_CEU_CHB/YRI_CEU_CHB.popfile"
+        vcf     = REAL_VCF,
+        popfile = REAL_POPFILE,
     output:
         vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
     params:
         script      = "snakemake_scripts/split_vcf_windows.py",
-        window_size = 10_000_000,
+        window_size = WINDOW_SIZE,
         num_windows = NUM_WINDOWS
     shell:
-        """
-        python {params.script} \
-            --input-vcf {input.vcf} \
-            --popfile {input.popfile} \
-            --out-dir {REAL_LD_ROOT}/windows \
-            --window-size {params.window_size} \
-            --num-windows {params.num_windows} \
-            --window-index {wildcards.i}
-        """
+        r"""
+        set -euo pipefail
+        mkdir -p "{REAL_LD_ROOT}/windows"
 
-rule split_real_vcf:
-    input:
-        expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS)
+        python "{params.script}" \
+            --input-vcf "{input.vcf}" \
+            --popfile "{input.popfile}" \
+            --out-dir "{REAL_LD_ROOT}/windows" \
+            --window-size "{params.window_size}" \
+            --num-windows "{params.num_windows}" \
+            --window-index "{wildcards.i}"
+        """
 
 rule compute_ld_real:
     input:
@@ -1344,16 +1382,18 @@ rule compute_ld_real:
     params:
         script = "snakemake_scripts/compute_ld_window.py",
         config = EXP_CFG,
-        r_bins = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
+        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
     shell:
-        """
-        python {params.script} \
-            --sim-dir {REAL_LD_ROOT} \
-            --window-index {wildcards.i} \
-            --config-file {params.config} \
+        r"""
+        set -euo pipefail
+        mkdir -p "{REAL_LD_ROOT}/LD_stats"
+
+        python "{params.script}" \
+            --sim-dir "{REAL_LD_ROOT}" \
+            --window-index "{wildcards.i}" \
+            --config-file "{params.config}" \
             --r-bins "{params.r_bins}" \
             --use-gpu
-
         """
 
 rule real_ld:
