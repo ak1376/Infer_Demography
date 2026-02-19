@@ -70,5 +70,9 @@
     "use_residuals": false,
     "residual_engines": "moments",
     "engine": "slim",
-    "use_gpu_ld": true
+    "use_gpu_ld": true,
+    "generate_profiles": true,
+    "profile_points": 41,
+    "profile_widen": 0.5,
+    "profile_make_plots": true
 }

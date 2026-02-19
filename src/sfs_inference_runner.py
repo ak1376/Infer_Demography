@@ -289,13 +289,29 @@ def run_cli(
         sfs_m = moments.Spectrum(sfs)
         sfs_m.pop_ids = list(config_fit["num_samples"].keys())
 
+        # Save profiles under the SAME directory where best_fit.pkl will live:
+        # outdir/moments/likelihood_plots/
+        moments_dir = outdir / "moments"
+        moments_dir.mkdir(parents=True, exist_ok=True)
+
+        # Do NOT add any output dir to cfg. Just toggle profile behavior in-memory.
+        config_fit_local = config_fit
+        if generate_profiles:
+            config_fit_local = copy.deepcopy(config_fit)
+            config_fit_local["generate_profiles"] = True
+            config_fit_local["profile_points"] = int(profile_grid_points)
+            # optional defaults if not set in JSON
+            config_fit_local.setdefault("profile_widen", 0.5)
+            config_fit_local.setdefault("profile_make_plots", True)
+
         fitted_real, ll_value = moments_inference.fit_model(
             sfs=sfs_m,
             demo_model=model_func,
-            experiment_config=config_fit,   # <-- uses fixed bounds
+            experiment_config=config_fit_local,   # <-- uses fixed bounds
             start_vec=start_perturbed,
             param_order=param_order,
             verbose=verbose,
+            save_dir=moments_dir,                # <-- KEY: enables likelihood_plots location
         )
 
         best_params = {param_order[i]: float(fitted_real[i]) for i in range(len(param_order))}
