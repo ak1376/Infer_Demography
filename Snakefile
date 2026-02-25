@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
+EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -101,10 +101,10 @@ rule all:
     input:
         (
             # ---------------- SIMULATED DATA ----------------
-            # expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
             # # ---------------- SIMULATED: per-opt inference ----------------
             # expand(
@@ -173,21 +173,21 @@ rule all:
             # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
             # "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
 
-            # ---------------- REAL DATA: per-opt inference ----------------
-            expand(
-                f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl",
-                opt=REAL_OPTIMS
-            ),
-            expand(
-                f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl",
-                opt=REAL_OPTIMS
-            ),
+            # # ---------------- REAL DATA: per-opt inference ----------------
+            # expand(
+            #     f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl",
+            #     opt=REAL_OPTIMS
+            # ),
+            # expand(
+            #     f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl",
+            #     opt=REAL_OPTIMS
+            # ),
 
-            # ---------------- REAL DATA: aggregated inference ----------------
-            f"{REAL_INF_ROOT}/moments/best_fit.pkl",
-            f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
+            # # # ---------------- REAL DATA: aggregated inference ----------------
+            # f"{REAL_INF_ROOT}/moments/best_fit.pkl",
+            # f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
 
-            # ---------------- REAL DATA: LD (single window test) ----------------
+            # # ---------------- REAL DATA: LD (single window test) ----------------
             # expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
             # expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
         )

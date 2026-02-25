@@ -8,9 +8,9 @@
     "CEU": 10
   },
   "seed": 42,
-  "num_optimizations": 1,
-  "top_k": 1,
-  "num_draws": 100,
+  "num_optimizations": 100,
+  "top_k": 5,
+  "num_draws": 1,
   "priors": {
     "N_anc": [
       100,

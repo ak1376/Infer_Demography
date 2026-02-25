@@ -132,7 +132,7 @@ def _choose_pts_l(sfs: dadi.Spectrum, experiment_config: Dict[str, Any]) -> List
         return pts_l
 
     # Default heuristic (same spirit as your simulation dadi_inference.py)
-    pts_base = experiment_config.get("pts_base", [10, 20, 30])
+    pts_base = experiment_config.get("pts_base", [40, 50, 60])
     pts_base = [int(x) for x in pts_base]
 
     diploid_ns = [(dim - 1) // 2 for dim in sfs.shape]

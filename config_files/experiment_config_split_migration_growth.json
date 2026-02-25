@@ -1,5 +1,5 @@
 {
-    "genome_length": 23011544,
+    "genome_length": 24000000,
     "mutation_rate": 1.45e-09,
     "recombination_rate": 1.45e-09,
     "demographic_model": "split_migration_growth",
@@ -11,7 +11,7 @@
     "seed": 42,
     "num_optimizations": 100,
     "top_k": 5,
-    "num_draws": 10,
+    "num_draws": 1,
     "priors": {
         "N_ANC": [
             3162,
@@ -64,7 +64,7 @@
   ], 
     "selection": {
         "enabled": true,
-        "species": "HomSap",
+        "species": "DroMel",
         "dfe_id": "Gamma_K17",
         "coverage_percent": [
             0,
@@ -78,7 +78,7 @@
     ],
     "use_residuals": false,
     "residual_engines": "moments",
-    "engine": "slim",
+    "engine": "msprime",
     "use_gpu_ld": true,
     "generate_profiles": true,
     "profile_points": 41,
