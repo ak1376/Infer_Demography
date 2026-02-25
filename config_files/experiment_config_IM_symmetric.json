@@ -10,7 +10,7 @@
   "seed": 42,
   "num_optimizations": 100,
   "top_k": 5,
-  "num_draws": 1,
+  "num_draws": 5000,
   "priors": {
     "N_anc": [
       100,
@@ -46,7 +46,7 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      30
+      95
     ], 
     "slim_scaling": 10, 
     "slim_burn_in": 5

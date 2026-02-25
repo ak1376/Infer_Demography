@@ -1,9 +1,10 @@
+#!/usr/bin/env python3
 # src/feature_extraction_helpers.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 import json
 import pickle
 import re
@@ -12,13 +13,19 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
 # =============================================================================
-# Core utilities
+# Constants
 # =============================================================================
 
 TOOLS_DEFAULT: Tuple[str, ...] = ("dadi", "moments", "momentsLD")
 
+# New covariate feature/target column name
+BGS_COVERAGE_COL: str = "bgs_target_coverage_frac"
+
+
+# =============================================================================
+# IO utilities
+# =============================================================================
 
 def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text())
@@ -38,18 +45,58 @@ def load_pickle(path: Path) -> Any:
     return pickle.loads(path.read_bytes())
 
 
+# =============================================================================
+# BGS coverage reader
+# =============================================================================
+
+def read_bgs_target_coverage_frac(sim_dir: Path) -> float:
+    """
+    Read target_coverage_frac from <sim_dir>/bgs.meta.json.
+
+    - If bgs.meta.json is missing, malformed, or target_coverage_frac is null/missing:
+      returns 0.0 (neutral or no-BGS).
+    - Otherwise returns float(target_coverage_frac).
+    """
+    meta_path = sim_dir / "bgs.meta.json"
+    if not meta_path.exists():
+        return 0.0
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return 0.0
+
+    v = meta.get("target_coverage_frac", None)
+    if v is None:
+        return 0.0
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
+
+
+# =============================================================================
+# Stats / normalization helpers
+# =============================================================================
+
 def prior_stats(priors: Dict[str, List[float]]) -> Tuple[Dict[str, float], Dict[str, float]]:
     """Uniform priors ⇒ μ=(lo+hi)/2, σ=(hi-lo)/sqrt(12)."""
-    mu, sigma = {}, {}
+    mu: Dict[str, float] = {}
+    sigma: Dict[str, float] = {}
     for p, (lo, hi) in priors.items():
-        lo = float(lo); hi = float(hi)
+        lo = float(lo)
+        hi = float(hi)
         mu[p] = (lo + hi) / 2.0
         sigma[p] = (hi - lo) / np.sqrt(12.0)
     return mu, sigma
 
 
 def base_param(col: str) -> str:
-    """Strip tool prefix and optional _rep_ suffix to obtain the base parameter name."""
+    """
+    Strip tool prefix and optional _rep_ suffix to obtain the base parameter name.
+
+    Note: columns that are not tool-param columns (e.g. FIM_element_*, SFSres_*, BGS_COVERAGE_COL)
+    will just pass through unchanged except for _rep_ stripping behavior if present.
+    """
     name = col
     for pref in ("moments_", "dadi_", "momentsLD_"):
         if name.startswith(pref):
@@ -60,6 +107,13 @@ def base_param(col: str) -> str:
 
 
 def normalise_df(df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]) -> pd.DataFrame:
+    """
+    Z-score normalize columns whose base_param exists in mu/sigma.
+
+    If you want BGS coverage normalized, add:
+      priors["bgs_target_coverage_frac"] = [0.0, 1.0]
+    so it appears in mu/sigma.
+    """
     out = df.copy()
     for col in out.columns:
         k = base_param(col)
@@ -67,6 +121,10 @@ def normalise_df(df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]
             out[col] = (out[col] - mu[k]) / sigma[k]
     return out
 
+
+# =============================================================================
+# Inference extraction helpers
+# =============================================================================
 
 def param_dicts(tool: str, blob: dict) -> List[Dict[str, float]]:
     """Return a list of {param: value} dicts (1 per replicate) from all_inferences.pkl."""
@@ -122,15 +180,18 @@ def per_sim_mse_array(
     for sid in idx:
         if sid not in features_df.index or sid not in targets_df.index:
             continue
-        vals = []
+
+        vals: List[float] = []
         for col in cols:
             v = features_df.at[sid, col]
             if pd.notna(v):
                 vals.append(float(v))
         if not vals:
             continue
+
         pred = float(np.mean(vals))
         tru = float(targets_df.at[sid, param])
+
         if normalized:
             s = float(sigma.get(param, 0.0))
             if s <= 0:
@@ -138,6 +199,7 @@ def per_sim_mse_array(
             se = ((pred - tru) / s) ** 2
         else:
             se = (pred - tru) ** 2
+
         out_vals.append(se)
 
     return np.asarray(out_vals, dtype=float)
@@ -159,7 +221,7 @@ def norm_resid_engines(val: Any) -> List[str]:
 
 
 # =============================================================================
-# Plotting helpers (moved verbatim-ish)
+# Plotting helpers
 # =============================================================================
 
 def plot_mse_bars_with_sem(
@@ -248,7 +310,7 @@ def plot_estimates_vs_truth_grid_multi_rep(
     params = list(params)
     colorize_reps_tools = set(colorize_reps_tools)
 
-    palette = plt.rcParams["axes.prop_cycle"].by_key().get("color", []) or ["C0","C1","C2","C3","C4","C5"]
+    palette = plt.rcParams["axes.prop_cycle"].by_key().get("color", []) or ["C0", "C1", "C2", "C3", "C4", "C5"]
     tool_color = {tool: palette[i % len(palette)] for i, tool in enumerate(tools)}
 
     n_rows, n_cols = len(tools), len(params)
@@ -384,8 +446,8 @@ def filter_extreme_outliers(
       - NaN/inf OR
       - outside prior bounds (with tol) AND |z|>zmax
 
-    Returns:
-      (features_kept, targets_kept, keep_mask, outliers_df)
+    Note: This only considers columns whose base_param(col) is present in priors.
+    So BGS_COVERAGE_COL is ignored unless you add it to priors.
     """
     def _parse_tool_rep(col: str) -> Tuple[str, Optional[int]]:
         tool = col.split("_", 1)[0]
@@ -454,7 +516,11 @@ def filter_extreme_outliers(
 
         keep &= ~bad
 
-    outliers_df = pd.DataFrame(outlier_records).sort_values(["sid", "column"]) if outlier_records else pd.DataFrame()
+    outliers_df = (
+        pd.DataFrame(outlier_records).sort_values(["sid", "column"])
+        if outlier_records
+        else pd.DataFrame()
+    )
 
     # optional write
     if save_dir is not None:
@@ -538,10 +604,17 @@ def build_feature_target_tables(
         if not truth_pickle.exists():
             continue
 
-        truth = pickle.load(truth_pickle.open("rb"))
+        truth_raw = pickle.load(truth_pickle.open("rb"))
+        truth = dict(truth_raw)  # don't mutate original object
         data = pickle.load(inf_pickle.open("rb")) if inf_pickle.exists() else {}
 
+        sim_dir = sim_basedir / f"{sid}"
+        cov = read_bgs_target_coverage_frac(sim_dir)
+
         row: Dict[str, float] = {}
+
+        # ---- BGS coverage (feature + target)
+        truth[BGS_COVERAGE_COL] = float(cov)
 
         # ---- inferred params
         for tool in TOOLS_DEFAULT:
@@ -657,7 +730,6 @@ def write_metrics_and_plots(
     sigma: Dict[str, float],
     tools: Sequence[str] = TOOLS_DEFAULT,
 ) -> None:
-    # scatter grid
     plot_estimates_vs_truth_grid_multi_rep(
         features_df=features_df,
         targets_df=targets_df,
@@ -668,7 +740,6 @@ def write_metrics_and_plots(
         colorize_reps_tools=("momentsLD",),
     )
 
-    # metrics
     common_params = infer_common_params(features_df, targets_df, tools)
     metrics_all: Dict[str, Dict[str, Any]] = {}
 
@@ -688,7 +759,6 @@ def write_metrics_and_plots(
 
     dump_json(metrics_all, datasets_dir / "metrics_all.json", indent=4)
 
-    # bars
     title_val = "Normalized MSE by parameter (Validation; replicate-avg per simulation)"
     title_train = "Normalized MSE by parameter (Training; replicate-avg per simulation)"
 
@@ -717,7 +787,7 @@ def write_metrics_and_plots(
 
 
 # =============================================================================
-# One-call pipeline entrypoint (what your snakemake wrapper should call)
+# One-call pipeline entrypoint
 # =============================================================================
 
 def build_modeling_datasets(
@@ -772,33 +842,27 @@ def build_modeling_datasets(
         tune_pct=tune_pct,
     )
 
-    # build tables
     feat_df, targ_df = build_feature_target_tables(
         cfg,
         sim_basedir=sim_basedir,
         infer_basedir=infer_basedir,
     )
-
     if len(feat_df) == 0:
         raise RuntimeError("No rows loaded (did you generate inferences + sampled_params.pkl?).")
 
     datasets_dir = out_root / "datasets"
     datasets_dir.mkdir(parents=True, exist_ok=True)
 
-    # outlier filter ONCE
     of_cfg = OutlierFilterConfig(tol_rel=tol_rel, tol_abs=tol_abs, zmax=zmax, preview_rows=preview_rows)
     feat_df, targ_df, keep_mask, outliers_df = filter_extreme_outliers(
         feat_df, targ_df, priors, mu, sigma, of_cfg, save_dir=datasets_dir
     )
-
     if len(feat_df) == 0:
         raise RuntimeError("All rows were dropped as outliers; nothing to write.")
 
-    # normalize AFTER filter
     feat_norm_df = normalise_df(feat_df, mu, sigma)
     targ_norm_df = normalise_df(targ_df, mu, sigma)
 
-    # split
     split = split_indices(
         feat_df.index.to_numpy(),
         seed=seed,
@@ -806,7 +870,6 @@ def build_modeling_datasets(
         tune_pct=tune_pct,
     )
 
-    # write pickles
     write_dataset_pickles(
         datasets_dir=datasets_dir,
         features_df=feat_df,
@@ -816,7 +879,6 @@ def build_modeling_datasets(
         split=split,
     )
 
-    # metrics + plots
     write_metrics_and_plots(
         datasets_dir=datasets_dir,
         features_df=feat_df,
