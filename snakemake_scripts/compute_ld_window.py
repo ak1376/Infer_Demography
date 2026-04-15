@@ -81,7 +81,7 @@ def main():
         vcf_gz=vcf_gz,
         samples_file=samples_t,
         rec_map_file=rec_map_t,
-        ts_file=ts_file if ts_file.exists() else None,
+        ts_file= None,
         r_bins=r_bins,
         config=config,
         request_gpu=args.use_gpu,

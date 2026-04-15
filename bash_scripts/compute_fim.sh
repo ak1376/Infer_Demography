@@ -25,7 +25,7 @@ mkdir -p logs
 
 # ---------------- user/config paths ----------------
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
-CFG="$ROOT/config_files/experiment_config_IM_asymmetric.json"
+CFG="$ROOT/config_files/experiment_config_IM_symmetric.json"
 SNAKEFILE="$ROOT/Snakefile"
 
 # Which engine(s) to compute? moments | dadi | both

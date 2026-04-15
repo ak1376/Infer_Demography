@@ -10,7 +10,7 @@
 #SBATCH --requeue
 
 set -euo pipefail
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_IM_symmetric.json"
+CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json"
 # : "${CFG_PATH:?CFG_PATH is not defined}"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"

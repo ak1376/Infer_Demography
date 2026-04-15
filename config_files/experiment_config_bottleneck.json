@@ -8,9 +8,9 @@
         "ANC": 10
     }, 
     "seed": 42, 
-    "num_optimizations": 1, 
-    "top_k": 1, 
-    "num_draws": 50,
+    "num_optimizations": 100, 
+    "top_k": 5, 
+    "num_draws": 5000,
     "priors": {
     "N0"                : [2000, 20000],
     "N_bottleneck"      : [100, 1999],
@@ -32,8 +32,8 @@
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
-      1,
-      30
+      31,
+      95
     ], 
     "slim_scaling": 10, 
     "slim_burn_in": 5

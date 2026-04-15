@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
+EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -99,100 +99,75 @@ WINDOWS  = range(NUM_WINDOWS)
 ##############################################################################
 rule all:
     input:
-        (
-            # ---------------- SIMULATED DATA ----------------
-            expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+        # ── 1. SIMULATIONS ──────────────────────────────────────────────────
+        expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
+        expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-            # # ---------------- SIMULATED: per-opt inference ----------------
-            # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-            #     sid=SIM_IDS, opt=OPTIMS
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
-            #     sid=SIM_IDS, opt=OPTIMS
-            # ),
+        # ── 2. SFS INFERENCE (moments + dadi, aggregated) ───────────────────
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",  sid=SIM_IDS),
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",     sid=SIM_IDS),
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",        sid=SIM_IDS),
 
-            # # ---------------- SIMULATED: aggregated inference ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
-            #     sid=SIM_IDS
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
-            #     sid=SIM_IDS
-            # ),
+        # ── 3. LD INFERENCE (per-window → best fit) ─────────────────────────
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",  sid=SIM_IDS),
 
-            # # ---------------- SIMULATED: cleanup marker ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",
-            #     sid=SIM_IDS
-            # ),
+        # ── 4. FIM ──────────────────────────────────────────────────────────
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
+            sid=SIM_IDS, engine=FIM_ENGINES
+        ),
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json",
+            sid=SIM_IDS, engine=FIM_ENGINES
+        ),
 
-            # # ---------------- SIMULATED: LD best-fit ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
-            #     sid=SIM_IDS
-            # ),
+        # ── 5. SFS RESIDUALS ────────────────────────────────────────────────
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
+            sid=SIM_IDS, engine=RESIDUAL_ENGINES
+        ),
+        expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
+            sid=SIM_IDS, engine=RESIDUAL_ENGINES
+        ),
 
-            # # ---------------- SIMULATED: FIM ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-            #     sid=SIM_IDS, engine=FIM_ENGINES
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json",
-            #     sid=SIM_IDS, engine=FIM_ENGINES
-            # ),
+        # ── 6. COMBINED INFERENCE BLOBS ─────────────────────────────────────
+        expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl", sid=SIM_IDS),
 
-            # # ---------------- SIMULATED: residuals ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-            #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
-            #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-            # ),
+        # ── 7. MODELING DATASETS ────────────────────────────────────────────
+        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
+        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
 
-            # # ---------------- SIMULATED: combined blob ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
-            #     sid=SIM_IDS
-            # ),
+        # ── 8. LINEAR REGRESSION ────────────────────────────────────────────
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",          reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",     reg=REG_TYPES),
+        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
 
-            # # ---------------- MODELING ----------------
-            # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-            # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        # ── 9. RANDOM FOREST ────────────────────────────────────────────────
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
 
-            # # ---------------- REAL DATA (DROSOPHILA) ----------------
-            # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
-            # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
-            # "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+        # ── 10. XGBOOST ─────────────────────────────────────────────────────
+        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
-            # # ---------------- REAL DATA: per-opt inference ----------------
-            # expand(
-            #     f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl",
-            #     opt=REAL_OPTIMS
-            # ),
-            # expand(
-            #     f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl",
-            #     opt=REAL_OPTIMS
-            # ),
+        # ── 11. REAL DATA (DROSOPHILA) ──────────────────────────────────────
+        "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
+        "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
+        "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
 
-            # # # ---------------- REAL DATA: aggregated inference ----------------
-            # f"{REAL_INF_ROOT}/moments/best_fit.pkl",
-            # f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
+        # ── 12. REAL DATA: SFS INFERENCE ────────────────────────────────────
+        f"{REAL_INF_ROOT}/moments/best_fit.pkl",
+        f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
 
-            # # ---------------- REAL DATA: LD (single window test) ----------------
-            # expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
-            # expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
-        )
-
-
+        # ── 13. REAL DATA: LD ───────────────────────────────────────────────
+        expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
+        
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS
 ##############################################################################
@@ -200,7 +175,7 @@ rule simulate:
     output:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        tree   = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
+        tree   = temp(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees"),
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
         meta   = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
@@ -531,7 +506,7 @@ rule simulate_window:
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"
+        trees  = temp(f"{LD_ROOT}/windows/window_{{win}}.trees")
     params:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
@@ -556,7 +531,6 @@ rule simulate_window:
 rule ld_window:
     input:
         vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-        trees  = f"{LD_ROOT}/windows/window_{{win}}.trees"
     output:
         pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
@@ -574,7 +548,6 @@ rule ld_window:
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}" \
-            --use-gpu
 
         EXIT_CODE=$?
 

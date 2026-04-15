@@ -52,3 +52,5 @@ pipeline_debugging_scripts/scaling_comparison_metrics.csv
 test_theta_profiled_moments.py
 old_experiments_full_range_BGS/
 test_experiments/
+experiments_moderate_BGS/
+experiments_full_BGS/

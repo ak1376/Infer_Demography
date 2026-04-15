@@ -46,16 +46,16 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      95
+      30
     ], 
     "slim_scaling": 10, 
     "slim_burn_in": 5
   },
-  "use_fim_features": false,
+  "use_fim_features": true,
   "fim_engines": [
     "moments"
   ],
-  "use_residuals": false,
+  "use_residuals": true,
   "residual_engines": "moments",
   "engine": "slim",
   "use_gpu_ld": true,
