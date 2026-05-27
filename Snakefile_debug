@@ -1,0 +1,172 @@
+##############################################################################
+# Snakefile_debug
+#
+# Targets: simulate → infer_moments + infer_dadi (per-run PKLs only)
+# Outputs: experiments_debug/  (does not touch experiments/)
+##############################################################################
+import json, sys
+from pathlib import Path
+
+# Guard against bottleneck shadow import issues
+if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
+    del sys.modules["bottleneck"]
+try:
+    import bottleneck
+    if not hasattr(bottleneck, "__version__"):
+        bottleneck.__version__ = "1.0.0"
+except ImportError:
+    pass
+
+configfile: "config_files/model_config.yaml"
+
+# ── Debug experiment config ──────────────────────────────────────────────────
+EXP_CFG = "config_files/experiment_config_split_migration_growth_debug.json"
+CFG     = json.loads(Path(EXP_CFG).read_text())
+
+MODEL        = CFG["demographic_model"]
+NUM_DRAWS    = int(CFG["num_draws"])
+NUM_OPTIMS   = int(CFG.get("num_optimizations", 10))
+
+# ── Namespaced output root ────────────────────────────────────────────────────
+EXP_ROOT    = "experiments_debug"
+SIM_BASEDIR = f"{EXP_ROOT}/{MODEL}/simulations"
+RUN_DIR     = lambda sid, opt: f"{EXP_ROOT}/{MODEL}/runs/run_{sid}_{opt}"
+
+# ── External scripts (same as main workflow) ──────────────────────────────────
+SIM_SCRIPT   = "snakemake_scripts/simulation.py"
+INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
+
+SIM_IDS = list(range(NUM_DRAWS))
+OPTIMS  = list(range(NUM_OPTIMS))
+
+##############################################################################
+# RULE all – per-run moments + dadi PKLs only
+##############################################################################
+rule all:
+    input:
+        expand(
+            f"{EXP_ROOT}/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+            sid=SIM_IDS, opt=OPTIMS
+        ),
+        expand(
+            f"{EXP_ROOT}/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
+            sid=SIM_IDS, opt=OPTIMS
+        ),
+
+##############################################################################
+# RULE simulate
+##############################################################################
+rule simulate:
+    output:
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        tree   = temp(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees"),
+        fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
+        meta   = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
+        done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
+    params:
+        sim_dir = SIM_BASEDIR,
+        cfg     = EXP_CFG,
+        model   = MODEL
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH=/projects/kernlab/akapoor/Infer_Demography \
+        python "{SIM_SCRIPT}" \
+          --simulation-dir "{params.sim_dir}" \
+          --experiment-config "{params.cfg}" \
+          --model-type "{params.model}" \
+          --simulation-number {wildcards.sid}
+
+        test -f "{output.sfs}"    && \
+        test -f "{output.params}" && \
+        test -f "{output.tree}"   && \
+        test -f "{output.fig}"    && \
+        test -f "{output.meta}"
+        touch "{output.done}"
+        """
+
+##############################################################################
+# RULE infer_moments
+##############################################################################
+rule infer_moments:
+    input:
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+    output:
+        pkl = f"{EXP_ROOT}/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
+    params:
+        run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
+        cfg      = EXP_CFG,
+        model_py = (
+            f"src.simulation:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "src.simulation:drosophila_three_epoch"
+        ),
+        fix = ""
+    threads: 8
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "{INFER_SCRIPT}" \
+          --mode moments \
+          --sfs-file "{input.sfs}" \
+          --config "{params.cfg}" \
+          --model-py "{params.model_py}" \
+          --ground-truth "{input.params}" \
+          --outdir "{params.run_dir}/inferences" \
+          --generate-profiles \
+          {params.fix}
+
+        cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
+        """
+
+##############################################################################
+# RULE infer_dadi
+##############################################################################
+rule infer_dadi:
+    input:
+        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+    output:
+        pkl = f"{EXP_ROOT}/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
+    params:
+        run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
+        cfg      = EXP_CFG,
+        model_py = (
+            f"src.simulation:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "src.simulation:drosophila_three_epoch"
+        ),
+        fix = "",
+    threads: 8
+    shell:
+        r"""
+        set -euo pipefail
+
+        export OMP_NUM_THREADS={threads}
+        export MKL_NUM_THREADS={threads}
+
+        mkdir -p "{params.run_dir}/inferences/dadi"
+
+        PYTHONPATH={workflow.basedir} \
+        python "{INFER_SCRIPT}" \
+          --mode dadi \
+          --sfs-file "{input.sfs}" \
+          --config "{params.cfg}" \
+          --model-py "{params.model_py}" \
+          --outdir "{params.run_dir}/inferences" \
+          --ground-truth "{input.params}" \
+          {params.fix}
+
+        cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
+        """
+
+##############################################################################
+# Wildcard Constraints
+##############################################################################
+wildcard_constraints:
+    sid = r"\d+",
+    opt = "|".join(str(i) for i in range(NUM_OPTIMS)),

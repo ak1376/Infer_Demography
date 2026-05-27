@@ -1,0 +1,91 @@
+{
+    "genome_length": 2000000,
+    "mutation_rate": 1.45e-09,
+    "recombination_rate": 1.45e-09,
+    "demographic_model": "split_migration_growth",
+    "log_dir": "experiments_debug/split_migration_growth/logs",
+    "num_samples": {
+        "CO": 20,
+        "FR": 20
+    },
+    "seed": 42,
+    "num_optimizations": 10,
+    "top_k": 2,
+    "num_draws": 10,
+    "priors": {
+        "N_ANC": [
+            50,
+            5000
+        ],
+        "N_CO": [
+            50,
+            5000
+        ],
+        "N_FR0": [
+            50,
+            5000
+        ],
+        "N_FR1": [
+            50,
+            5000
+        ],
+        "T": [
+            1000,
+            1000000
+        ],
+        "m_CO_FR": [
+            1e-8,
+            1e-3
+        ],
+        "m_FR_CO": [
+            1e-8,
+            1e-3
+        ]
+    },
+    "priors_real_data_analysis": {
+        "N_ANC":   [1, 1],
+        "N_CO":    [1e-3, 10.0],
+        "N_FR0":   [1e-3, 10.0],
+        "N_FR1":   [1e-4, 10.0],
+        "T":       [1e-4, 10.0],
+        "m_CO_FR": [1e-6, 2.0],
+        "m_FR_CO": [1e-6, 2.0]
+    },
+    "fixed_parameters": {
+        "N_FR0": "sampled",
+        "m_CO_FR": "sampled"
+    },
+    "parameter_order": [
+        "N_ANC",
+        "N_CO",
+        "N_FR0",
+        "N_FR1",
+        "T",
+        "m_CO_FR",
+        "m_FR_CO"
+    ],
+    "selection": {
+        "enabled": true,
+        "species": "DroMel",
+        "dfe_id": "Gamma_K17",
+        "coverage_percent": [
+            0,
+            30
+        ],
+        "slim_scaling": 10.0
+    },
+    "use_fim_features": false,
+    "fim_engines": [
+        "moments"
+    ],
+    "use_residuals": false,
+    "residual_engines": "moments",
+    "engine": "msprime",
+    "use_gpu_ld": true,
+    "generate_profiles": true,
+    "profile_points": 41,
+    "profile_widen": 0.5,
+    "profile_make_plots": true,
+    "profile_theta": true,
+    "start_jitter_sigma": 0.05
+}

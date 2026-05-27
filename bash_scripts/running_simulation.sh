@@ -5,7 +5,7 @@
 #SBATCH --error=logs/simulation_%A_%a.err       # Standard error log file
 #SBATCH --time=6:00:00                          # Time limit
 #SBATCH --cpus-per-task=2                       # Number of CPU cores per task
-#SBATCH --mem=8G                                # Memory per task
+#SBATCH --mem=32G                                # Memory per task
 #SBATCH --partition=kern,preempt,kerngpu        # Partitions to submit the job to
 #SBATCH --account=kernlab                       # Account to use
 #SBATCH --requeue                               # Requeue on preemption

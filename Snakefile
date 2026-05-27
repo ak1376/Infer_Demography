@@ -167,7 +167,7 @@ rule all:
 
         # ── 13. REAL DATA: LD ───────────────────────────────────────────────
         expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
-        
+
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS
 ##############################################################################
@@ -575,8 +575,8 @@ rule optimize_momentsld:
             win=WINDOWS
         ),
     output:
-        mv   = f"{LD_ROOT}/means.varcovs.pkl",
-        boot = f"{LD_ROOT}/bootstrap_sets.pkl",
+        mv   = temp(f"{LD_ROOT}/means.varcovs.pkl"),
+        boot = temp(f"{LD_ROOT}/bootstrap_sets.pkl"),
         pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
         best = f"{LD_ROOT}/best_fit.pkl"
     params:
