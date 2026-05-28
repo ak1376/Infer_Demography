@@ -1,7 +1,23 @@
 #!/usr/bin/env python3
 # snakemake_scripts/computing_residuals_from_sfs.py
+#
 # Build residuals = Observed − Fitted SFS at saved best params (dadi/moments),
 # with optional Gram–Schmidt projection (configured in the JSON config).
+#
+# Robust to REAL DATA:
+# - Uses sample sizes (haploid) from the observed Spectrum when available
+# - Matches folding: if observed is folded, folds fitted before subtracting
+#
+# Outputs:
+#   residuals.npy
+#   residuals_flat.npy
+#   residuals_histogram.png
+#   meta.json
+#   + (optional) GS artifacts if gram_schmidt=true in config:
+#       residuals_gs_coeffs.npy
+#       residuals_gs_basis.npy
+#       residuals_gs_reconstruction.npy
+#       residuals_gs_coeffs_histogram.png
 
 from __future__ import annotations
 
@@ -12,7 +28,7 @@ import json
 import pickle
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, OrderedDict, Tuple
+from typing import Any, Dict, List, Tuple
 
 import matplotlib
 
@@ -29,13 +45,14 @@ if str(ROOT) not in sys.path:
 
 from src.gram_schmidt import project_vector_onto_gs_basis  # noqa: E402
 
-# ------------------ Expected SFS helpers ------------------
 
+# ------------------ Expected SFS helpers ------------------
 
 def expected_sfs_dadi(
     params_in_order: List[float],
     param_names: List[str],
-    sample_sizes: "OrderedDict[str,int]",
+    sampled_demes: List[str],
+    haploid_sizes: List[int],
     demo_model,
     mutation_rate: float,
     sequence_length: int,
@@ -45,8 +62,6 @@ def expected_sfs_dadi(
 
     p_dict = dict(zip(param_names, params_in_order))
     graph = demo_model(p_dict)
-    haploid_sizes = [2 * n for n in sample_sizes.values()]
-    sampled_demes = list(sample_sizes.keys())
 
     fs = dadi.Spectrum.from_demes(
         graph,
@@ -55,7 +70,7 @@ def expected_sfs_dadi(
         pts=pts,
     )
 
-    # Convention: first parameter in param_names is N0 (as in your pipeline)
+    # Convention: first parameter in param_names is N_ANC (as in your pipeline)
     theta = 4 * p_dict[param_names[0]] * mutation_rate * sequence_length
     fs *= theta
     return fs
@@ -64,7 +79,8 @@ def expected_sfs_dadi(
 def expected_sfs_moments(
     params_in_order: List[float],
     param_names: List[str],
-    sample_sizes: "OrderedDict[str,int]",
+    sampled_demes: List[str],
+    haploid_sizes: List[int],
     demo_model,
     mutation_rate: float,
     genome_length: int,
@@ -73,8 +89,6 @@ def expected_sfs_moments(
 
     p_dict = dict(zip(param_names, params_in_order))
     graph = demo_model(p_dict)
-    haploid_sizes = [2 * n for n in sample_sizes.values()]
-    sampled_demes = list(sample_sizes.keys())
 
     theta = 4 * p_dict[param_names[0]] * mutation_rate * genome_length
     return moments.Spectrum.from_demes(
@@ -86,7 +100,6 @@ def expected_sfs_moments(
 
 
 # ------------------ IO utils ------------------
-
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text())
@@ -104,7 +117,6 @@ def save_json_obj(path: Path, obj: dict):
 
 # ------------------ Fit loading (robust) ------------------
 
-
 def _maybe_load_pickle(path: Path) -> Any | None:
     try:
         with open(path, "rb") as f:
@@ -121,12 +133,13 @@ def _best_idx_from_ll_list(ll_list: List[float]) -> int:
 
 def load_best_params_from_inference(
     method_dir: Path, param_names: List[str]
-) -> Tuple[Dict[str, float], float | None]:
+) -> Tuple[Dict[str, float], float | None, str]:
     """
     Accept:
       - fit_params.pkl with {'best_params': list[dict], 'best_ll': list[float]}
-      - best_fit.pkl    with {'best_params': dict,       'best_ll': float}
-      - best_fit.pkl    with wrapper format (dict + 'param_order') (ignored safely)
+      - best_fit.pkl   with {'best_params': dict,       'best_ll': float}
+      - best_fit.pkl   with {'best_params': list[dict], 'best_ll': list[float]}
+    Returns: (best_params_dict_filtered, best_ll_or_None, which_file_used)
     """
     for fname in ("fit_params.pkl", "best_fit.pkl"):
         path = method_dir / fname
@@ -145,7 +158,7 @@ def load_best_params_from_inference(
                     best_ll = float(obj["best_ll"])
                 except Exception:
                     best_ll = None
-            return pd, best_ll
+            return pd, best_ll, fname
 
         # Case B: best_params is list of dicts
         if isinstance(obj.get("best_params"), list):
@@ -167,13 +180,12 @@ def load_best_params_from_inference(
                     best_ll = float(obj["best_ll"][idx])
                 except Exception:
                     best_ll = None
-            return pd, best_ll
+            return pd, best_ll, fname
 
-    raise FileNotFoundError(f"No fit params found under {method_dir}")
+    raise FileNotFoundError(f"No fit params found under {method_dir} (looked for fit_params.pkl/best_fit.pkl)")
 
 
 # ------------------ Misc helpers ------------------
-
 
 def compute_residuals(obs_sfs, fit_sfs) -> np.ndarray:
     return np.asarray(obs_sfs) - np.asarray(fit_sfs)
@@ -193,7 +205,6 @@ def _load_model_callable(model_spec: str):
         rel = mod_name.replace("src.", "").replace(".", "/") + ".py"
         module_path = base / rel
         if not module_path.exists():
-            # fallback: src/<last>.py
             module_path = base / (mod_name.split(".")[-1] + ".py")
 
         spec = importlib.util.spec_from_file_location(mod_name, module_path)
@@ -207,25 +218,28 @@ def _load_model_callable(model_spec: str):
     return getattr(module, func_name)
 
 
-def _diploid_sample_sizes_from_cfg(cfg: dict) -> "OrderedDict[str,int]":
+def _diploid_sample_sizes_from_cfg(cfg: dict) -> Dict[str, int]:
+    """
+    Returns an ordered mapping pop->diploid_n from cfg["sample_sizes"] or cfg["num_samples"].
+    (We keep pop ORDER from the JSON mapping.)
+    """
     if "sample_sizes" in cfg and isinstance(cfg["sample_sizes"], dict):
         d = cfg["sample_sizes"]
     elif "num_samples" in cfg and isinstance(cfg["num_samples"], dict):
         d = cfg["num_samples"]
     else:
         raise KeyError("Config must provide 'sample_sizes' or 'num_samples'.")
-    return type(d)((str(k), int(v)) for k, v in d.items())
+    return {str(k): int(v) for k, v in d.items()}
 
 
-def _auto_pts_from_samples(sample_sizes: "OrderedDict[str,int]") -> List[int]:
-    n_max_hap = max(2 * n for n in sample_sizes.values())
+def _auto_pts_from_haploid_sizes(haploid_sizes: List[int]) -> List[int]:
+    n_max_hap = int(max(haploid_sizes))
     return [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60]
 
 
 def collapse_sfs_bins(sfs: np.ndarray, n_bins: int) -> np.ndarray:
     """
     Collapse SFS into fewer bins by summing adjacent entries along the flattened array.
-
     Note: this collapses the *flattened* SFS; shape becomes (n_bins,).
     """
     sfs_flat = np.asarray(sfs).ravel()
@@ -248,8 +262,33 @@ def _safe_float(x: Any, *, name: str) -> float:
         raise ValueError(f"Expected {name} to be float-like, got {x!r}") from e
 
 
-# ------------------ CLI ------------------
+def _is_folded_spectrum(obj: Any) -> bool:
+    """
+    For dadi/moments Spectrum objects, folding status is often on `.folded`.
+    Falls back to False if unknown.
+    """
+    if hasattr(obj, "folded"):
+        try:
+            return bool(getattr(obj, "folded"))
+        except Exception:
+            pass
+    return False
 
+
+def _get_haploid_sizes_from_observed(obj: Any) -> List[int] | None:
+    """
+    If observed is a Spectrum-like object, it often has `.sample_sizes` (haploid).
+    """
+    if hasattr(obj, "sample_sizes"):
+        try:
+            ss = list(getattr(obj, "sample_sizes"))
+            return [int(x) for x in ss]
+        except Exception:
+            return None
+    return None
+
+
+# ------------------ CLI ------------------
 
 def parse_args():
     ap = argparse.ArgumentParser(
@@ -267,11 +306,15 @@ def parse_args():
         default=None,
         help="Collapse SFS into this many bins (default: no collapsing).",
     )
+    ap.add_argument(
+        "--force-folded",
+        action="store_true",
+        help="Force-fold fitted SFS before residuals (use if observed folding attr is missing).",
+    )
     return ap.parse_args()
 
 
 # ------------------ Main ------------------
-
 
 def main():
     args = parse_args()
@@ -293,10 +336,47 @@ def main():
     param_names: List[str] = list(cfg["priors"].keys())
     priors = cfg["priors"]
 
-    # Samples and constants
-    sample_sizes = _diploid_sample_sizes_from_cfg(cfg)
+    # constants
     mu = _safe_float(cfg.get("mutation_rate"), name="mutation_rate")
     L = int(float(cfg.get("genome_length")))
+
+    # Pop order from cfg (we use this to define sampled_demes order)
+    dip_cfg = _diploid_sample_sizes_from_cfg(cfg)
+    sampled_demes = list(dip_cfg.keys())
+
+    # Load observed SFS object (Spectrum or array)
+    with open(args.observed_sfs, "rb") as f:
+        obs_obj = pickle.load(f)
+    observed = np.asarray(obs_obj)
+
+    obs_folded = _is_folded_spectrum(obs_obj) or bool(args.force_folded)
+    hap_obs = _get_haploid_sizes_from_observed(obs_obj)
+
+    # Determine haploid sizes to use for fitted spectrum:
+    # Prefer observed spectrum's haploid sample sizes (REAL-DATA robust).
+    if hap_obs is not None:
+        if len(hap_obs) != len(sampled_demes):
+            raise ValueError(
+                f"Observed SFS has {len(hap_obs)} populations (sample_sizes={hap_obs}) "
+                f"but cfg pop order has {len(sampled_demes)} populations (pops={sampled_demes}). "
+                "Fix cfg sample_sizes order/length or regenerate SFS with matching pops."
+            )
+        haploid_sizes = hap_obs
+        sample_sizes_source = "observed_sfs.sample_sizes"
+    else:
+        # Fall back to cfg diploids -> haploids
+        haploid_sizes = [2 * int(n) for n in dip_cfg.values()]
+        sample_sizes_source = "config sample_sizes/num_samples"
+
+    print("=== Residual SFS setup ===")
+    print(f"Observed path: {args.observed_sfs}")
+    print(f"Observed numpy shape: {np.asarray(observed).shape}")
+    print(f"Observed folded? {obs_folded}")
+    if hap_obs is not None:
+        print(f"Observed haploid sample_sizes: {hap_obs}")
+    print(f"Using haploid sizes ({sample_sizes_source}): {haploid_sizes}")
+    print(f"Sampled demes order (from cfg): {sampled_demes}")
+    print("==========================")
 
     # Optional Gram–Schmidt config
     use_gs = bool(cfg.get("gram_schmidt", False))
@@ -311,24 +391,15 @@ def main():
         if gs_k < 1:
             raise ValueError("gram_schmidt_k must be >= 1.")
 
-    # Load observed SFS object (Spectrum or array)
-    with open(args.observed_sfs, "rb") as f:
-        obs_obj = pickle.load(f)
-    observed = np.asarray(obs_obj)
-
     modes = ["dadi", "moments"] if args.mode == "both" else [args.mode]
 
     for mode in modes:
-        mode_outdir = (
-            (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
-        )
+        mode_outdir = (Path(args.outdir) / mode) if len(modes) > 1 else Path(args.outdir)
         mode_outdir.mkdir(parents=True, exist_ok=True)
 
         # Load best params
         method_dir = args.inference_dir / mode
-        best_params_dict, best_ll = load_best_params_from_inference(
-            method_dir, param_names
-        )
+        best_params_dict, best_ll, which = load_best_params_from_inference(method_dir, param_names)
 
         # Fill missing params with prior midpoint
         def prior_mid(p: str) -> float:
@@ -345,38 +416,62 @@ def main():
         if mode == "dadi":
             pts = cfg.get("pts", None)
             if pts is None:
-                pts = _auto_pts_from_samples(sample_sizes)
+                pts = _auto_pts_from_haploid_sizes(haploid_sizes)
             fitted = expected_sfs_dadi(
-                best_vec, param_names, sample_sizes, demo_func, mu, L, pts
+                best_vec,
+                param_names,
+                sampled_demes,
+                haploid_sizes,
+                demo_func,
+                mu,
+                L,
+                pts,
             )
         else:
             fitted = expected_sfs_moments(
-                best_vec, param_names, sample_sizes, demo_func, mu, L
+                best_vec,
+                param_names,
+                sampled_demes,
+                haploid_sizes,
+                demo_func,
+                mu,
+                L,
             )
+
+        # If observed is folded, fold fitted to match
+        if obs_folded:
+            try:
+                fitted = fitted.fold()
+            except Exception:
+                # If fitted isn't a Spectrum-like object, ignore
+                pass
 
         # Optional collapse (note: this changes shape to (n_bins,))
         obs_to_use = observed
         fit_to_use = fitted
         collapsed = False
+
         if args.n_bins is not None:
             obs_to_use = collapse_sfs_bins(observed, args.n_bins)
             fit_to_use = collapse_sfs_bins(fitted, args.n_bins)
             collapsed = True
         else:
             # Require identical shapes if not collapsing
-            if np.asarray(observed).shape != np.asarray(fitted).shape:
+            if np.asarray(obs_to_use).shape != np.asarray(fit_to_use).shape:
                 raise ValueError(
-                    f"SFS shape mismatch: observed {np.asarray(observed).shape} vs fitted {np.asarray(fitted).shape}. "
-                    "Check folding and sample sizes; for dadi also pts."
+                    f"SFS shape mismatch: observed {np.asarray(obs_to_use).shape} vs fitted {np.asarray(fit_to_use).shape}. "
+                    "This usually means folding/sample-size mismatch. "
+                    f"(obs_folded={obs_folded}, haploid_sizes={haploid_sizes})"
                 )
 
         residuals = compute_residuals(obs_to_use, fit_to_use)  # Observed − Fitted
         residuals_flat = np.asarray(residuals).ravel()
 
         print(
-            f"[{mode}] sum(Fitted)={float(np.sum(fitted)):.6g}  "
-            f"sum(Observed)={float(np.sum(observed)):.6g}  "
-            f"sum(Residuals)={float(np.sum(residuals)):.6g}"
+            f"[{mode}] fit_source={which}  "
+            f"sum(Fitted)={float(np.sum(np.asarray(fitted))):.6g}  "
+            f"sum(Observed)={float(np.sum(np.asarray(observed))):.6g}  "
+            f"sum(Residuals)={float(np.sum(residuals_flat)):.6g}"
         )
         if collapsed:
             print(
@@ -387,17 +482,15 @@ def main():
         gs_result = None
         residuals_gs_coeffs = None
         if use_gs:
-            D = residuals_flat.size
-            if gs_k > D:
-                raise ValueError(
-                    f"gram_schmidt_k={gs_k} cannot exceed residual dimension D={D}."
-                )
+            D = int(residuals_flat.size)
+            if int(gs_k) > D:
+                raise ValueError(f"gram_schmidt_k={gs_k} cannot exceed residual dimension D={D}.")
 
             gs_result = project_vector_onto_gs_basis(
                 residuals_flat,
-                k=gs_k,
+                k=int(gs_k),
                 basis_type=gs_basis_type,
-                eps=gs_eps,
+                eps=float(gs_eps),
             )
             residuals_gs_coeffs = np.asarray(gs_result.coeffs)
 
@@ -430,10 +523,7 @@ def main():
         if use_gs and gs_result is not None:
             save_np(mode_outdir / "residuals_gs_coeffs.npy", residuals_gs_coeffs)
             save_np(mode_outdir / "residuals_gs_basis.npy", np.asarray(gs_result.basis))
-            save_np(
-                mode_outdir / "residuals_gs_reconstruction.npy",
-                np.asarray(gs_result.reconstruction),
-            )
+            save_np(mode_outdir / "residuals_gs_reconstruction.npy", np.asarray(gs_result.reconstruction))
 
         meta: Dict[str, Any] = {
             "mode": mode,
@@ -442,27 +532,34 @@ def main():
             "param_order": param_names,
             "best_params": full_best,
             "best_ll": best_ll,
+            "fit_source_file": which,
+            "fit_dir": str(method_dir),
             "observed_source": str(args.observed_sfs),
+            "observed_folded": bool(obs_folded),
+            "observed_haploid_sample_sizes": (hap_obs if hap_obs is not None else None),
+            "used_haploid_sample_sizes": [int(x) for x in haploid_sizes],
+            "sampled_demes_order": sampled_demes,
             "n_bins": args.n_bins,
             "original_sfs_shape": list(np.asarray(observed).shape),
             "notes": "Residuals = Observed − Fitted",
-            "gram_schmidt": use_gs,
+            "gram_schmidt": bool(use_gs),
+            "gram_schmidt_basis": gs_basis_type if use_gs else None,
+            "gram_schmidt_eps": float(gs_eps) if use_gs else None,
+            "gram_schmidt_k": int(gs_k) if use_gs else None,
+            "collapsed": bool(collapsed),
         }
         if use_gs and gs_result is not None:
             meta.update(
                 {
-                    "gram_schmidt_k": int(gs_k),
-                    "gram_schmidt_k_effective": int(
-                        np.asarray(gs_result.basis).shape[1]
-                    ),
-                    "gram_schmidt_basis": gs_basis_type,
-                    "gram_schmidt_eps": float(gs_eps),
+                    "gram_schmidt_k_effective": int(np.asarray(gs_result.basis).shape[1]),
                 }
             )
 
         save_json_obj(mode_outdir / "meta.json", meta)
         print(f"[{mode}] wrote → {mode_outdir}")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

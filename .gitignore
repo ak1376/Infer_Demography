@@ -54,3 +54,8 @@ old_experiments_full_range_BGS/
 test_experiments/
 experiments_moderate_BGS/
 experiments_full_BGS/
+pipeline_debugging_scripts/LD_stats_congo_output/
+pipeline_debugging_scripts/debugging_moments_dadi_real_data
+pipeline_debugging_scripts/LD_stats_congo.py
+experiments_old/
+experiments_BGS_old/
