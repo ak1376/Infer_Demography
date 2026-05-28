@@ -99,146 +99,81 @@ WINDOWS  = range(NUM_WINDOWS)
 ##############################################################################
 rule all:
     input:
-        (
-            # ---------------- SIMULATED DATA ----------------
-            # expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
-            # expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+        [
+            # ======================================================================
+            # SIMULATED DATA
+            # ======================================================================
 
-            # # ---------------- SIMULATED: per-opt inference ----------------
-            # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-            #     sid=SIM_IDS, opt=OPTIMS
-            # ),
+            # ── 1. RAW SIMULATION OUTPUTS ───────────────────────────────────────
+            expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
+            expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
+
+            # ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
+            expand(
+                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+                sid=SIM_IDS,
+                opt=OPTIMS,
+            ),
             # expand(
             #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
-            #     sid=SIM_IDS, opt=OPTIMS
+            #     sid=SIM_IDS,
+            #     opt=OPTIMS,
             # ),
 
-            # # ---------------- SIMULATED: aggregated inference ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
-            #     sid=SIM_IDS
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
-            #     sid=SIM_IDS
-            # ),
+            # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
+            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
+            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
+            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
 
-            # # ---------------- SIMULATED: cleanup marker ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",
-            #     sid=SIM_IDS
-            # ),
+            # ======================================================================
+            # ACTIVE TARGETS
+            # ======================================================================
 
-            # # ---------------- SIMULATED: LD best-fit ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
-            #     sid=SIM_IDS
-            # ),
-
-            # # ---------------- SIMULATED: FIM ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-            #     sid=SIM_IDS, engine=FIM_ENGINES
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json",
-            #     sid=SIM_IDS, engine=FIM_ENGINES
-            # ),
-
-            # # ---------------- SIMULATED: residuals ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-            #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
-            #     sid=SIM_IDS, engine=RESIDUAL_ENGINES
-            # ),
-
-            # # ---------------- SIMULATED: combined blob ----------------
-            # expand(
-            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl",
-            #     sid=SIM_IDS
-            # ),
-
-            # # ---------------- MODELING ----------------
+            # # ── 1. MODELING DATASETS ────────────────────────────────────────────
             # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
             # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
 
-            # # ---------------- REAL DATA (DROSOPHILA) ----------------
+            # # ── 2. LINEAR REGRESSION ────────────────────────────────────────────
+            # expand(
+            #     f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+            #     reg=REG_TYPES,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
+            #     reg=REG_TYPES,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
+            #     reg=REG_TYPES,
+            # ),
+
+            # # ── 3. RANDOM FOREST ────────────────────────────────────────────────
+            # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
+            # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
+            # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
+            # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+
+            # # ── 4. XGBOOST ──────────────────────────────────────────────────────
+            # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
+            # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
+            # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
+            # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+
+            # # ── 5. REAL DATA (DROSOPHILA) ───────────────────────────────────────
             # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
             # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
             # "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
 
-            # # ---------------- REAL DATA: per-opt inference ----------------
-            # expand(
-            #     f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl",
-            #     opt=REAL_OPTIMS
-            # ),
-            # expand(
-            #     f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl",
-            #     opt=REAL_OPTIMS
-            # ),
-
-            # # # ---------------- REAL DATA: aggregated inference ----------------
+            # # ── 6. REAL DATA: SFS INFERENCE ─────────────────────────────────────
             # f"{REAL_INF_ROOT}/moments/best_fit.pkl",
             # f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
 
-            # # ---------------- REAL DATA: LD (single window test) ----------------
-            # expand(f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz", i=WINDOWS),
+            # # ── 7. REAL DATA: LD ─────────────────────────────────────────────────
             # expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
-
-            ## --------------------- REAL DATA: LD best-fit ----------------
-            expand(f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl"),
-
-            # --- REAL DATA: FIM ---
-            # expand(f"{REAL_INF_ROOT}/fim/{{engine}}.fim.npy", engine=FIM_ENGINES),
-            # expand(f"{REAL_INF_ROOT}/fim/{{engine}}.summary.json", engine=FIM_ENGINES),
-
-            # --- REAL DATA: residuals ---
-            # expand(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_flat.npy", engine=RESIDUAL_ENGINES),
-            # expand(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/meta.json", engine=RESIDUAL_ENGINES),
-
-            # --- REAL DATA: combined blob ---
-            # f"{REAL_INF_ROOT}/all_inferences.pkl",
-        )
-
-        # ── 7. MODELING DATASETS ────────────────────────────────────────────
-        f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-
-        # ── 8. LINEAR REGRESSION ────────────────────────────────────────────
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",          reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",     reg=REG_TYPES),
-        expand(f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl", reg=REG_TYPES),
-
-        # ── 9. RANDOM FOREST ────────────────────────────────────────────────
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
-
-        # ── 10. XGBOOST ─────────────────────────────────────────────────────
-        f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
-
-        # ── 11. REAL DATA (DROSOPHILA) ──────────────────────────────────────
-        "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
-        "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
-        "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
-
-        # ── 12. REAL DATA: SFS INFERENCE ────────────────────────────────────
-        f"{REAL_INF_ROOT}/moments/best_fit.pkl",
-        f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
-
-        # ── 13. REAL DATA: LD ───────────────────────────────────────────────
-        expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
-
+            # f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
+        ]
 ##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS
 ##############################################################################
@@ -258,7 +193,7 @@ rule simulate:
     shell:
         r"""
         set -euo pipefail
-        PYTHONPATH=/projects/kernlab/akapoor/Infer_Demography \
+        PYTHONPATH={workflow.basedir} \
         python "{SIM_SCRIPT}" \
           --simulation-dir "{params.sim_dir}" \
           --experiment-config "{params.cfg}" \
@@ -367,16 +302,24 @@ rule infer_dadi:
 
 # ── MOMENTS ONLY ───────────────────────────────────────────────────────────
 rule aggregate_opts_moments:
+    input:
+        mom_pkls = expand(
+            f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+            sid=SIM_IDS,
+            opt=OPTIMS,
+        )
     output:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, numpy as np, pathlib, re
 
         sid = wildcards.sid
 
-        mom_pkls = sorted(glob.glob(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/moments/fit_params.pkl"
-        ))
+        # Only keep files for this sid
+        mom_pkls = [
+            str(p) for p in input.mom_pkls
+            if f"/run_{sid}_" in str(p)
+        ]
 
         def _as_list(x):
             if x is None:
@@ -391,6 +334,7 @@ rule aggregate_opts_moments:
             m = re.search(rf"/run_{sid}_(\d+)/inferences/moments/fit_params\.pkl$", pkl_path)
             if not m:
                 continue
+
             opt_idx = int(m.group(1))
 
             try:
@@ -404,7 +348,6 @@ rule aggregate_opts_moments:
             this_params = _as_list(d.get("best_params"))
             this_lls    = _as_list(d.get("best_ll"))
 
-            # counts as "contributing" only if it provides at least one LL
             if len(this_lls) == 0:
                 continue
 
@@ -413,7 +356,6 @@ rule aggregate_opts_moments:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        # ---- FAIL HARD if fewer than TOP_K contributing opt pkls ----
         if n_nonempty < TOP_K:
             raise ValueError(
                 f"[aggregate_opts_moments] Need >= {TOP_K} non-empty moments optimizations for sid={sid}, "
@@ -422,9 +364,10 @@ rule aggregate_opts_moments:
             )
 
         keep = np.argsort(lls)[::-1][:TOP_K]
+
         best = {
             "best_params":   [params[i] for i in keep],
-            "best_ll":       [lls[i]    for i in keep],
+            "best_ll":       [lls[i] for i in keep],
             "opt_index":     [opt_ids[i] for i in keep],
             "n_files_found": int(len(mom_pkls)),
             "n_nonempty":    int(n_nonempty),
@@ -438,19 +381,26 @@ rule aggregate_opts_moments:
         print(f"✅ moments: found {len(mom_pkls)} files, aggregated {len(lls)} entries → {output.mom}")
         print(f"✅ moments: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
-
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
 rule aggregate_opts_dadi:
+    input:
+        dadi_pkls = expand(
+            f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
+            sid=SIM_IDS,
+            opt=OPTIMS,
+        )
     output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, numpy as np, pathlib, re
 
         sid = wildcards.sid
 
-        dadi_pkls = sorted(glob.glob(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/dadi/fit_params.pkl"
-        ))
+        # Only keep files for this sid
+        dadi_pkls = [
+            str(p) for p in input.dadi_pkls
+            if f"/run_{sid}_" in str(p)
+        ]
 
         def _as_list(x):
             if x is None:
@@ -465,6 +415,7 @@ rule aggregate_opts_dadi:
             m = re.search(rf"/run_{sid}_(\d+)/inferences/dadi/fit_params\.pkl$", pkl_path)
             if not m:
                 continue
+
             opt_idx = int(m.group(1))
 
             try:
@@ -486,7 +437,6 @@ rule aggregate_opts_dadi:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        # ---- FAIL HARD if fewer than TOP_K contributing opt pkls ----
         if n_nonempty < TOP_K:
             raise ValueError(
                 f"[aggregate_opts_dadi] Need >= {TOP_K} non-empty dadi optimizations for sid={sid}, "
@@ -495,9 +445,10 @@ rule aggregate_opts_dadi:
             )
 
         keep = np.argsort(lls)[::-1][:TOP_K]
+
         best = {
             "best_params":   [params[i] for i in keep],
-            "best_ll":       [lls[i]    for i in keep],
+            "best_ll":       [lls[i] for i in keep],
             "opt_index":     [opt_ids[i] for i in keep],
             "n_files_found": int(len(dadi_pkls)),
             "n_nonempty":    int(n_nonempty),
@@ -510,7 +461,6 @@ rule aggregate_opts_dadi:
 
         print(f"✅ dadi: found {len(dadi_pkls)} files, aggregated {len(lls)} entries → {output.dadi}")
         print(f"✅ dadi: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
-
 
 # ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
 rule cleanup_optimization_runs:
@@ -576,7 +526,7 @@ rule simulate_window:
         metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
-        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
+        vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"),
         trees  = temp(f"{LD_ROOT}/windows/window_{{win}}.trees")
     params:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
@@ -613,26 +563,16 @@ rule ld_window:
         ld_cores = 4
     shell:
         """
-        # Run the LD computation and capture exit code
+        set -euo pipefail
         python "{LD_SCRIPT}" \
             --sim-dir      {params.sim_dir} \
             --window-index {wildcards.win} \
             --config-file  {params.cfg} \
-            --r-bins       "{params.bins}" \
+            --r-bins       "{params.bins}"
 
-        EXIT_CODE=$?
-
-        # If successful, clean up intermediate files
-        if [ $EXIT_CODE -eq 0 ]; then
-            echo "✓ LD computation successful, cleaning up intermediate files for window {wildcards.win}"
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.h5
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.trees
-            rm -vf {params.sim_dir}/windows/window_{wildcards.win}.vcf.gz
-            echo "🧹 Cleanup completed for window {wildcards.win}"
-        else
-            echo "❌ LD computation failed (exit code $EXIT_CODE), preserving intermediate files for debugging"
-            exit $EXIT_CODE
-        fi
+        # .h5 is written by the LD script but not declared as a Snakemake output;
+        # remove it here so it doesn't accumulate across windows.
+        rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
         """
 
 ##############################################################################
@@ -660,7 +600,7 @@ rule optimize_momentsld:
     threads: 1
     shell:
         r"""
-        PYTHONPATH=/projects/kernlab/akapoor/Infer_Demography \
+        PYTHONPATH={workflow.basedir} \
         python "snakemake_scripts/LD_inference.py" \
             --run-dir      {params.sim_dir} \
             --output-root  {params.LD_dir} \
@@ -1202,7 +1142,7 @@ rule recode_haploid_to_diploid_Chr2L:
         vcf="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
         tbi="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
     params:
-        script="/sietch_colab/akapoor/Infer_Demography/snakemake_scripts/recode_haploid_to_diploid.py",
+        script=f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
         tmp_vcf="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf",  # Changed to match output dir
     threads: 1
     shell:
@@ -1438,10 +1378,6 @@ rule compute_ld_real:
             --use-gpu
         """
 
-rule real_ld:
-    input:
-        expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS)
-
 ##############################################################################
 # REAL DATA: compute_fim_real – observed FIM at best-LL params for {engine}  #
 ##############################################################################
@@ -1491,8 +1427,8 @@ rule optimize_momentsld_real:
             i=WINDOWS
         )
     output:
-        mv   = f"{REAL_LD_ROOT}/means.varcovs.pkl",
-        boot = f"{REAL_LD_ROOT}/bootstrap_sets.pkl",
+        mv   = temp(f"{REAL_LD_ROOT}/means.varcovs.pkl"),
+        boot = temp(f"{REAL_LD_ROOT}/bootstrap_sets.pkl"),
         pdf  = f"{REAL_LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
         best = f"{REAL_LD_ROOT}/best_fit.pkl"
     params:
