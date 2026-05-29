@@ -107,15 +107,14 @@ rule all:
             # ── 1. RAW SIMULATION OUTPUTS ───────────────────────────────────────
             expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
-            expand(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees", sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
             # ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
-            expand(
-                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-                sid=SIM_IDS,
-                opt=OPTIMS,
-            ),
+            # expand(
+            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+            #     sid=SIM_IDS,
+            #     opt=OPTIMS,
+            # ),
             # expand(
             #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
             #     sid=SIM_IDS,
@@ -123,9 +122,15 @@ rule all:
             # ),
 
             # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
-            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
+            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
+
+            # ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
+            expand(
+                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
+                sid=SIM_IDS,
+            ),
 
             # ======================================================================
             # ACTIVE TARGETS
@@ -181,7 +186,6 @@ rule simulate:
     output:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        tree   = temp(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees"),
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
         meta   = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
@@ -203,7 +207,6 @@ rule simulate:
         # ensure expected outputs exist, then create sentinel
         test -f "{output.sfs}"    && \
         test -f "{output.params}" && \
-        test -f "{output.tree}"   && \
         test -f "{output.fig}"    && \
         test -f "{output.meta}"
         touch "{output.done}"
@@ -218,7 +221,7 @@ rule infer_moments:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
+        pkl = temp(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl")
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -256,7 +259,7 @@ rule infer_dadi:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
+        pkl = temp(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl")
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -615,8 +618,7 @@ rule compute_fim:
         fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
         sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
     output:
-        fim  = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy",
-        summ = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json"
+        fim  = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy"),
     params:
         script = "snakemake_scripts/compute_fim.py",
         cfg    = EXP_CFG
@@ -629,8 +631,7 @@ rule compute_fim:
             --fit-pkl {input.fit} \
             --sfs {input.sfs} \
             --config {params.cfg} \
-            --fim-npy {output.fim} \
-            --summary-json {output.summ}
+            --fim-npy {output.fim}
         """
 
 
@@ -643,13 +644,13 @@ rule sfs_residuals:
         agg_fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
     output:
         res_arr   = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals.npy",
-        res_flat  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy",
-        meta_json = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json",
+        res_flat  = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy"),
+        meta_json = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json"),
         hist_png  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_histogram.png",
 
         # Only required when gram_schmidt=true; otherwise create temp sentinels
         gs_coeffs = (
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy"
+            temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy")
             if USE_GS
             else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_disabled")
         ),
@@ -657,11 +658,6 @@ rule sfs_residuals:
             f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_basis.npy"
             if USE_GS
             else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_basis_disabled")
-        ),
-        gs_recon = (
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_reconstruction.npy"
-            if USE_GS
-            else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_recon_disabled")
         ),
     params:
         cfg      = EXP_CFG,
@@ -707,9 +703,8 @@ rule sfs_residuals:
         if [ "{USE_GS}" = "True" ]; then
             test -f "{output.gs_coeffs}"
             test -f "{output.gs_basis}"
-            test -f "{output.gs_recon}"
         else
-            touch "{output.gs_coeffs}" "{output.gs_basis}" "{output.gs_recon}"
+            touch "{output.gs_coeffs}" "{output.gs_basis}"
         fi
         """
 
@@ -835,13 +830,13 @@ rule combine_features:
         features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
         targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
 
-        # raw splits
-        train_X       = f"experiments/{MODEL}/modeling/datasets/train_features.pkl",
-        train_y       = f"experiments/{MODEL}/modeling/datasets/train_targets.pkl",
-        tune_X        = f"experiments/{MODEL}/modeling/datasets/tune_features.pkl",
-        tune_y        = f"experiments/{MODEL}/modeling/datasets/tune_targets.pkl",
-        val_X         = f"experiments/{MODEL}/modeling/datasets/val_features.pkl",
-        val_y         = f"experiments/{MODEL}/modeling/datasets/val_targets.pkl",
+        # raw splits (temp: modeling rules use normalized_* variants)
+        train_X       = temp(f"experiments/{MODEL}/modeling/datasets/train_features.pkl"),
+        train_y       = temp(f"experiments/{MODEL}/modeling/datasets/train_targets.pkl"),
+        tune_X        = temp(f"experiments/{MODEL}/modeling/datasets/tune_features.pkl"),
+        tune_y        = temp(f"experiments/{MODEL}/modeling/datasets/tune_targets.pkl"),
+        val_X         = temp(f"experiments/{MODEL}/modeling/datasets/val_features.pkl"),
+        val_y         = temp(f"experiments/{MODEL}/modeling/datasets/val_targets.pkl"),
 
         # normalized splits
         ntrain_X      = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
@@ -880,12 +875,6 @@ rule combine_features:
         for f in \
         "{output.features_df}" \
         "{output.targets_df}" \
-        "{output.train_X}" \
-        "{output.train_y}" \
-        "{output.tune_X}" \
-        "{output.tune_y}" \
-        "{output.val_X}" \
-        "{output.val_y}" \
         "{output.ntrain_X}" \
         "{output.ntrain_y}" \
         "{output.ntune_X}" \
@@ -1184,7 +1173,7 @@ rule infer_moments_real:
     input:
         sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl"
+        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl")
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
@@ -1216,7 +1205,7 @@ rule infer_dadi_real:
     input:
         sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl"
+        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl")
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
@@ -1374,8 +1363,7 @@ rule compute_ld_real:
             --sim-dir "{REAL_LD_ROOT}" \
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
-            --r-bins "{params.r_bins}" \
-            --use-gpu
+            --r-bins "{params.r_bins}"
         """
 
 ##############################################################################
@@ -1386,8 +1374,7 @@ rule compute_fim_real:
         fit = lambda w: f"{REAL_INF_ROOT}/{w.engine}/best_fit.pkl",
         sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
     output:
-        fim  = f"{REAL_INF_ROOT}/fim/{{engine}}.fim.npy",
-        summ = f"{REAL_INF_ROOT}/fim/{{engine}}.summary.json",
+        fim  = temp(f"{REAL_INF_ROOT}/fim/{{engine}}.fim.npy"),
     params:
         script = "snakemake_scripts/compute_fim.py",
         cfg    = EXP_CFG,
@@ -1403,8 +1390,7 @@ rule compute_fim_real:
             --fit-pkl "{input.fit}" \
             --sfs "{input.sfs}" \
             --config "{params.cfg}" \
-            --fim-npy "{output.fim}" \
-            --summary-json "{output.summ}"
+            --fim-npy "{output.fim}"
         """
 
 ##############################################################################
@@ -1467,13 +1453,13 @@ rule sfs_residuals_real:
         agg_fit = lambda w: f"{REAL_INF_ROOT}/{w.engine}/best_fit.pkl",
     output:
         res_arr   = f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals.npy",
-        res_flat  = f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_flat.npy",
-        meta_json = f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/meta.json",
+        res_flat  = temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_flat.npy"),
+        meta_json = temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/meta.json"),
         hist_png  = f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_histogram.png",
 
         # Only required when gram_schmidt=true; otherwise create temp sentinels
         gs_coeffs = (
-            f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy"
+            temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy")
             if USE_GS
             else temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/.gs_disabled")
         ),
@@ -1481,11 +1467,6 @@ rule sfs_residuals_real:
             f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_gs_basis.npy"
             if USE_GS
             else temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/.gs_basis_disabled")
-        ),
-        gs_recon = (
-            f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_gs_reconstruction.npy"
-            if USE_GS
-            else temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/.gs_recon_disabled")
         ),
     params:
         cfg      = EXP_CFG,
@@ -1530,9 +1511,8 @@ rule sfs_residuals_real:
         if [ "{USE_GS}" = "True" ]; then
             test -f "{output.gs_coeffs}"
             test -f "{output.gs_basis}"
-            test -f "{output.gs_recon}"
         else
-            touch "{output.gs_coeffs}" "{output.gs_basis}" "{output.gs_recon}"
+            touch "{output.gs_coeffs}" "{output.gs_basis}"
         fi
         """
 

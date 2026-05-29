@@ -8,13 +8,12 @@ It expects these files under --sim-dir:
   windows/window_<idx>.vcf.gz
   windows/samples.txt
   windows/flat_map.txt
-  windows/window_<idx>.trees   (optional, only needed for GPU path)
 
 It writes:
   LD_stats/LD_stats_window_<idx>.pkl
 
 Heavy lifting lives in:
-  src/ld_stats.py
+  src/LD_stats.py
 """
 
 from __future__ import annotations
@@ -43,9 +42,6 @@ def parse_args():
         "--config-file", required=True, type=Path, help="experiment_config_*.json"
     )
     p.add_argument("--r-bins", required=True, help="comma-separated recomb-bin edges")
-    p.add_argument(
-        "--use-gpu", action="store_true", help="Enable GPU acceleration via pg_gpu"
-    )
     return p.parse_args()
 
 
@@ -61,7 +57,6 @@ def main():
     vcf_gz = sim_dir / "windows" / f"window_{idx}.vcf.gz"
     samples_t = sim_dir / "windows" / "samples.txt"
     rec_map_t = sim_dir / "windows" / "flat_map.txt"
-    ts_file = sim_dir / "windows" / f"window_{idx}.trees"
     out_dir = sim_dir / "LD_stats"
     out_pkl = out_dir / f"LD_stats_window_{idx}.pkl"
 
@@ -81,10 +76,8 @@ def main():
         vcf_gz=vcf_gz,
         samples_file=samples_t,
         rec_map_file=rec_map_t,
-        ts_file= None,
         r_bins=r_bins,
         config=config,
-        request_gpu=args.use_gpu,
     )
 
     with out_pkl.open("wb") as fh:

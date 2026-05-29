@@ -5,35 +5,21 @@ Core LD-stats computation utilities.
 Design goals:
 - Keep Snakemake wrapper thin.
 - Provide one entrypoint: compute_ld_window(...)
-- GPU path uses pg_gpu + tree sequence if available.
-- CPU fallback uses moments.LD.Parsing.compute_ld_statistics.
+- Always uses pg_gpu.moments_ld.compute_ld_statistics (GPU-accelerated, drop-in replacement
+  for moments.LD.Parsing.compute_ld_statistics).
 - Names/order for LD and H stats match moments' CPU naming functions for arbitrary num_pops.
-
-CRITICAL UNITS:
-- moments.LD bins are in *Morgans* (recombination fraction distance bins).
-- tskit site positions are in *bp*.
-- pg_gpu bins by differences in `hap.positions`.
-Therefore, for GPU we MUST set `hap.positions` to *genetic positions in Morgans*
-(interpolated from the rec map, or flat r_per_bp fallback).
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 
 import numpy as np
 import tskit
-import moments
 
-# Optional GPU acceleration
-try:
-    from pg_gpu.haplotype_matrix import HaplotypeMatrix  # type: ignore
-
-    _HAVE_GPU = True
-except Exception:
-    HaplotypeMatrix = None  # type: ignore
-    _HAVE_GPU = False
+from pg_gpu.moments_ld import compute_ld_statistics as _pg_compute_ld_statistics
 
 
 # -----------------------------------------------------------------------------
@@ -269,315 +255,6 @@ def _gpu_cleanup() -> None:
         pass
 
 
-def _compute_H_vals_from_ts(
-    ts: tskit.TreeSequence,
-    sample_sets: Dict[str, List[int]],
-    pop_order: List[str],
-) -> np.ndarray:
-    """
-    Return H values in het_names(k) order.
-
-    IMPORTANT:
-      sample_sets values are *row indices* into ts.samples() order
-      (i.e., indices into var.genotypes when iterating with samples=ts.samples()).
-    """
-    samples_vec = np.array(list(ts.samples()), dtype=np.int64)
-
-    idx_by_pop = {
-        pop: np.asarray(sample_sets[pop], dtype=np.int64) for pop in pop_order
-    }
-
-    k = len(pop_order)
-    H = {(i, j): 0.0 for i in range(k) for j in range(i, k)}
-
-    for var in ts.variants(
-        samples=samples_vec, alleles=None, impute_missing_data=False
-    ):
-        g = var.genotypes  # aligned with samples_vec order
-
-        ps: List[float] = []
-        ok = True
-        for pop in pop_order:
-            vv = g[idx_by_pop[pop]]
-            vv = vv[vv >= 0]
-            if vv.size == 0:
-                ok = False
-                break
-            ps.append(float(vv.mean()))
-        if not ok:
-            continue
-
-        for i in range(k):
-            p_i = ps[i]
-            H[(i, i)] += 2.0 * p_i * (1.0 - p_i)
-            for j in range(i + 1, k):
-                p_j = ps[j]
-                H[(i, j)] += p_i * (1.0 - p_j) + (1.0 - p_i) * p_j
-
-    vals: List[float] = []
-    for i in range(k):
-        for j in range(i, k):
-            vals.append(H[(i, j)])
-    return np.array(vals, dtype=float)
-
-
-# -----------------------------------------------------------------------------
-# GPU computation (auto-dispatch)
-# -----------------------------------------------------------------------------
-
-
-def gpu_ld_from_trees_auto(
-    ts_path: str | Path,
-    r_bins: np.ndarray,
-    r_per_bp: float,
-    *,
-    cpu_fallback: bool,
-    vcf_gz: Optional[str | Path],
-    rec_map_file: Optional[str | Path],
-    pop_file: Optional[str | Path],
-    # Optional overrides so caller can force canonical subset + order
-    sample_sets: Optional[Dict[str, List[int]]] = None,
-    pop_order: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    Compute LD stats from a tree sequence using pg_gpu when possible.
-
-    Output format:
-      {
-        "bins": [(r0,r1), ...] in Morgans,
-        "sums": [ld_vec_bin0, ..., ld_vec_lastbin, H_vec],
-        "stats": (LD_names, H_names),
-        "pops": pop_order
-      }
-
-    Notes:
-    - `r_bins` are Morgans.
-    - pg_gpu bins by differences in hap.positions, so we set hap.positions to Morgans.
-    - If caller doesn't pass pop_order/sample_sets, we:
-        (a) detect from ts, then
-        (b) if pop_file is provided, we reorder to match pop_file order (CPU order).
-    """
-    if not _HAVE_GPU:
-        raise RuntimeError("pg_gpu not available in this environment.")
-
-    ts = tskit.load(str(ts_path))
-
-    # sample_sets: row indices into ts.samples()
-    if sample_sets is None:
-        sample_sets = build_sample_sets(ts)
-
-    # pop order: prefer pop_file order (CPU order), otherwise sample_sets key order
-    if pop_order is None:
-        if pop_file is not None:
-            cpu_order = _read_pop_order_from_samples_txt(pop_file)
-            cpu_order = [p for p in cpu_order if p in sample_sets]
-            if len(cpu_order) > 0:
-                pop_order = cpu_order
-            else:
-                pop_order = list(sample_sets.keys())
-        else:
-            pop_order = list(sample_sets.keys())
-
-    # Ensure pop_order matches sample_sets keys
-    missing = [p for p in pop_order if p not in sample_sets]
-    if missing:
-        raise ValueError(f"pop_order contains pops not in sample_sets: {missing}")
-
-    # Keep only ordered pops
-    sample_sets = {p: sample_sets[p] for p in pop_order}
-
-    k = len(pop_order)
-    LD_names, H_names = moment_names(k)
-
-    _select_best_gpu()
-
-    site_pos_bp = np.asarray(ts.tables.sites.position, dtype=np.float64)
-    if rec_map_file is not None:
-        site_pos_M = _interp_gen_pos_M(site_pos_bp, rec_map_file)
-    else:
-        site_pos_M = site_pos_bp * float(r_per_bp)
-
-    dist_bins = np.asarray(r_bins, dtype=np.float64)
-
-    # Build haplotype matrix (pg_gpu)
-    h = HaplotypeMatrix.from_ts(ts)  # type: ignore[misc]
-    normalized = {name: [int(x) for x in idxs] for name, idxs in sample_sets.items()}
-
-    if hasattr(h, "set_sample_sets") and callable(getattr(h, "set_sample_sets")):
-        h.set_sample_sets(normalized)
-    else:
-        h.sample_sets = normalized
-
-    import cupy as cp
-
-    h.positions = cp.asarray(site_pos_M)
-
-    # filter to biallelic sites; keeps positions aligned
-    h_filt = h.apply_biallelic_filter()
-
-    sums: List[np.ndarray] = []
-
-    def _bins_out() -> List[Tuple[np.float64, np.float64]]:
-        return [
-            (np.float64(r_bins[i]), np.float64(r_bins[i + 1]))
-            for i in range(len(r_bins) - 1)
-        ]
-
-    def _finalize() -> Dict[str, Any]:
-        _gpu_cleanup()
-        return {
-            "bins": _bins_out(),
-            "sums": sums,
-            "stats": (LD_names, H_names),
-            "pops": pop_order,
-        }
-
-    def _append_ld_vectors(stats_by_bin: Dict[Tuple[float, float], Any]) -> None:
-        for b0, b1 in zip(dist_bins[:-1], dist_bins[1:]):
-            key = (float(b0), float(b1))
-            od = stats_by_bin.get(key, None)
-            if od is None:
-                sums.append(np.zeros(len(LD_names), dtype=float))
-                continue
-            if isinstance(od, dict):
-                sums.append(np.array([od[nm] for nm in LD_names], dtype=float))
-            else:
-                sums.append(np.array(list(od), dtype=float))
-
-    # ---- k == 1 ----
-    if k == 1:
-        try:
-            stats_by_bin = h_filt.compute_ld_statistics_gpu_single_pop(
-                bp_bins=dist_bins, raw=True, ac_filter=True
-            )
-        except TypeError:
-            stats_by_bin = h_filt.compute_ld_statistics_gpu_single_pop(
-                bp_bins=dist_bins, raw=True
-            )
-
-        _append_ld_vectors(stats_by_bin)
-        sums.append(_compute_H_vals_from_ts(ts, sample_sets, pop_order))
-        return _finalize()
-
-    # ---- k == 2 ----
-    if k == 2:
-        pop1, pop2 = pop_order[0], pop_order[1]
-        try:
-            stats_by_bin = h_filt.compute_ld_statistics_gpu_two_pops(
-                bp_bins=dist_bins,
-                pop1=pop1,
-                pop2=pop2,
-                raw=True,
-                ac_filter=True,
-                fp64=True,
-            )
-        except TypeError:
-            stats_by_bin = h_filt.compute_ld_statistics_gpu_two_pops(
-                bp_bins=dist_bins,
-                pop1=pop1,
-                pop2=pop2,
-                raw=True,
-                ac_filter=True,
-            )
-
-        _append_ld_vectors(stats_by_bin)
-        sums.append(_compute_H_vals_from_ts(ts, sample_sets, pop_order))
-        return _finalize()
-
-    # ---- k >= 3: try multi-pop kernel ----
-    multi_fn = None
-    multi_name = None
-    for cand in (
-        "compute_ld_statistics_gpu_three_pops",
-        "compute_ld_statistics_gpu_multi_pops",
-        "compute_ld_statistics_gpu_k_pops",
-    ):
-        if hasattr(h_filt, cand) and callable(getattr(h_filt, cand)):
-            multi_fn = getattr(h_filt, cand)
-            multi_name = cand
-            break
-
-    if multi_fn is not None:
-        print(f"🚀 Found pg_gpu multi-pop kernel: {multi_name} (k={k})")
-
-        # --- Signature-aware call ---
-        if multi_name == "compute_ld_statistics_gpu_three_pops":
-            # Your 3-pop function expects pop1/pop2/pop3 as separate args
-            pop1, pop2, pop3 = pop_order[0], pop_order[1], pop_order[2]
-            stats_by_bin = multi_fn(
-                bp_bins=dist_bins,
-                pop1=pop1,
-                pop2=pop2,
-                pop3=pop3,
-                raw=True,  # IMPORTANT: we want true sums for the "sums" field
-                ac_filter=True,
-            )
-        else:
-            # Other possible multi-pop APIs may accept pops=[...]
-            try:
-                stats_by_bin = multi_fn(
-                    bp_bins=dist_bins,
-                    pops=pop_order,
-                    raw=True,  # IMPORTANT
-                    ac_filter=True,
-                )
-            except TypeError:
-                try:
-                    stats_by_bin = multi_fn(
-                        bp_bins=dist_bins,
-                        pops=pop_order,
-                        raw=True,  # IMPORTANT
-                    )
-                except TypeError:
-                    # last resort (may return means) — but at least try
-                    stats_by_bin = multi_fn(bp_bins=dist_bins)
-
-        # Validate dict-of-dicts
-        example = None
-        for _key in stats_by_bin.keys():
-            example = stats_by_bin[_key]
-            if example is not None:
-                break
-        if not isinstance(example, dict):
-            raise TypeError(
-                f"Multi-pop kernel returned per-bin type={type(example)}; expected dict of stat_name->value."
-            )
-
-        missing = [nm for nm in LD_names if nm not in example]
-        if missing:
-            raise KeyError(
-                f"GPU multi-pop output missing expected moments LD names (k={k}). "
-                f"First few missing: {missing[:10]}"
-            )
-
-        _append_ld_vectors(stats_by_bin)
-        sums.append(_compute_H_vals_from_ts(ts, sample_sets, pop_order))
-        return _finalize()
-
-    # ---- CPU fallback if no GPU multi-pop kernel ----
-    if cpu_fallback:
-        if vcf_gz is None or rec_map_file is None or pop_file is None:
-            raise NotImplementedError(
-                f"Detected k={k} pops but pg_gpu has no multi-pop kernel and CPU fallback inputs are missing."
-            )
-
-        print(
-            f"🐌 Falling back to moments CPU compute_ld_statistics for k={k} pops: {pop_order}"
-        )
-        return moments.LD.Parsing.compute_ld_statistics(
-            str(vcf_gz),
-            rec_map_file=str(rec_map_file),
-            pop_file=str(pop_file),
-            pops=pop_order,
-            r_bins=np.asarray([float(x) for x in r_bins], dtype=float),
-            report=False,
-        )
-
-    raise NotImplementedError(
-        f"Detected k={k} pops but pg_gpu has no multi-pop kernel and cpu_fallback=False."
-    )
-
-
 # -----------------------------------------------------------------------------
 # Public entrypoint used by wrapper
 # -----------------------------------------------------------------------------
@@ -589,64 +266,21 @@ def compute_ld_window(
     vcf_gz: Path,
     samples_file: Path,
     rec_map_file: Path,
-    ts_file: Optional[Path],
     r_bins: np.ndarray,
     config: Dict[str, Any],
-    request_gpu: bool,
 ) -> Dict[str, Any]:
     """
-    Compute LD stats for one window. Uses GPU when requested + available + config allows.
-    Falls back to CPU moments when GPU isn't possible or fails.
+    Compute LD stats for one window using pg_gpu.moments_ld.compute_ld_statistics.
 
-    Pop-order rule:
-      CPU uses config["num_samples"].keys()
-      GPU is forced to match CPU order by passing pop_order to gpu_ld_from_trees_auto.
+    Always uses GPU-accelerated pg_gpu; no CPU fallback.
+
+    Pop-order is taken from config["num_samples"].keys().
     """
-    r_per_bp = float(config.get("recombination_rate", 1e-8))
-    use_gpu_cfg = bool(config.get("use_gpu_ld", False))
-    use_gpu = bool(request_gpu and use_gpu_cfg and _HAVE_GPU and ts_file is not None)
-
-    print(
-        f"[LD] window {window_index}: request_gpu={request_gpu}, "
-        f"use_gpu_ld_in_cfg={use_gpu_cfg}, have_gpu={_HAVE_GPU}, ts_exists={ts_file is not None} "
-        f"→ use_gpu={use_gpu}"
-    )
-
     pops_cpu = list(config["num_samples"].keys())
-    print(f"[LD] CPU pop labels (from config num_samples keys): {pops_cpu}")
-
-    if use_gpu:
-        try:
-            import time
-
-            t0 = time.perf_counter()
-
-            stats = gpu_ld_from_trees_auto(
-                ts_path=ts_file,
-                r_bins=r_bins,
-                r_per_bp=r_per_bp,
-                cpu_fallback=True,
-                vcf_gz=vcf_gz,
-                rec_map_file=rec_map_file,
-                pop_file=samples_file,  # used to infer CPU pop order if pop_order not given
-                pop_order=pops_cpu,  # force index order == CPU/config order
-                sample_sets=None,  # if you later want canonical subsets, pass them here
-            )
-
-            dt = time.perf_counter() - t0
-            print(f"✅ window {window_index:04d}: GPU/auto completed in {dt:.2f}s")
-            return stats
-
-        except Exception as e:
-            print(
-                f"❌ window {window_index:04d}: GPU path failed; falling back to CPU. Error: {e}"
-            )
-
-    import time
-
+    _select_best_gpu()
     t0 = time.perf_counter()
-    stats = moments.LD.Parsing.compute_ld_statistics(
-        str(vcf_gz),
+    stats = _pg_compute_ld_statistics(
+        vcf_file=str(vcf_gz),
         rec_map_file=str(rec_map_file),
         pop_file=str(samples_file),
         pops=pops_cpu,
@@ -654,5 +288,5 @@ def compute_ld_window(
         report=False,
     )
     dt = time.perf_counter() - t0
-    print(f"✓ window {window_index:04d}: CPU completed in {dt:.2f}s")
+    print(f"[LD] window {window_index:04d}: pg_gpu completed in {dt:.2f}s")
     return stats
