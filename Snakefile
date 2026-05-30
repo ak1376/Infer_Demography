@@ -104,29 +104,29 @@ rule all:
             # SIMULATED DATA
             # ======================================================================
 
-            # ── 1. RAW SIMULATION OUTPUTS ───────────────────────────────────────
+            ## ── 1. RAW SIMULATION OUTPUTS ───────────────────────────────────────
             expand(f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",  sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
             ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
-            # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-            #     sid=SIM_IDS,
-            #     opt=OPTIMS,
-            # ),
-            # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
-            #     sid=SIM_IDS,
-            #     opt=OPTIMS,
-            # ),
+            expand(
+                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+                sid=SIM_IDS,
+                opt=OPTIMS,
+            ),
+            expand(
+                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
+                sid=SIM_IDS,
+                opt=OPTIMS,
+            ),
 
-            ## ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
+            # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
+            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
+            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
+            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
 
-            # ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
+            ## ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
             expand(
                 f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
                 sid=SIM_IDS,

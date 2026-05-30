@@ -6,7 +6,8 @@
 #SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --partition=kerngpu
+#SBATCH --gres=gpu:1
 #SBATCH --account=kernlab
 #SBATCH --requeue
 #SBATCH --mail-type=END,FAIL
@@ -18,9 +19,8 @@ set -eo pipefail
 # --- Make modules available (Talapas-style) ---
 module --ignore_cache purge || true
 
-# Load the CUDA module THAT WORKED for you (use the exact name you successfully loaded)
-# Example (replace with your working module):
-module --ignore_cache load cuda/11.8
+# pg_gpu requires CUDA 12 (cupy>=13, cuda-version=12.*)
+module --ignore_cache load cuda/12.1
 
 # --- Conda env ---
 source ~/miniforge3/etc/profile.d/conda.sh
