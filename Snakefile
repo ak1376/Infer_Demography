@@ -109,7 +109,7 @@ rule all:
             expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-            # ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
+            ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
             # expand(
             #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
             #     sid=SIM_IDS,
@@ -121,7 +121,7 @@ rule all:
             #     opt=OPTIMS,
             # ),
 
-            # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
+            ## ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
@@ -219,7 +219,8 @@ rule simulate:
 rule infer_moments:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl"   # not read; kept for DAG clarity
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",   # not read; kept for DAG clarity
+        cfg    = EXP_CFG
     output:
         pkl = temp(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl")
     params:
@@ -258,6 +259,7 @@ rule infer_dadi:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+        cfg    = EXP_CFG,
     output:
         pkl = temp(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl")
     params:
@@ -588,6 +590,7 @@ rule optimize_momentsld:
             sid=[w.sid],
             win=WINDOWS
         ),
+        cfg  = EXP_CFG,
     output:
         mv   = temp(f"{LD_ROOT}/means.varcovs.pkl"),
         boot = temp(f"{LD_ROOT}/bootstrap_sets.pkl"),
