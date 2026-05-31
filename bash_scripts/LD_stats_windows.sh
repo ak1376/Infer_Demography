@@ -6,7 +6,7 @@
 #SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --partition=kerngpu
+#SBATCH --partition=kerngpu,gpulong,gpu
 #SBATCH --gres=gpu:1
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -20,7 +20,7 @@ set -eo pipefail
 module --ignore_cache purge || true
 
 # pg_gpu requires CUDA 12 (cupy>=13, cuda-version=12.*)
-module --ignore_cache load cuda/12.1
+module --ignore_cache load cuda/12.4.1
 
 # --- Conda env ---
 source ~/miniforge3/etc/profile.d/conda.sh
