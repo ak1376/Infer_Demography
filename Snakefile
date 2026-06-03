@@ -681,10 +681,11 @@ rule optimize_momentsld:
 ##############################################################################
 rule optimize_momentsld_mixed:
     input:
-        pruned_pkls = lambda w: expand(
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
-            sid=[w.sid], frac_tag=[w.frac_tag], win=WINDOWS,
-        ),
+        pruned_pkls = lambda w: [
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}/LD_stats/LD_stats_window_{win}.pkl"
+            for win in WINDOWS
+            if not Path(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/LD_stats/LD_stats_window_{win}.pkl").exists()
+        ],
         cfg = EXP_CFG,
     output:
         mv   = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl"),
