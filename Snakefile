@@ -816,7 +816,11 @@ rule combine_results:
         cfg       = EXP_CFG,
         dadi      = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
         moments   = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
-        momentsLD = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl",
+        momentsLD = lambda w: (
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}/best_fit.pkl"
+            if PRUNE_TAGS else
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl"
+        ),
         fims      = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"
             for eng in FIM_ENGINES
