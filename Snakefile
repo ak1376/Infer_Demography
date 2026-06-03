@@ -608,7 +608,7 @@ rule prune_window:
         """
         set -euo pipefail
         PYTHONPATH={workflow.basedir} \
-        python "test_scripts/prune_vcf.py" \
+        python "src/prune_vcf.py" \
             --vcf            "{params.windows_dir}/window_{wildcards.win}.vcf.gz" \
             --out-dir        "{params.pruning_dir}" \
             --keep-fractions "{params.keep_frac}"   \
