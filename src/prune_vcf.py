@@ -59,7 +59,8 @@ def _write_thinned(args):
     return f"  {_frac_tag(frac)}/windows/{dest.name}: kept {n_keep}/{n_full} sites ({frac:.0%})"
 
 
-def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1) -> None:
+def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1,
+              copy_unpruned: bool = True) -> None:
     """Prune vcf_in into out_dir/{unpruned,thin*}/windows/ subdirs."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,21 +73,21 @@ def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1) -> None:
 
     print(f"{fname}: {n_full} sites")
 
-    # Copy support files (samples.txt, flat_map.txt) from source dir into each windows/ subdir
     src_dir = vcf_in.parent
 
-    # Copy original into unpruned/windows/
-    unpruned_wins = out_dir / "unpruned" / "windows"
-    unpruned_wins.mkdir(parents=True, exist_ok=True)
-    unpruned_dest = unpruned_wins / fname
-    if unpruned_dest.exists():
-        print(f"  unpruned/windows/{fname}: already exists, skipping")
-    else:
-        shutil.copy2(str(vcf_in), str(unpruned_dest))
-        for sf in SUPPORT_FILES:
-            if (src_dir / sf).exists():
-                shutil.copy2(str(src_dir / sf), str(unpruned_wins / sf))
-        print(f"  unpruned/windows/{fname}: copied")
+    # Optionally copy original into unpruned/windows/
+    if copy_unpruned:
+        unpruned_wins = out_dir / "unpruned" / "windows"
+        unpruned_wins.mkdir(parents=True, exist_ok=True)
+        unpruned_dest = unpruned_wins / fname
+        if unpruned_dest.exists():
+            print(f"  unpruned/windows/{fname}: already exists, skipping")
+        else:
+            shutil.copy2(str(vcf_in), str(unpruned_dest))
+            for sf in SUPPORT_FILES:
+                if (src_dir / sf).exists():
+                    shutil.copy2(str(src_dir / sf), str(unpruned_wins / sf))
+            print(f"  unpruned/windows/{fname}: copied")
 
     # Prepare output windows/ dirs and copy support files
     for frac in THIN_FRACTIONS:
@@ -123,6 +124,8 @@ def _parse_args():
     p.add_argument("--keep-fractions", type=str, default=None,
                    help="Comma-separated keep fractions to run, e.g. 0.15 or 0.10,0.15 "
                         "(default: all five)")
+    p.add_argument("--no-unpruned", action="store_true",
+                   help="Skip copying the original VCF into unpruned/ (saves disk space)")
     return p.parse_args()
 
 
@@ -134,14 +137,17 @@ if __name__ == "__main__":
     if args.keep_fractions:
         THIN_FRACTIONS[:] = [float(x) for x in args.keep_fractions.split(",")]
 
+    copy_unpruned = not args.no_unpruned
+
     if args.vcf:
-        prune_vcf(args.vcf.resolve(), out_dir, workers=args.workers)
+        prune_vcf(args.vcf.resolve(), out_dir, workers=args.workers,
+                  copy_unpruned=copy_unpruned)
     else:
         vcf_files = sorted(args.windows_dir.resolve().glob("window_*.vcf.gz"))
         if not vcf_files:
             raise FileNotFoundError(f"No window_*.vcf.gz in {args.windows_dir}")
         print(f"Found {len(vcf_files)} windows, processing with {args.workers} workers each\n")
         for vcf in vcf_files:
-            prune_vcf(vcf, out_dir, workers=args.workers)
+            prune_vcf(vcf, out_dir, workers=args.workers, copy_unpruned=copy_unpruned)
 
     print("\nDone.")

@@ -76,10 +76,11 @@ for IDX in $(seq "$START" "$END"); do
     # Prune this window if not already done
     if [[ ! -f "$PRUNED_VCF" ]]; then
         echo "PRUNE: SID=$SID WIN=$WIN"
-        PYTHONPATH="$ROOT" python "$ROOT/test_scripts/prune_vcf.py" \
+        PYTHONPATH="$ROOT" python "$ROOT/src/prune_vcf.py" \
             --vcf            "$WINDOWS_DIR/window_${WIN}.vcf.gz" \
             --out-dir        "$PRUNING_DIR"                      \
             --keep-fractions "$KEEP_FRAC"                        \
+            --no-unpruned                                        \
             --workers        1
     fi
 

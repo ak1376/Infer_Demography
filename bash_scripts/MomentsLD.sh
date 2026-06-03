@@ -28,8 +28,11 @@ CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-NUM_DRAWS=$(jq -r '.num_draws' "$CFG")
-MODEL=$(jq -r '.demographic_model' "$CFG")
+NUM_DRAWS=$(jq -r '.num_draws'         "$CFG")
+MODEL=$(jq -r    '.demographic_model'  "$CFG")
+
+# Read pruning fractions from config (empty if not set)
+PRUNE_FRACS=$(jq -r '(.prune_keep_fractions // [])[] | (. * 100 | round | tostring) | "thin" + .' "$CFG" 2>/dev/null || true)
 
 # ---------------------------------------------------------------------------
 # 2. resubmit with correct --array range if launched without --array --------
@@ -53,17 +56,33 @@ echo "Array $SLURM_ARRAY_TASK_ID → sims $BATCH_START .. $BATCH_END"
 # 4. run Snakemake for each sim in this batch -------------------------------
 # ---------------------------------------------------------------------------
 for SID in $(seq "$BATCH_START" "$BATCH_END"); do
-    TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/best_fit.pkl"
-    echo "Optimising Moments‑LD for SID=$SID  →  $TARGET"
-
-    snakemake --snakefile "$SNAKEFILE" \
-              --directory "$ROOT" \
-              --rerun-incomplete \
-              --nolock \
-              --allowed-rules optimize_momentsld \
-              -j "$SLURM_CPUS_PER_TASK" \
-              "$TARGET" \
-              || { echo "Snakemake failed for SID=$SID"; exit 1; }
+    if [[ -n "$PRUNE_FRACS" ]]; then
+        # Run mixed optimization for each pruning fraction
+        for FRAC_TAG in $PRUNE_FRACS; do
+            TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/pruning/${FRAC_TAG}/best_fit.pkl"
+            echo "Optimising Moments-LD (mixed, ${FRAC_TAG}) for SID=$SID → $TARGET"
+            snakemake --snakefile "$SNAKEFILE" \
+                      --directory "$ROOT" \
+                      --rerun-incomplete \
+                      --nolock \
+                      --allowed-rules optimize_momentsld_mixed \
+                      -j "$SLURM_CPUS_PER_TASK" \
+                      "$TARGET" \
+                      || { echo "Snakemake failed for SID=$SID FRAC=$FRAC_TAG"; exit 1; }
+        done
+    else
+        # Standard unpruned optimization
+        TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/best_fit.pkl"
+        echo "Optimising Moments‑LD for SID=$SID  →  $TARGET"
+        snakemake --snakefile "$SNAKEFILE" \
+                  --directory "$ROOT" \
+                  --rerun-incomplete \
+                  --nolock \
+                  --allowed-rules optimize_momentsld \
+                  -j "$SLURM_CPUS_PER_TASK" \
+                  "$TARGET" \
+                  || { echo "Snakemake failed for SID=$SID"; exit 1; }
+    fi
 done
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."
