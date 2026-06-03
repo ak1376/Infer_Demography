@@ -61,8 +61,15 @@ for IDX in $(seq "$START" "$END"); do
     TARGET="$SIM_DIR/LD_stats/LD_stats_window_${WIN}.pkl"
     PRUNED_VCF="$SIM_DIR/windows/window_${WIN}.vcf.gz"
 
+    UNPRUNED_PKL="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/LD_stats/LD_stats_window_${WIN}.pkl"
+
     if [[ -f "$TARGET" ]]; then
-        echo "SKIP: SID=$SID WIN=$WIN"
+        echo "SKIP: SID=$SID WIN=$WIN (pruned LD stats already exist)"
+        continue
+    fi
+
+    if [[ -f "$UNPRUNED_PKL" ]]; then
+        echo "SKIP: SID=$SID WIN=$WIN (unpruned LD stats already exist)"
         continue
     fi
 
