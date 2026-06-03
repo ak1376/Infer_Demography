@@ -90,6 +90,10 @@ REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
 # LD r-bins
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 
+# Optional pruning — set "prune_keep_fractions": [0.15] in EXP_CFG to enable
+PRUNE_FRACS = CFG.get("prune_keep_fractions", [])
+def _frac_tag(f): return f"thin{round(float(f) * 100):02d}"
+PRUNE_TAGS  = [_frac_tag(f) for f in PRUNE_FRACS]
 
 SIM_IDS  = [i for i in range(NUM_DRAWS)]
 WINDOWS  = range(NUM_WINDOWS)
@@ -131,6 +135,14 @@ rule all:
                 f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
                 sid=SIM_IDS,
             ),
+
+            ## ── 5. PRUNED LD STATS (only when prune_keep_fractions set in config) ─
+            *(expand(
+                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
+                sid=SIM_IDS,
+                frac_tag=PRUNE_TAGS,
+                win=WINDOWS,
+            ) if PRUNE_TAGS else []),
 
             # ======================================================================
             # ACTIVE TARGETS
@@ -577,6 +589,57 @@ rule ld_window:
 
         # .h5 is written by the LD script but not declared as a Snakemake output;
         # remove it here so it doesn't accumulate across windows.
+        rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
+        """
+
+##############################################################################
+# RULE prune_window – thin one VCF to a keep-fraction                       #
+##############################################################################
+rule prune_window:
+    input:
+        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
+    output:
+        pruned_vcf = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/windows/window_{{win}}.vcf.gz"),
+    params:
+        pruning_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning",
+        windows_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
+        keep_frac   = lambda w: str(int(w.frac_tag.replace("thin", "")) / 100),
+    threads: 1
+    shell:
+        """
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "test_scripts/prune_vcf.py" \
+            --vcf            "{params.windows_dir}/window_{wildcards.win}.vcf.gz" \
+            --out-dir        "{params.pruning_dir}" \
+            --keep-fractions "{params.keep_frac}"   \
+            --workers        1
+        """
+
+##############################################################################
+# RULE ld_window_pruned – LD stats for one pruned window                    #
+##############################################################################
+rule ld_window_pruned:
+    input:
+        vcf_gz = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/windows/window_{{win}}.vcf.gz",
+    output:
+        pkl = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
+    params:
+        sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
+        bins    = R_BINS_STR,
+        cfg     = EXP_CFG,
+    threads: 4
+    resources:
+        ld_cores = 4
+    shell:
+        """
+        set -euo pipefail
+        python "{LD_SCRIPT}" \
+            --sim-dir      {params.sim_dir} \
+            --window-index {wildcards.win} \
+            --config-file  {params.cfg} \
+            --r-bins       "{params.bins}"
+
         rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
         """
 
