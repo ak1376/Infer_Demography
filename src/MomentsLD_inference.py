@@ -73,14 +73,22 @@ def load_config(config_path: Path) -> Dict:
         return json.load(f)
 
 
-def aggregate_ld_statistics(ld_root: Path) -> Dict[str, List[np.ndarray]]:
+def aggregate_ld_statistics(
+    ld_root: Path,
+    fallback_ld_root: Optional[Path] = None,
+) -> Dict[str, List[np.ndarray]]:
     """
     Aggregate LD statistics from multiple windows into means and covariances.
 
     Parameters
     ----------
     ld_root
-        Path to MomentsLD directory containing LD_stats/ subdirectory.
+        Primary MomentsLD directory containing LD_stats/ subdirectory.
+    fallback_ld_root
+        Optional fallback directory. For any window missing from
+        ld_root/LD_stats/, the pkl is sourced from
+        fallback_ld_root/LD_stats/ instead. Useful for mixing unpruned
+        and pruned windows in one optimization.
 
     Returns
     -------
@@ -89,7 +97,7 @@ def aggregate_ld_statistics(ld_root: Path) -> Dict[str, List[np.ndarray]]:
 
     Side effects
     ------------
-    Creates:
+    Creates under ld_root:
         - means.varcovs.pkl  (aggregated statistics)
         - bootstrap_sets.pkl (bootstrap data for variance estimation)
     """
@@ -101,18 +109,30 @@ def aggregate_ld_statistics(ld_root: Path) -> Dict[str, List[np.ndarray]]:
         with means_file.open("rb") as f:
             return pickle.load(f)
 
-    # Load individual LD statistics files
+    # Collect primary LD stats
     ld_stats_dir = ld_root / "LD_stats"
-    ld_files = list(ld_stats_dir.glob("LD_stats_window_*.pkl"))
-
-    if not ld_files:
-        raise RuntimeError(f"No LD statistics files found in {ld_stats_dir}")
-
-    ld_stats = {}
-    for pkl_file in ld_files:
+    ld_stats: Dict[int, Any] = {}
+    for pkl_file in ld_stats_dir.glob("LD_stats_window_*.pkl"):
         window_id = int(pkl_file.stem.split("_")[-1])
         with pkl_file.open("rb") as f:
             ld_stats[window_id] = pickle.load(f)
+
+    # Fill missing windows from fallback directory
+    if fallback_ld_root is not None:
+        fallback_dir = fallback_ld_root / "LD_stats"
+        for pkl_file in fallback_dir.glob("LD_stats_window_*.pkl"):
+            window_id = int(pkl_file.stem.split("_")[-1])
+            if window_id not in ld_stats:
+                with pkl_file.open("rb") as f:
+                    ld_stats[window_id] = pickle.load(f)
+        logging.info(
+            "Mixed LD stats: %d primary + %d fallback windows",
+            len([k for k in ld_stats if (ld_stats_dir / f"LD_stats_window_{k}.pkl").exists()]),
+            len([k for k in ld_stats if not (ld_stats_dir / f"LD_stats_window_{k}.pkl").exists()]),
+        )
+
+    if not ld_stats:
+        raise RuntimeError(f"No LD statistics files found in {ld_stats_dir}")
 
     # Aggregate using moments.LD
     mv = moments.LD.Parsing.bootstrap_data(ld_stats)

@@ -136,12 +136,11 @@ rule all:
                 sid=SIM_IDS,
             ),
 
-            ## ── 5. PRUNED LD STATS (only when prune_keep_fractions set in config) ─
+            ## ── 5. MIXED LD OPTIMIZATION (unpruned primary + pruned fallback) ────────
             *(expand(
-                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
+                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
                 sid=SIM_IDS,
                 frac_tag=PRUNE_TAGS,
-                win=WINDOWS,
             ) if PRUNE_TAGS else []),
 
             # ======================================================================
@@ -674,6 +673,38 @@ rule optimize_momentsld:
             --run-dir      {params.sim_dir} \
             --output-root  {params.LD_dir} \
             --config-file  {params.cfg}
+        """
+
+##############################################################################
+# RULE optimize_momentsld_mixed – optimization using unpruned LD stats as    #
+# primary source and pruned LD stats as fallback for missing windows         #
+##############################################################################
+rule optimize_momentsld_mixed:
+    input:
+        pruned_pkls = lambda w: expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
+            sid=[w.sid], frac_tag=[w.frac_tag], win=WINDOWS,
+        ),
+        cfg = EXP_CFG,
+    output:
+        mv   = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl"),
+        boot = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl"),
+        pdf  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/empirical_vs_theoretical_comparison.pdf",
+        best = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
+    params:
+        sim_dir      = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+        output_root  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
+        fallback_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
+        cfg          = EXP_CFG,
+    threads: 1
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/LD_inference.py" \
+            --run-dir        {params.sim_dir}     \
+            --output-root    {params.output_root} \
+            --fallback-ld-dir {params.fallback_dir} \
+            --config-file    {params.cfg}
         """
 
 ##############################################################################

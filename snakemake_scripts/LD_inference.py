@@ -50,6 +50,16 @@ def _parse_args():
     )
     p.add_argument("--config-file", required=True, type=Path)
     p.add_argument(
+        "--fallback-ld-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional fallback MomentsLD directory. For any window missing "
+            "from --output-root/LD_stats/, the pkl is sourced from here instead. "
+            "Use to mix unpruned and pruned windows in one optimization."
+        ),
+    )
+    p.add_argument(
         "--r-bins",
         type=str,
         default=None,
@@ -94,7 +104,7 @@ def main():
     # 1) aggregate LD pickles → means/varcovs/bootstrap_sets
     #    (assumes LD_stats/*.pkl live under output_root/LD_stats)
     # ------------------------------------------------------------------
-    empirical_data = aggregate_ld_statistics(a.output_root)
+    empirical_data = aggregate_ld_statistics(a.output_root, fallback_ld_root=a.fallback_ld_dir)
 
     # ------------------------------------------------------------------
     # 2) empirical vs theoretical PDF (skips if exists)
