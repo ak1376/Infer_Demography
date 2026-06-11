@@ -4,7 +4,7 @@
 #SBATCH --error=logs/combine_%A_%a.err
 #SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=2G
+#SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -87,14 +87,6 @@ echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END"
 # Allowed rules
 # -----------------------------
 ALLOWED_RULES=(
-  infer_dadi
-  aggregate_opts_dadi
-  infer_moments
-  aggregate_opts_moments
-  ld_window
-  optimize_momentsld
-  compute_fim
-  sfs_residuals
   combine_results
 )
 

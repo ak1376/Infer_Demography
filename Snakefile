@@ -818,6 +818,10 @@ rule combine_results:
     run:
         import pickle, pathlib, numpy as np, re, os, json
 
+        if not input.dadi or not input.moments or not input.momentsLD:
+            missing = [k for k, v in [("dadi", input.dadi), ("moments", input.moments), ("momentsLD", input.momentsLD)] if not v]
+            raise RuntimeError(f"sim_{wildcards.sid}: skipping — prerequisites not ready: {missing}")
+
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
 
