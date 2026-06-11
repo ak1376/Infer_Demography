@@ -3,7 +3,7 @@
 ##############################################################################
 import json, math, sys, os
 from pathlib import Path
-from snakemake.io import protected
+from snakemake.io import protected, ancient
 
 # Guard against bottleneck shadow import issues
 if "bottleneck" in sys.modules and not hasattr(sys.modules["bottleneck"], "__version__"):
@@ -136,12 +136,11 @@ rule all:
                 sid=SIM_IDS,
             ),
 
-            ## ── 5. MIXED LD OPTIMIZATION (unpruned primary + pruned fallback) ────────
-            *(expand(
-                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
+            ## ── 5. MOMENTS-LD OPTIMIZATION (always at MomentsLD/best_fit.pkl) ─────
+            expand(
+                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
                 sid=SIM_IDS,
-                frac_tag=PRUNE_TAGS,
-            ) if PRUNE_TAGS else []),
+            ),
 
             # ======================================================================
             # ACTIVE TARGETS
@@ -644,6 +643,8 @@ rule ld_window_pruned:
 
 ##############################################################################
 # RULE optimize_momentsld – aggregate windows & optimise momentsLD          #
+# Works for unpruned-only AND mixed (unpruned primary + pruned fallback).   #
+# Output is always MomentsLD/best_fit.pkl regardless of pruning config.     #
 ##############################################################################
 rule optimize_momentsld:
     input:
@@ -652,61 +653,41 @@ rule optimize_momentsld:
             sid=[w.sid],
             win=WINDOWS
         ),
-        cfg  = EXP_CFG,
+        pruned_pkls = lambda w: (
+            [
+                f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}/LD_stats/LD_stats_window_{win}.pkl"
+                for win in WINDOWS
+                if not Path(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/LD_stats/LD_stats_window_{win}.pkl").exists()
+            ]
+            if PRUNE_TAGS else []
+        ),
+        cfg = EXP_CFG,
     output:
         mv   = temp(f"{LD_ROOT}/means.varcovs.pkl"),
         boot = temp(f"{LD_ROOT}/bootstrap_sets.pkl"),
         pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
-        best = f"{LD_ROOT}/best_fit.pkl"
+        best = f"{LD_ROOT}/best_fit.pkl",
     params:
-        sim_dir   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        LD_dir    = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        bins      = R_BINS_STR,
-        n_windows = NUM_WINDOWS,
-        cfg  = EXP_CFG
-
-    threads: 1
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/LD_inference.py" \
-            --run-dir      {params.sim_dir} \
-            --output-root  {params.LD_dir} \
-            --config-file  {params.cfg}
-        """
-
-##############################################################################
-# RULE optimize_momentsld_mixed – optimization using unpruned LD stats as    #
-# primary source and pruned LD stats as fallback for missing windows         #
-##############################################################################
-rule optimize_momentsld_mixed:
-    input:
-        pruned_pkls = lambda w: [
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}/LD_stats/LD_stats_window_{win}.pkl"
-            for win in WINDOWS
-            if not Path(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/LD_stats/LD_stats_window_{win}.pkl").exists()
-        ],
+        sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
+        pruning_dir = lambda w: (
+            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}"
+            if PRUNE_TAGS else ""
+        ),
         cfg = EXP_CFG,
-    output:
-        mv   = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl"),
-        boot = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl"),
-        pdf  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/empirical_vs_theoretical_comparison.pdf",
-        best = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
-    params:
-        sim_dir      = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        output_root  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
-        fallback_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        cfg          = EXP_CFG,
     threads: 1
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/LD_inference.py" \
-            --run-dir        {params.sim_dir}     \
-            --output-root    {params.output_root} \
-            --fallback-ld-dir {params.fallback_dir} \
-            --config-file    {params.cfg}
-        """
+    run:
+        import subprocess
+        cmd = [
+            "python", "snakemake_scripts/LD_inference.py",
+            "--run-dir",     params.sim_dir,
+            "--output-root", params.output_root,
+            "--config-file", params.cfg,
+        ]
+        if params.pruning_dir:
+            cmd += ["--fallback-ld-dir", params.pruning_dir]
+        env = {**os.environ, "PYTHONPATH": workflow.basedir}
+        subprocess.run(cmd, check=True, env=env)
 
 ##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}             #
@@ -814,27 +795,24 @@ rule sfs_residuals:
 rule combine_results:
     input:
         cfg       = EXP_CFG,
-        dadi      = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl",
-        moments   = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl",
-        momentsLD = lambda w: (
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}/best_fit.pkl"
-            if PRUNE_TAGS else
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl"
-        ),
+        dadi      = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl")
+                    if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl") else [],
+        moments   = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl")
+                    if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl") else [],
+        momentsLD = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl")
+                    if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl") else [],
         fims      = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"
             for eng in FIM_ENGINES
-        ],
-        # 👇 pick which residual vector to include based on config
+        ] if CFG.get("use_fim_features", False) else [],
         resid_vecs = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/{_resid_vector_fname()}"
             for eng in RESIDUAL_ENGINES
-        ],
-        # also pull meta so changes to GS settings trigger recombine
+        ] if CFG.get("use_residuals", False) else [],
         resid_meta = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/meta.json"
             for eng in RESIDUAL_ENGINES
-        ],
+        ] if CFG.get("use_residuals", False) else [],
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
