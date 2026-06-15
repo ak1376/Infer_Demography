@@ -193,14 +193,21 @@ def fit_model(
         o.set_max_objective(objective)
         return o
 
-    # ---- run optimization: LBFGS then fallback COBYLA ----
+    # ---- run optimization: BOBYQA with roundoff + runtime fallback ----
     try:
         opt = _make_opt(nlopt.LN_BOBYQA)
         xhat = opt.optimize(x0)
 
+    except nlopt.RoundoffLimited:
+        # Optimizer stalled on roundoff — use best point evaluated so far
+        x_best = last_eval.get("log10_params", None)
+        xhat = np.asarray(x_best if x_best is not None else x0, float)
+        print("[DADI DEBUG] LN_BOBYQA roundoff-limited; returning best point so far")
+        debug_txt = _build_debug_txt("bobyqa_roundoff_limited")
+
     except RuntimeError:
-        print("[DADI DEBUG] LD_LBFGS runtime_error; capturing debug state and falling back to LN_COBYLA")
-        debug_txt = _build_debug_txt("lbfgs_runtime_error")
+        print("[DADI DEBUG] LN_BOBYQA runtime_error; capturing debug state and falling back to LN_COBYLA")
+        debug_txt = _build_debug_txt("bobyqa_runtime_error")
 
         x_start = last_eval.get("log10_params", None)
         if x_start is None:
@@ -209,10 +216,11 @@ def fit_model(
         opt_fb = _make_opt(nlopt.LN_COBYLA)
         try:
             xhat = opt_fb.optimize(np.asarray(x_start, float))
-        except RuntimeError:
-            print("[DADI DEBUG] LN_COBYLA runtime_error too; capturing debug state and re-raising")
-            debug_txt = _build_debug_txt("cobyla_runtime_error")
-            raise
+        except (RuntimeError, nlopt.RoundoffLimited):
+            x_best = last_eval.get("log10_params", None)
+            xhat = np.asarray(x_best if x_best is not None else x_start, float)
+            print("[DADI DEBUG] LN_COBYLA also failed; returning best point so far")
+            debug_txt = _build_debug_txt("cobyla_also_failed")
 
     # ---- finalize ----
     ll_hat = loglikelihood(xhat)
