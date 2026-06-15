@@ -195,7 +195,7 @@ def fit_model(
 
     # ---- run optimization: LBFGS then fallback COBYLA ----
     try:
-        opt = _make_opt(nlopt.LD_LBFGS)
+        opt = _make_opt(nlopt.LN_BOBYQA)
         xhat = opt.optimize(x0)
 
     except RuntimeError:

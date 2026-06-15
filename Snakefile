@@ -318,23 +318,18 @@ rule infer_dadi:
 # ── MOMENTS ONLY ───────────────────────────────────────────────────────────
 rule aggregate_opts_moments:
     input:
-        mom_pkls = expand(
-            f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-            sid=SIM_IDS,
-            opt=OPTIMS,
-        )
+        cfg = EXP_CFG,
     output:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re
+        import pickle, numpy as np, pathlib, re, glob
 
         sid = wildcards.sid
+        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
-        # Only keep files for this sid
-        mom_pkls = [
-            str(p) for p in input.mom_pkls
-            if f"/run_{sid}_" in str(p)
-        ]
+        mom_pkls = sorted(glob.glob(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/moments/fit_params.pkl"
+        ))
 
         def _as_list(x):
             if x is None:
@@ -371,9 +366,9 @@ rule aggregate_opts_moments:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        if n_nonempty < TOP_K:
+        if n_nonempty < MIN_FILES:
             raise ValueError(
-                f"[aggregate_opts_moments] Need >= {TOP_K} non-empty moments optimizations for sid={sid}, "
+                f"[aggregate_opts_moments] Need >= {MIN_FILES} non-empty moments optimizations for sid={sid}, "
                 f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(mom_pkls)}). "
                 f"Not aggregating."
             )
@@ -399,23 +394,18 @@ rule aggregate_opts_moments:
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
 rule aggregate_opts_dadi:
     input:
-        dadi_pkls = expand(
-            f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
-            sid=SIM_IDS,
-            opt=OPTIMS,
-        )
+        cfg = EXP_CFG,
     output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re
+        import pickle, numpy as np, pathlib, re, glob
 
         sid = wildcards.sid
+        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
-        # Only keep files for this sid
-        dadi_pkls = [
-            str(p) for p in input.dadi_pkls
-            if f"/run_{sid}_" in str(p)
-        ]
+        dadi_pkls = sorted(glob.glob(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/dadi/fit_params.pkl"
+        ))
 
         def _as_list(x):
             if x is None:
@@ -452,9 +442,9 @@ rule aggregate_opts_dadi:
             lls.extend(this_lls)
             opt_ids.extend([opt_idx] * len(this_lls))
 
-        if n_nonempty < TOP_K:
+        if n_nonempty < MIN_FILES:
             raise ValueError(
-                f"[aggregate_opts_dadi] Need >= {TOP_K} non-empty dadi optimizations for sid={sid}, "
+                f"[aggregate_opts_dadi] Need >= {MIN_FILES} non-empty dadi optimizations for sid={sid}, "
                 f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(dadi_pkls)}). "
                 f"Not aggregating."
             )
