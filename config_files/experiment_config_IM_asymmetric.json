@@ -43,6 +43,10 @@
     "T_split": [
       500,
       2e4
+    ],
+    "bgs_target_coverage_frac": [
+      0.01,
+      0.95
     ]
   },
   "selection": {
@@ -50,8 +54,8 @@
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       1,
-      30
-    ], 
+      95
+    ],
     "slim_scaling": 10, 
     "slim_burn_in": 5
   },
@@ -61,7 +65,7 @@
   ],
   "use_residuals": true,
   "residual_engines": "moments",
-  "engine": "slim",
+  "engine": "msprime",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "gram_schmidt": false,

@@ -102,7 +102,7 @@ def _build_start_dict_from_config(
                 raise ValueError(
                     f"Bounds for '{p}' must be positive for midpoint; got {lower}, {upper}"
                 )
-            start_dict[p] = float(lower / 2 + upper / 2)
+            start_dict[p] = float(np.sqrt(lower * upper))
 
     missing = [p for p in param_order if p not in start_dict]
     extra = [p for p in start_dict.keys() if p not in set(param_order)]
