@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
+EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -113,34 +113,34 @@ rule all:
             expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-            ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
-            expand(
-                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-                sid=SIM_IDS,
-                opt=OPTIMS,
-            ),
-            expand(
-                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
-                sid=SIM_IDS,
-                opt=OPTIMS,
-            ),
+            # ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
+            # expand(
+            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+            #     sid=SIM_IDS,
+            #     opt=OPTIMS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
+            #     sid=SIM_IDS,
+            #     opt=OPTIMS,
+            # ),
 
-            # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
-            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
-            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
-            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
+            # # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
+            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
+            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
+            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
 
-            ## ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
-            expand(
-                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
-                sid=SIM_IDS,
-            ),
+            # ## ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
+            #     sid=SIM_IDS,
+            # ),
 
-            ## ── 5. MOMENTS-LD OPTIMIZATION (always at MomentsLD/best_fit.pkl) ─────
-            expand(
-                f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
-                sid=SIM_IDS,
-            ),
+            # ## ── 5. MOMENTS-LD OPTIMIZATION (always at MomentsLD/best_fit.pkl) ─────
+            # expand(
+            #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
+            #     sid=SIM_IDS,
+            # ),
 
             # ======================================================================
             # ACTIVE TARGETS
