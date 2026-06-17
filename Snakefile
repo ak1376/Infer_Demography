@@ -198,6 +198,7 @@ rule simulate:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
         meta   = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
+        ts     = temp(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees"),
         done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
     params:
         sim_dir = SIM_BASEDIR,
@@ -523,6 +524,68 @@ rule cleanup_optimization_runs:
         )
 
 ##############################################################################
+# RULE build_sfs_dataset – features=observed SFS, targets=sampled params    #
+# NOT in rule all. Run explicitly:                                           #
+#   snakemake --snakefile Snakefile build_sfs_dataset                       #
+##############################################################################
+rule build_sfs_dataset:
+    input:
+        cfg = EXP_CFG,
+    output:
+        features = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_features_df.pkl",
+        targets  = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_targets_df.pkl",
+        meta     = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_dataset_meta.json",
+    params:
+        sim_dir = SIM_BASEDIR,
+        out_dir = f"experiments/{MODEL}/modeling/sfs_datasets",
+        min_sims = int(CFG.get("build_sfs_dataset_min_sims", 10)),
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/build_sfs_dataset.py \
+            --sim-dir  "{params.sim_dir}" \
+            --config   "{input.cfg}" \
+            --out-dir  "{params.out_dir}" \
+            --min-sims {params.min_sims}
+        """
+
+##############################################################################
+# RULE prepare_sfs_splits – reuse existing split_indices.json + normalize   #
+##############################################################################
+rule prepare_sfs_splits:
+    input:
+        features  = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_features_df.pkl",
+        targets   = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_targets_df.pkl",
+    output:
+        ntrain_X = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_train_features.pkl",
+        ntrain_y = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_train_targets.pkl",
+        ntune_X  = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_tune_features.pkl",
+        ntune_y  = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_tune_targets.pkl",
+        nval_X   = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_val_features.pkl",
+        nval_y   = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_val_targets.pkl",
+        meta     = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_splits_meta.json",
+    params:
+        out_dir   = f"experiments/{MODEL}/modeling/sfs_datasets",
+        split_idx = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        SPLIT_FLAG=""
+        if [ -f "{params.split_idx}" ]; then
+            SPLIT_FLAG="--split-indices \"{params.split_idx}\""
+        fi
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/prepare_sfs_splits.py \
+            --features  "{input.features}" \
+            --targets   "{input.targets}" \
+            --out-dir   "{params.out_dir}" \
+            $SPLIT_FLAG
+        """
+
+##############################################################################
 # RULE simulate_window – one VCF window
 ##############################################################################
 rule simulate_window:
@@ -653,7 +716,7 @@ rule optimize_momentsld:
         ),
         cfg = EXP_CFG,
     output:
-        mv   = temp(f"{LD_ROOT}/means.varcovs.pkl"),
+        mv   = f"{LD_ROOT}/means.varcovs.pkl",
         boot = temp(f"{LD_ROOT}/bootstrap_sets.pkl"),
         pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
         best = f"{LD_ROOT}/best_fit.pkl",
@@ -938,7 +1001,7 @@ rule combine_features:
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
-        /home/akapoor/miniforge3/envs/snakemake-env/bin/python "{params.script}" \
+        python "{params.script}" \
             --experiment-config "{input.cfg}" \
             --out-dir "{params.outdir}"
 
@@ -1696,6 +1759,224 @@ rule combine_results_real:
         pickle.dump(summary, open(output.combo, "wb"))
         print(f"✓ combined REAL → {output.combo}")
         
+##############################################################################
+# RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble         #
+# Not in rule all. Run explicitly, e.g.:                                    #
+#   snakemake --snakefile Snakefile raw_features_xgboost                   #
+##############################################################################
+RAW_FEAT_DIR = f"experiments/{MODEL}/modeling/raw_features_datasets"
+RAW_MDL_DIR  = f"experiments/{MODEL}/modeling/raw_features_modeling"
+
+rule build_raw_features_dataset:
+    input:
+        cfg     = EXP_CFG,
+        mv_pkls = expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/means.varcovs.pkl",
+            sid=SIM_IDS,
+        ),
+    output:
+        features = f"{RAW_FEAT_DIR}/raw_features_df.pkl",
+        targets  = f"{RAW_FEAT_DIR}/raw_targets_df.pkl",
+        meta     = f"{RAW_FEAT_DIR}/raw_dataset_meta.json",
+    params:
+        sim_dir  = SIM_BASEDIR,
+        inf_dir  = f"experiments/{MODEL}/inferences",
+        out_dir  = RAW_FEAT_DIR,
+        min_sims = int(CFG.get("build_sfs_dataset_min_sims", 10)),
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/build_raw_features_dataset.py \
+            --sim-dir       "{params.sim_dir}" \
+            --inference-dir "{params.inf_dir}" \
+            --config        "{input.cfg}" \
+            --out-dir       "{params.out_dir}" \
+            --min-sims      {params.min_sims}
+        """
+
+rule prepare_raw_features_splits:
+    input:
+        features  = f"{RAW_FEAT_DIR}/raw_features_df.pkl",
+        targets   = f"{RAW_FEAT_DIR}/raw_targets_df.pkl",
+        split_idx = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
+    output:
+        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
+        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
+        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
+        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
+        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
+        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
+        meta     = f"{RAW_FEAT_DIR}/raw_splits_meta.json",
+    params:
+        out_dir  = RAW_FEAT_DIR,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/prepare_sfs_splits.py \
+            --features      "{input.features}" \
+            --targets       "{input.targets}" \
+            --out-dir       "{params.out_dir}" \
+            --split-indices "{input.split_idx}"
+        """
+
+rule raw_features_linear_regression:
+    input:
+        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
+        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
+        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
+        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
+        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
+        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
+        shades   = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        colors   = f"experiments/{MODEL}/modeling/main_colors.pkl",
+        mdlcfg   = "config_files/model_config.yaml",
+    output:
+        obj   = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+        errjs = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_model_error_{{reg}}.json",
+        mdl   = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
+        plot  = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_results_{{reg}}.png",
+    params:
+        expcfg    = EXP_CFG,
+        model_dir = f"{RAW_MDL_DIR}/linear_{{reg}}",
+        alpha     = lambda w: config["linear"].get(w.reg, {}).get("alpha", 0.0),
+        l1_ratio  = lambda w: config["linear"].get(w.reg, {}).get("l1_ratio", 0.5),
+        gridflag  = lambda w: "--do_grid_search" if config["linear"].get(w.reg, {}).get("grid_search", False) else "",
+    threads: 2
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/linear_evaluation.py \
+            --X_train_path "{input.ntrain_X}" \
+            --y_train_path "{input.ntrain_y}" \
+            --X_tune_path  "{input.ntune_X}" \
+            --y_tune_path  "{input.ntune_y}" \
+            --X_val_path   "{input.nval_X}" \
+            --y_val_path   "{input.nval_y}" \
+            --experiment_config_path "{params.expcfg}" \
+            --model_config_path      "{input.mdlcfg}" \
+            --color_shades_file      "{input.shades}" \
+            --main_colors_file       "{input.colors}" \
+            --model_directory        "{params.model_dir}" \
+            --regression_type "{wildcards.reg}" \
+            --alpha {params.alpha} \
+            --l1_ratio {params.l1_ratio} {params.gridflag}
+        """
+
+rule raw_features_random_forest:
+    input:
+        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
+        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
+        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
+        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
+        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
+        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
+        shades   = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        colors   = f"experiments/{MODEL}/modeling/main_colors.pkl",
+        expcfg   = EXP_CFG,
+        mdlcfg   = "config_files/model_config.yaml",
+    output:
+        obj   = f"{RAW_MDL_DIR}/random_forest/random_forest_mdl_obj.pkl",
+        errjs = f"{RAW_MDL_DIR}/random_forest/random_forest_model_error.json",
+        mdl   = f"{RAW_MDL_DIR}/random_forest/random_forest_model.pkl",
+        plot  = f"{RAW_MDL_DIR}/random_forest/random_forest_results.png",
+        fi    = f"{RAW_MDL_DIR}/random_forest/random_forest_feature_importances.png",
+    params:
+        model_dir = f"{RAW_MDL_DIR}/random_forest",
+        opt_flags = lambda w: " ".join([
+            "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
+            f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
+            f"--optuna_timeout {config['rf']['optuna_timeout']}" if config.get("rf", {}).get("optuna_timeout") is not None else "",
+            f"--optuna_seed {config['rf']['optuna_seed']}" if config.get("rf", {}).get("optuna_seed") is not None else "",
+            f"--final_fit {config['rf']['final_fit']}" if config.get("rf", {}).get("final_fit") is not None else "",
+            f"--n_estimators {config['rf']['n_estimators']}" if config.get("rf", {}).get("n_estimators") is not None else "",
+            f"--max_depth {config['rf']['max_depth']}" if config.get("rf", {}).get("max_depth") is not None else "",
+            f"--min_samples_split {config['rf']['min_samples_split']}" if config.get("rf", {}).get("min_samples_split") is not None else "",
+            f"--min_samples_leaf {config['rf']['min_samples_leaf']}" if config.get("rf", {}).get("min_samples_leaf") is not None else "",
+            f"--max_features {config['rf']['max_features']}" if config.get("rf", {}).get("max_features") is not None else "",
+            f"--max_samples {config['rf']['max_samples']}" if config.get("rf", {}).get("max_samples") is not None else "",
+        ]).strip(),
+    threads: 8
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/random_forest.py \
+            --X_train_path "{input.ntrain_X}" \
+            --y_train_path "{input.ntrain_y}" \
+            --X_tune_path  "{input.ntune_X}" \
+            --y_tune_path  "{input.ntune_y}" \
+            --X_val_path   "{input.nval_X}" \
+            --y_val_path   "{input.nval_y}" \
+            --experiment_config_path "{input.expcfg}" \
+            --model_config_path      "{input.mdlcfg}" \
+            --color_shades_file      "{input.shades}" \
+            --main_colors_file       "{input.colors}" \
+            --model_directory        "{params.model_dir}" \
+            {params.opt_flags}
+        """
+
+rule raw_features_xgboost:
+    input:
+        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
+        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
+        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
+        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
+        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
+        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
+        shades   = f"experiments/{MODEL}/modeling/color_shades.pkl",
+        colors   = f"experiments/{MODEL}/modeling/main_colors.pkl",
+        expcfg   = EXP_CFG,
+        mdlcfg   = "config_files/model_config.yaml",
+    output:
+        obj   = f"{RAW_MDL_DIR}/xgboost/xgb_mdl_obj.pkl",
+        errjs = f"{RAW_MDL_DIR}/xgboost/xgb_model_error.json",
+        mdl   = f"{RAW_MDL_DIR}/xgboost/xgb_model.pkl",
+        plot  = f"{RAW_MDL_DIR}/xgboost/xgb_results.png",
+        fi    = f"{RAW_MDL_DIR}/xgboost/xgb_feature_importances.png",
+    params:
+        model_dir = f"{RAW_MDL_DIR}/xgboost",
+        opt_flags = lambda w: " ".join([
+            "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
+            f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
+            f"--optuna_timeout {config['xgb']['optuna_timeout']}" if config.get("xgb", {}).get("optuna_timeout") is not None else "",
+            f"--optuna_seed {config['xgb']['optuna_seed']}" if config.get("xgb", {}).get("optuna_seed") is not None else "",
+            f"--final_fit {config['xgb']['final_fit']}" if config.get("xgb", {}).get("final_fit") is not None else "",
+            f"--early_stopping_rounds {config['xgb']['early_stopping_rounds']}" if config.get("xgb", {}).get("early_stopping_rounds") is not None else "",
+            f"--n_estimators {config['xgb']['n_estimators']}" if config.get("xgb", {}).get("n_estimators") is not None else "",
+            f"--max_depth {config['xgb']['max_depth']}" if config.get("xgb", {}).get("max_depth") is not None else "",
+            f"--learning_rate {config['xgb']['learning_rate']}" if config.get("xgb", {}).get("learning_rate") is not None else "",
+            f"--subsample {config['xgb']['subsample']}" if config.get("xgb", {}).get("subsample") is not None else "",
+            f"--colsample_bytree {config['xgb']['colsample_bytree']}" if config.get("xgb", {}).get("colsample_bytree") is not None else "",
+            f"--min_child_weight {config['xgb']['min_child_weight']}" if config.get("xgb", {}).get("min_child_weight") is not None else "",
+            f"--reg_lambda {config['xgb']['reg_lambda']}" if config.get("xgb", {}).get("reg_lambda") is not None else "",
+            f"--reg_alpha {config['xgb']['reg_alpha']}" if config.get("xgb", {}).get("reg_alpha") is not None else "",
+            f"--top_k_features_plot {config['xgb']['top_k_plot']}" if config.get("xgb", {}).get("top_k_plot") is not None else "",
+        ]).strip(),
+    threads: 4
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/xgboost_evaluation.py \
+            --X_train_path "{input.ntrain_X}" \
+            --y_train_path "{input.ntrain_y}" \
+            --X_tune_path  "{input.ntune_X}" \
+            --y_tune_path  "{input.ntune_y}" \
+            --X_val_path   "{input.nval_X}" \
+            --y_val_path   "{input.nval_y}" \
+            --experiment_config_path "{input.expcfg}" \
+            --model_config_path      "{input.mdlcfg}" \
+            --color_shades_file      "{input.shades}" \
+            --main_colors_file       "{input.colors}" \
+            --model_directory        "{params.model_dir}" \
+            {params.opt_flags}
+        """
+
 ##############################################################################
 # Wildcard Constraints                                                      #
 ##############################################################################
