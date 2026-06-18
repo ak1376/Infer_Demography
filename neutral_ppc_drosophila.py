@@ -4,11 +4,15 @@ Neutral PPC for Drosophila.
 Loads pre-computed SFS from neutral simulations, projects each one down to
 the observed sample sizes, computes Pi, Tajima's D, FST, and SFS shapes,
 then compares to observed Chr2L data via violin plots.
+
+Uses the polarized (AA-annotated) haploid VCF so both observed and simulated
+SFS are unfolded (derived-allele oriented).
 """
 
 from pathlib import Path
 import pickle
-from typing import Dict, List, Tuple
+import gzip
+from typing import Dict, List
 
 import numpy as np
 import numpy.ma as ma
@@ -19,12 +23,13 @@ import matplotlib.gridspec as gridspec
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SIM_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/experiments/drosophila_three_epoch/simulations')
-REAL_VCF = '/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz'
-OUT_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/model_calibration_drosophila_stdpopsim')
+SIM_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/experiments_neutral/split_migration_growth/simulations')
+REAL_VCF = '/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz'
+POPFILE  = '/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/popfile.txt'
+OUT_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/model_calibration_drosophila')
 OUT_DIR.mkdir(exist_ok=True)
 
-GENOME_LENGTH = 24_000_000  # bp, from bgs.meta.json
+GENOME_LENGTH = 24_000_000  # bp
 
 # ---------------------------------------------------------------------------
 # Stats from SFS
@@ -39,12 +44,11 @@ def _fill(arr) -> np.ndarray:
 
 def pi_from_1d_sfs(sfs_1d, L: float = GENOME_LENGTH) -> float:
     """Per-site nucleotide diversity from unfolded 1D SFS counts."""
-    c = _fill(sfs_1d) # Convert to a numpy array and replace the masked corners with 0
-    n = len(c) - 1 # Number of haplotypes
-    # Safety check
+    c = _fill(sfs_1d)
+    n = len(c) - 1
     if n < 2:
         return np.nan
-    i = np.arange(n + 1, dtype=np.float64) # Allele count index for each bin
+    i = np.arange(n + 1, dtype=np.float64)
     w = 2.0 * i * (n - i) / (n * (n - 1))
     return float(np.dot(w, c) / L)
 
@@ -55,15 +59,14 @@ def tajima_d_from_1d_sfs(sfs_1d) -> float:
     n = len(c) - 1
     if n < 4:
         return np.nan
-    seg = c[1:n] # Look at bins 1 ... 39
-    S = seg.sum() # Total number of segregating sites
+    seg = c[1:n]
+    S = seg.sum()
     if S == 0:
         return np.nan
 
     idx = np.arange(1, n, dtype=np.float64)
-    theta_pi = float(np.dot(2.0 * idx * (n - idx) / (n * (n - 1)), seg)) # Numerator of Tajima's pi
+    theta_pi = float(np.dot(2.0 * idx * (n - idx) / (n * (n - 1)), seg))
 
-    # Watterson's Estimator
     a1 = np.sum(1.0 / idx)
     a2 = np.sum(1.0 / idx**2)
     theta_W = S / a1
@@ -78,7 +81,7 @@ def tajima_d_from_1d_sfs(sfs_1d) -> float:
     var = e1 * S + e2 * S * (S - 1)
     if var <= 0:
         return np.nan
-    return float((theta_pi - theta_W) / np.sqrt(var)) # Tajima's D statistic
+    return float((theta_pi - theta_W) / np.sqrt(var))
 
 
 def fst_from_2d_sfs(sfs_2d) -> float:
@@ -91,16 +94,17 @@ def fst_from_2d_sfs(sfs_2d) -> float:
     with np.errstate(divide='ignore', invalid='ignore'):
         p1 = I / n1
         p2 = J / n2
-        num = (p1 - p2)**2 - p1*(1-p1)/(n1-1) - p2*(1-p2)/(n2-1) # Between population variance minus sampling noise
-        den = p1*(1-p2) + p2*(1-p1) # Probability that two randomly drawn alleles (one from each pop) are different. 
+        num = (p1 - p2)**2 - p1*(1-p1)/(n1-1) - p2*(1-p2)/(n2-1)
+        den = p1*(1-p2) + p2*(1-p1)
 
-    # Monomorphic
     counts[0, 0] = 0.0
     counts[n1, n2] = 0.0
+    counts[n1, 0] = 0.0
+    counts[0, n2] = 0.0
 
     total_num = float(np.nansum(num * counts))
     total_den = float(np.nansum(den * counts))
-    return total_num / total_den if total_den > 0 else np.nan # FST
+    return total_num / total_den if total_den > 0 else np.nan
 
 
 def stats_from_sfs(sfs) -> Dict[str, float]:
@@ -116,11 +120,25 @@ def stats_from_sfs(sfs) -> Dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Load and project simulations
+# Load and project simulations (unfolded)
 # ---------------------------------------------------------------------------
 
+def _strip_corners(sfs):
+    """Zero out fixed/absent corners so simulated SFS matches VCF-derived observed SFS."""
+    s = sfs.copy()
+    if s.ndim == 1:
+        s[0] = 0
+        s[-1] = 0
+    elif s.ndim == 2:
+        s[0, 0] = 0
+        s[-1, -1] = 0
+        s[-1, 0] = 0
+        s[0, -1] = 0
+    return s
+
+
 def load_sim_sfs(sim_dir: Path, target_sizes: List[int]) -> List:
-    """Load, project to target_sizes, then fold each simulated SFS."""
+    """Load and project simulated SFS to target_sizes. Keep unfolded."""
     sfs_list = []
     dirs = sorted([d for d in sim_dir.iterdir() if d.is_dir()], key=lambda d: int(d.name))
     for d in dirs:
@@ -128,78 +146,116 @@ def load_sim_sfs(sim_dir: Path, target_sizes: List[int]) -> List:
         if p.exists():
             with open(p, 'rb') as f:
                 sfs = pickle.load(f)
-            sfs_list.append(sfs.project(target_sizes).fold())
-    print(f"Loaded, projected to {target_sizes}, and folded {len(sfs_list)} simulation SFS files")
+            sfs_list.append(_strip_corners(sfs.project(target_sizes)))
+    print(f"Loaded and projected to {target_sizes}: {len(sfs_list)} simulation SFS files")
     return sfs_list
 
 
 # ---------------------------------------------------------------------------
-# Observed stats from VCF
+# Observed stats from polarized haploid VCF
 # ---------------------------------------------------------------------------
 
-def compute_obs_stats(vcf_path: str, L: float = GENOME_LENGTH):
-    """Returns scalar_stats, sfs_co, sfs_fr, sfs_2d, n_co, n_fr."""
-    callset = allel.read_vcf(vcf_path, fields=['calldata/GT', 'variants/POS', 'samples'])
-    samples  = list(callset['samples'])
-    co_idx   = [i for i, s in enumerate(samples) if s.startswith('CO')]
-    fr_idx   = [i for i, s in enumerate(samples) if s.startswith('FR')]
+def _parse_popfile(popfile: str):
+    """Returns (pop_names, sample_to_pop dict)."""
+    sample_to_pop = {}
+    pop_order = []
+    with open(popfile) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            sample, pop = parts[0], parts[1]
+            sample_to_pop[sample] = pop
+            if pop not in pop_order:
+                pop_order.append(pop)
+    return pop_order, sample_to_pop
 
-    gt  = allel.GenotypeArray(callset['calldata/GT'])
-    pos = callset['variants/POS']
 
-    ac_co = gt.take(co_idx, axis=1).count_alleles()
-    ac_fr = gt.take(fr_idx, axis=1).count_alleles()
+def compute_obs_stats(vcf_path: str, popfile: str, L: float = GENOME_LENGTH):
+    """
+    Read the polarized haploid VCF (AA INFO field) and compute unfolded
+    summary stats and SFS for each population.
 
-    # Inbred lines: each individual is homozygous (0/0 or 1/1), so allele
-    # counts are always even.  Treat each individual as one haploid sample by
-    # dividing allele counts by 2.
-    n_co = len(co_idx)
-    n_fr = len(fr_idx)
-    print(f"  VCF sample sizes: CO={n_co} individuals, FR={n_fr} individuals (inbred → haploid)")
+    Returns: scalar_stats, sfs_co, sfs_fr, sfs_2d, n_co, n_fr
+    """
+    pop_names, sample_to_pop = _parse_popfile(popfile)
 
-    dac_co = ac_co[:, 1] // 2
-    dac_fr = ac_fr[:, 1] // 2
+    opener = gzip.open if vcf_path.endswith('.gz') else open
 
-    # Haploid allele-count matrices for allel.tajima_d / allel.hudson_fst
-    ac_hap_co = np.stack([n_co - dac_co, dac_co], axis=1).astype(np.int32)
-    ac_hap_fr = np.stack([n_fr - dac_fr, dac_fr], axis=1).astype(np.int32)
+    # First pass: get sample order from header
+    sample_indices = {pop: [] for pop in pop_names}
+    vcf_samples = []
+    with opener(vcf_path, 'rt') as f:
+        for line in f:
+            if line.startswith('#CHROM'):
+                vcf_samples = line.rstrip('\n').split('\t')[9:]
+                for i, s in enumerate(vcf_samples):
+                    pop = sample_to_pop.get(s)
+                    if pop is not None:
+                        sample_indices[pop].append(i)
+                break
 
-    # --- diploid (old) stats for comparison ---
-    n_co_dip = len(co_idx) * 2
-    n_fr_dip = len(fr_idx) * 2
-    dac_co_dip = ac_co[:, 1]
-    dac_fr_dip = ac_fr[:, 1]
-    pi_co_dip = float(np.sum(2.0 * dac_co_dip * (n_co_dip - dac_co_dip) / (n_co_dip * (n_co_dip - 1)))) / L
-    pi_fr_dip = float(np.sum(2.0 * dac_fr_dip * (n_fr_dip - dac_fr_dip) / (n_fr_dip * (n_fr_dip - 1)))) / L
-    taj_co_dip = float(allel.tajima_d(ac_co, pos))
-    taj_fr_dip = float(allel.tajima_d(ac_fr, pos))
-    num_dip, den_dip = allel.hudson_fst(ac_co, ac_fr)
-    fst_dip = float(np.nansum(num_dip) / np.nansum(den_dip))
+    co_idx = sample_indices['CO']
+    fr_idx = sample_indices['FR']
+    n_co, n_fr = len(co_idx), len(fr_idx)
+    print(f"  CO: {n_co} haploid samples,  FR: {n_fr} haploid samples")
 
-    # Pi normalised by same L as SFS-based pi
+    # Accumulate derived allele counts and positions
+    dac_co_list, dac_fr_list, pos_list = [], [], []
+
+    with opener(vcf_path, 'rt') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            fields = line.rstrip('\n').split('\t')
+            pos  = int(fields[1])
+            ref  = fields[3]
+            alt  = fields[4]
+            info = fields[7]
+            gts  = fields[9:]
+
+            # Parse AA
+            aa = None
+            for token in info.split(';'):
+                if token.startswith('AA='):
+                    aa = token[3:]
+                    break
+            if aa is None:
+                continue
+
+            flip = (aa == alt)   # True -> REF is derived, count GT=0 as derived
+
+            alt_co = sum(int(gts[i]) for i in co_idx)
+            alt_fr = sum(int(gts[i]) for i in fr_idx)
+
+            dac_co = (n_co - alt_co) if flip else alt_co
+            dac_fr = (n_fr - alt_fr) if flip else alt_fr
+
+            dac_co_list.append(dac_co)
+            dac_fr_list.append(dac_fr)
+            pos_list.append(pos)
+
+    dac_co = np.array(dac_co_list, dtype=np.int32)
+    dac_fr = np.array(dac_fr_list, dtype=np.int32)
+    pos    = np.array(pos_list,    dtype=np.int32)
+
+    print(f"  Polarized sites: {len(dac_co):,}")
+
+    # Allele count arrays for allel.tajima_d / allel.hudson_fst
+    ac_co = np.stack([n_co - dac_co, dac_co], axis=1).astype(np.int32)
+    ac_fr = np.stack([n_fr - dac_fr, dac_fr], axis=1).astype(np.int32)
+
+    # Pi (from SFS formula)
     theta_pi_co = float(np.sum(2.0 * dac_co * (n_co - dac_co) / (n_co * (n_co - 1))))
     theta_pi_fr = float(np.sum(2.0 * dac_fr * (n_fr - dac_fr) / (n_fr * (n_fr - 1))))
 
-    # Tajima's D via scikit-allel (on haploid counts)
-    taj_co = float(allel.tajima_d(ac_hap_co, pos))
-    taj_fr = float(allel.tajima_d(ac_hap_fr, pos))
+    # Tajima's D
+    taj_co = float(allel.tajima_d(ac_co, pos))
+    taj_fr = float(allel.tajima_d(ac_fr, pos))
 
-    # FST (Hudson, on haploid counts)
-    num, den = allel.hudson_fst(ac_hap_co, ac_hap_fr)
+    # FST (Hudson)
+    num, den = allel.hudson_fst(ac_co, ac_fr)
     fst = float(np.nansum(num) / np.nansum(den))
-
-    print("\n  Diploid (old) vs Individual/haploid (new) observed stats:")
-    print(f"  {'stat':<16}  {'diploid':>12}  {'individual':>12}  {'ratio new/old':>14}")
-    print(f"  {'-'*58}")
-    for name, old, new in [
-        ('pi_CO',        pi_co_dip,  theta_pi_co / L),
-        ('pi_FR',        pi_fr_dip,  theta_pi_fr / L),
-        ('tajima_d_CO',  taj_co_dip, taj_co),
-        ('tajima_d_FR',  taj_fr_dip, taj_fr),
-        ('fst',          fst_dip,    fst),
-    ]:
-        ratio = new / old if old != 0 else float('nan')
-        print(f"  {name:<16}  {old:>12.5g}  {new:>12.5g}  {ratio:>14.4f}")
 
     scalar_stats = {
         'pi_CO':       theta_pi_co / L,
@@ -209,25 +265,24 @@ def compute_obs_stats(vcf_path: str, L: float = GENOME_LENGTH):
         'fst':         fst,
     }
 
-    # Folded 1D SFS
+    print(f"  pi_CO={scalar_stats['pi_CO']:.4g}  pi_FR={scalar_stats['pi_FR']:.4g}  "
+          f"Taj_D_CO={taj_co:.4g}  Taj_D_FR={taj_fr:.4g}  FST={fst:.4g}")
+
+    # Unfolded 1D SFS
     sfs_co = np.zeros(n_co + 1)
     sfs_fr = np.zeros(n_fr + 1)
-    for val in dac_co:
-        mac = int(min(val, n_co - val))
-        if mac > 0:
-            sfs_co[mac] += 1
-    for val in dac_fr:
-        mac = int(min(val, n_fr - val))
-        if mac > 0:
-            sfs_fr[mac] += 1
+    for v in dac_co:
+        if 0 < v < n_co:
+            sfs_co[v] += 1
+    for v in dac_fr:
+        if 0 < v < n_fr:
+            sfs_fr[v] += 1
 
-    # Folded 2D SFS
+    # Unfolded 2D SFS
     sfs_2d = np.zeros((n_co + 1, n_fr + 1))
     for ci, fj in zip(dac_co, dac_fr):
-        mac_co = int(min(ci, n_co - ci))
-        mac_fr = int(min(fj, n_fr - fj))
-        if mac_co > 0 or mac_fr > 0:
-            sfs_2d[mac_co, mac_fr] += 1
+        if (0 < ci < n_co) or (0 < fj < n_fr):
+            sfs_2d[ci, fj] += 1
 
     return scalar_stats, sfs_co, sfs_fr, sfs_2d, n_co, n_fr
 
@@ -244,12 +299,12 @@ def _norm_sfs(s: np.ndarray) -> np.ndarray:
 def plot_results(
     sim_stats: List[Dict],
     obs_stats: Dict,
-    sim_sfs_co: np.ndarray,   # (n_sim, n_co+1)
-    sim_sfs_fr: np.ndarray,   # (n_sim, n_fr+1)
-    sim_sfs_2d: np.ndarray,   # (n_sim, n_co+1, n_fr+1)
-    obs_sfs_co: np.ndarray,   # (n_co+1,)
-    obs_sfs_fr: np.ndarray,   # (n_fr+1,)
-    obs_sfs_2d: np.ndarray,   # (n_co+1, n_fr+1)
+    sim_sfs_co: np.ndarray,
+    sim_sfs_fr: np.ndarray,
+    sim_sfs_2d: np.ndarray,
+    obs_sfs_co: np.ndarray,
+    obs_sfs_fr: np.ndarray,
+    obs_sfs_2d: np.ndarray,
     out_path: Path,
 ) -> None:
     fig = plt.figure(figsize=(22, 15))
@@ -269,8 +324,6 @@ def plot_results(
         ax.legend(fontsize=8)
 
     # ---- Row 1: 1D SFS comparison ------------------------------------------
-    # Simulated and observed now have the same n after projection, so allele
-    # count is a valid shared x-axis.
     for col, (sim_mat, obs_sfs, pop) in enumerate([
         (sim_sfs_co, obs_sfs_co, 'CO'),
         (sim_sfs_fr, obs_sfs_fr, 'FR'),
@@ -281,14 +334,14 @@ def plot_results(
         hi = np.percentile(norm_sim, 95, axis=0)
         mn = np.mean(norm_sim, axis=0)
 
-        bins = np.arange(len(mn))   # allele count 0..n (same for sim and obs after projection)
+        bins = np.arange(len(mn))
         ax.fill_between(bins[1:-1], lo[1:-1], hi[1:-1], alpha=0.3, color='steelblue', label='5–95% CI (sim)')
         ax.plot(bins[1:-1], mn[1:-1], color='steelblue', linewidth=1.5, label='mean sim')
         ax.plot(bins[1:-1], _norm_sfs(obs_sfs)[1:-1], color='red', linewidth=1.5, label='observed')
 
-        ax.set_xlabel('Minor allele count', fontsize=10)
+        ax.set_xlabel('Derived allele count', fontsize=10)
         ax.set_ylabel('Proportion of sites', fontsize=10)
-        ax.set_title(f'1D SFS — {pop}', fontsize=11)
+        ax.set_title(f'1D SFS (unfolded) — {pop}', fontsize=11)
         ax.legend(fontsize=8)
 
     # ---- Row 2: 2D SFS heatmaps --------------------------------------------
@@ -297,18 +350,17 @@ def plot_results(
     ax_sim = fig.add_subplot(gs[2, :2])
     im1 = ax_sim.imshow(np.log1p(mean_2d.T), origin='lower', aspect='auto', cmap='viridis')
     ax_sim.set_title('2D SFS — mean simulated (log1p)', fontsize=11)
-    ax_sim.set_xlabel('CO minor allele count', fontsize=10)
-    ax_sim.set_ylabel('FR minor allele count', fontsize=10)
+    ax_sim.set_xlabel('CO derived allele count', fontsize=10)
+    ax_sim.set_ylabel('FR derived allele count', fontsize=10)
     plt.colorbar(im1, ax=ax_sim)
 
     ax_obs = fig.add_subplot(gs[2, 2:4])
     im2 = ax_obs.imshow(np.log1p(obs_sfs_2d.T), origin='lower', aspect='auto', cmap='viridis')
     ax_obs.set_title('2D SFS — observed (log1p)', fontsize=11)
-    ax_obs.set_xlabel('CO minor allele count', fontsize=10)
-    ax_obs.set_ylabel('FR minor allele count', fontsize=10)
+    ax_obs.set_xlabel('CO derived allele count', fontsize=10)
+    ax_obs.set_ylabel('FR derived allele count', fontsize=10)
     plt.colorbar(im2, ax=ax_obs)
 
-    # difference panel — shapes now match after projection
     ax_diff = fig.add_subplot(gs[2, 4])
     obs_norm = obs_sfs_2d / obs_sfs_2d.sum() if obs_sfs_2d.sum() > 0 else obs_sfs_2d
     sim_norm = mean_2d / mean_2d.sum() if mean_2d.sum() > 0 else mean_2d
@@ -321,7 +373,7 @@ def plot_results(
     ax_diff.set_ylabel('FR count', fontsize=9)
     plt.colorbar(im3, ax=ax_diff)
 
-    fig.suptitle('Neutral PPC — split_migration_growth (Drosophila Chr2L)', fontsize=14)
+    fig.suptitle('Neutral PPC — drosophila_three_epoch (Chr2L)', fontsize=14)
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -332,20 +384,20 @@ def plot_results(
 # ---------------------------------------------------------------------------
 
 def main():
-    print("Computing observed stats from VCF...")
-    obs_stats, obs_sfs_co, obs_sfs_fr, obs_sfs_2d, n_co, n_fr = compute_obs_stats(REAL_VCF)
+    print("Computing observed stats from polarized VCF...")
+    obs_stats, obs_sfs_co, obs_sfs_fr, obs_sfs_2d, n_co, n_fr = compute_obs_stats(REAL_VCF, POPFILE)
 
-    print("Loading and projecting simulation SFS...")
+    print("\nLoading and projecting simulation SFS...")
     all_sfs = load_sim_sfs(SIM_DIR, [n_co, n_fr])
 
-    print("Computing stats from simulations...")
+    print("\nComputing stats from simulations...")
     sim_stats = [stats_from_sfs(s) for s in all_sfs]
 
     sim_sfs_co = np.array([_fill(s.marginalize([1])) for s in all_sfs])
     sim_sfs_fr = np.array([_fill(s.marginalize([0])) for s in all_sfs])
     sim_sfs_2d = np.array([_fill(s) for s in all_sfs])
 
-    print("Plotting...")
+    print("\nPlotting...")
     plot_results(
         sim_stats, obs_stats,
         sim_sfs_co, sim_sfs_fr, sim_sfs_2d,
