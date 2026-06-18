@@ -63,10 +63,11 @@ def main():
 
     pop_names, n_ind_by_pop = parse_popfile(args.popfile)
 
-    # For your diploidGT VCF, each individual contributes 2 chromosomes.
-    # So default projection per pop is 2 * (# individuals in popfile).
+    # Inbred lines are fully homozygous: each individual is 1 independent haplotype.
+    # The diploidGT VCF has 0/0 or 1/1, so moments sees 2n chromosomes, but we
+    # project down to n so each individual counts as 1 chromosome.
     if args.project_chroms is None:
-        sample_sizes_dict = {pop: 2 * n_ind_by_pop[pop] for pop in pop_names}
+        sample_sizes_dict = {pop: n_ind_by_pop[pop] for pop in pop_names}
     else:
         sample_sizes_dict = {pop: int(args.project_chroms) for pop in pop_names}
 

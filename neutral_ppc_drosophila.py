@@ -19,9 +19,9 @@ import matplotlib.gridspec as gridspec
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SIM_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/experiments_neutral/split_migration_growth/simulations')
+SIM_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/experiments/drosophila_three_epoch/simulations')
 REAL_VCF = '/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz'
-OUT_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/model_calibration_drosophila')
+OUT_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/model_calibration_drosophila_stdpopsim')
 OUT_DIR.mkdir(exist_ok=True)
 
 GENOME_LENGTH = 24_000_000  # bp, from bgs.meta.json
@@ -150,24 +150,56 @@ def compute_obs_stats(vcf_path: str, L: float = GENOME_LENGTH):
     ac_co = gt.take(co_idx, axis=1).count_alleles()
     ac_fr = gt.take(fr_idx, axis=1).count_alleles()
 
-    n_co = len(co_idx) * 2
-    n_fr = len(fr_idx) * 2
-    print(f"  VCF sample sizes: CO={n_co} haplotypes, FR={n_fr} haplotypes")
+    # Inbred lines: each individual is homozygous (0/0 or 1/1), so allele
+    # counts are always even.  Treat each individual as one haploid sample by
+    # dividing allele counts by 2.
+    n_co = len(co_idx)
+    n_fr = len(fr_idx)
+    print(f"  VCF sample sizes: CO={n_co} individuals, FR={n_fr} individuals (inbred → haploid)")
 
-    dac_co = ac_co[:, 1]
-    dac_fr = ac_fr[:, 1]
+    dac_co = ac_co[:, 1] // 2
+    dac_fr = ac_fr[:, 1] // 2
+
+    # Haploid allele-count matrices for allel.tajima_d / allel.hudson_fst
+    ac_hap_co = np.stack([n_co - dac_co, dac_co], axis=1).astype(np.int32)
+    ac_hap_fr = np.stack([n_fr - dac_fr, dac_fr], axis=1).astype(np.int32)
+
+    # --- diploid (old) stats for comparison ---
+    n_co_dip = len(co_idx) * 2
+    n_fr_dip = len(fr_idx) * 2
+    dac_co_dip = ac_co[:, 1]
+    dac_fr_dip = ac_fr[:, 1]
+    pi_co_dip = float(np.sum(2.0 * dac_co_dip * (n_co_dip - dac_co_dip) / (n_co_dip * (n_co_dip - 1)))) / L
+    pi_fr_dip = float(np.sum(2.0 * dac_fr_dip * (n_fr_dip - dac_fr_dip) / (n_fr_dip * (n_fr_dip - 1)))) / L
+    taj_co_dip = float(allel.tajima_d(ac_co, pos))
+    taj_fr_dip = float(allel.tajima_d(ac_fr, pos))
+    num_dip, den_dip = allel.hudson_fst(ac_co, ac_fr)
+    fst_dip = float(np.nansum(num_dip) / np.nansum(den_dip))
 
     # Pi normalised by same L as SFS-based pi
     theta_pi_co = float(np.sum(2.0 * dac_co * (n_co - dac_co) / (n_co * (n_co - 1))))
     theta_pi_fr = float(np.sum(2.0 * dac_fr * (n_fr - dac_fr) / (n_fr * (n_fr - 1))))
 
-    # Tajima's D via scikit-allel
-    taj_co = float(allel.tajima_d(ac_co, pos))
-    taj_fr = float(allel.tajima_d(ac_fr, pos))
+    # Tajima's D via scikit-allel (on haploid counts)
+    taj_co = float(allel.tajima_d(ac_hap_co, pos))
+    taj_fr = float(allel.tajima_d(ac_hap_fr, pos))
 
-    # FST (Hudson)
-    num, den = allel.hudson_fst(ac_co, ac_fr)
+    # FST (Hudson, on haploid counts)
+    num, den = allel.hudson_fst(ac_hap_co, ac_hap_fr)
     fst = float(np.nansum(num) / np.nansum(den))
+
+    print("\n  Diploid (old) vs Individual/haploid (new) observed stats:")
+    print(f"  {'stat':<16}  {'diploid':>12}  {'individual':>12}  {'ratio new/old':>14}")
+    print(f"  {'-'*58}")
+    for name, old, new in [
+        ('pi_CO',        pi_co_dip,  theta_pi_co / L),
+        ('pi_FR',        pi_fr_dip,  theta_pi_fr / L),
+        ('tajima_d_CO',  taj_co_dip, taj_co),
+        ('tajima_d_FR',  taj_fr_dip, taj_fr),
+        ('fst',          fst_dip,    fst),
+    ]:
+        ratio = new / old if old != 0 else float('nan')
+        print(f"  {name:<16}  {old:>12.5g}  {new:>12.5g}  {ratio:>14.4f}")
 
     scalar_stats = {
         'pi_CO':       theta_pi_co / L,
