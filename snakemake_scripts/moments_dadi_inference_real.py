@@ -61,6 +61,12 @@ def _parse_args():
         help="(moments only) number of grid points for likelihood profiles (passed via config if you use it).",
     )
 
+    p.add_argument(
+        "--opt-seed",
+        type=int,
+        default=None,
+        help="Override config opt_seed (use wildcard opt index to vary starting point across parallel runs).",
+    )
     p.add_argument("-v", "--verbose", action="count", default=1)
     return p.parse_args()
 
@@ -76,10 +82,6 @@ def main() -> None:
 
     args.outdir.mkdir(parents=True, exist_ok=True)
 
-    # NOTE:
-    # - real-data runner currently ignores --generate-profiles CLI flag; it keys off config:
-    #   experiment_config["generate_profiles"] == True and (moments) save_dir provided.
-    # If you want CLI control, we can patch runner to plumb it through.
     if args.mode == "both":
         for m in ("moments", "dadi"):
             run_cli_real(
@@ -88,6 +90,7 @@ def main() -> None:
                 model_py=args.model_py,
                 outdir=args.outdir,
                 mode=m,
+                opt_seed=args.opt_seed,
                 verbose=bool(args.verbose),
             )
     else:
@@ -97,6 +100,7 @@ def main() -> None:
             model_py=args.model_py,
             outdir=args.outdir,
             mode=args.mode,
+            opt_seed=args.opt_seed,
             verbose=bool(args.verbose),
         )
 

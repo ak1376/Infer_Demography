@@ -833,6 +833,60 @@ def create_comparison_plot(
 # =============================================================================
 
 
+def _profile_1d_ld(
+    *,
+    xhat_log10: np.ndarray,
+    param_names: List[str],
+    lb_log10: np.ndarray,
+    ub_log10: np.ndarray,
+    demographic_model,
+    r_bins: np.ndarray,
+    empirical_data: Dict[str, List[np.ndarray]],
+    populations: List[str],
+    normalization: int,
+    n_points: int = 21,
+    widen: float = 0.5,
+    out_dir: Path = Path("."),
+    make_plots: bool = True,
+) -> None:
+    """Compute and save 1D marginal profile likelihoods for each parameter."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, param in enumerate(param_names):
+        lo, hi = lb_log10[i], ub_log10[i]
+        span = hi - lo
+        lo_g = max(lo, xhat_log10[i] - widen * span)
+        hi_g = min(hi, xhat_log10[i] + widen * span)
+
+        grid = np.linspace(lo_g, hi_g, int(n_points))
+        ll = np.empty_like(grid)
+
+        x = xhat_log10.copy()
+        for k, g in enumerate(grid):
+            x[i] = g
+            ll[k] = objective_function(
+                x, param_names, demographic_model, r_bins, empirical_data, populations, normalization
+            )
+
+        np.savez(out_dir / f"profile_{param}.npz", grid_log10=grid, ll=ll)
+
+        if make_plots:
+            delta_ll = ll.max() - ll
+            fig, ax = plt.subplots(figsize=(4, 3))
+            ax.plot(10**grid, delta_ll)
+            ax.axvline(10**xhat_log10[i], color="red", linestyle="--", lw=1, label="MLE")
+            ax.set_xscale("log")
+            ax.set_xlabel(param)
+            ax.set_ylabel("ΔLL (max − ll)")
+            ax.set_title(f"MomentsLD profile: {param}")
+            ax.legend(fontsize=8)
+            plt.tight_layout()
+            fig.savefig(out_dir / f"profile_{param}.png", dpi=150)
+            plt.close(fig)
+
+    logging.info("Profile likelihoods saved → %s", out_dir)
+
+
 def run_momentsld_inference(
     config: Dict,
     empirical_data: Dict[str, List[np.ndarray]],
@@ -925,6 +979,25 @@ def run_momentsld_inference(
         status,
     )
     logging.info("Results saved → %s", results_file)
+
+    # 1D profile likelihoods
+    if config.get("generate_profiles", False):
+        profile_dir = results_dir / "likelihood_plots_scaled"
+        _profile_1d_ld(
+            xhat_log10=np.log10(np.maximum(optimal_params, 1e-300)),
+            param_names=param_names,
+            lb_log10=np.log10(np.maximum(lower_bounds, 1e-300)),
+            ub_log10=np.log10(upper_bounds),
+            demographic_model=demo_function,
+            r_bins=r_bins,
+            empirical_data=empirical_data,
+            populations=populations,
+            normalization=normalization,
+            n_points=int(config.get("profile_points", 21)),
+            widen=float(config.get("profile_widen", 0.5)),
+            out_dir=profile_dir,
+            make_plots=bool(config.get("profile_make_plots", True)),
+        )
 
     # Create comparison plot if sampled parameters are available
     if sampled_params is not None:

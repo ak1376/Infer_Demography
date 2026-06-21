@@ -158,12 +158,12 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
     """
 
     # AFR sizes
-    N0  = float(sampled["N0"])    # N_A1 (older)
-    AFR = float(sampled["AFR"])   # N_A0 (recent)
+    N0  = float(sampled["N_ANC"])           # N_A1 (older)
+    AFR = float(sampled["N_AFR"])          # N_A0 (recent)
 
     # EUR sizes
-    EUR_bottleneck = float(sampled["EUR_bottleneck"])  # N_E1
-    EUR_recover    = float(sampled["EUR_recover"])     # N_E0
+    EUR_bottleneck = float(sampled["N_EUR_bottleneck"])  # N_E1
+    EUR_recover    = float(sampled["N_EUR_recover"])     # N_E0
 
     # Times (backward, generations)
     T_AFR_expansion = float(sampled["T_AFR_expansion"])   # t_A0

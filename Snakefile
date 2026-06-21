@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -1308,16 +1308,16 @@ rule compute_real_data_sfs:
 ##############################################################################
 rule infer_moments_real:
     input:
-        sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl")
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
-            f"src.simulation:{MODEL}_model"
-            if MODEL not in ["drosophila_three_epoch", "OOA_three_pop_Gutenkunst"]
-            else f"src.simulation:{MODEL}"
+            f"demes_models:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "demes_models:drosophila_three_epoch"
         ),
     threads: 8
     shell:
@@ -1330,6 +1330,7 @@ rule infer_moments_real:
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
+          --opt-seed {wildcards.opt} \
           -v
         """
 
@@ -1340,16 +1341,16 @@ rule infer_moments_real:
 ##############################################################################
 rule infer_dadi_real:
     input:
-        sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl")
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
         model_py = (
-            f"src.simulation:{MODEL}_model"
-            if MODEL not in ["drosophila_three_epoch", "OOA_three_pop_Gutenkunst"]
-            else f"src.simulation:{MODEL}"
+            f"demes_models:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "demes_models:drosophila_three_epoch"
         ),
     threads: 8
     shell:
@@ -1362,6 +1363,7 @@ rule infer_dadi_real:
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
+          --opt-seed {wildcards.opt} \
           -v
         """
 

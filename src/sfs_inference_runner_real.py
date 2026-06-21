@@ -84,6 +84,7 @@ def run_cli_real(
     model_py: str,
     outdir: Path,
     mode: str = "moments",            # "moments" or "dadi"
+    opt_seed: Optional[int] = None,
     verbose: bool = False,
 ) -> None:
     with open(sfs_file, "rb") as f:
@@ -92,14 +93,21 @@ def run_cli_real(
     with open(config_file, "r") as f:
         config = json.load(f)
 
+    if opt_seed is not None:
+        config["opt_seed"] = int(opt_seed)
+
     module_name, func_name = model_py.split(":")
     module = importlib.import_module(module_name)
     model_func = getattr(module, func_name)
 
     param_order = _validate_parameter_order(config)
 
-    # Fixed params on real data usually empty
-    fixed_params: Dict[str, float] = {}
+    # Read numeric fixed params from config (skip special string values like "sampled")
+    fixed_params: Dict[str, float] = {
+        k: float(v)
+        for k, v in config.get("fixed_parameters", {}).items()
+        if isinstance(v, (int, float))
+    }
 
     mode = str(mode).lower().strip()
     if mode not in {"moments", "dadi"}:
@@ -116,7 +124,9 @@ def run_cli_real(
             demo_model_abs=model_func,
             experiment_config=config,
             param_order=param_order,
+            fixed_params=fixed_params,
             verbose=verbose,
+            save_dir=outdir / "moments",
         )
 
     else:
@@ -129,7 +139,9 @@ def run_cli_real(
             demo_model_abs=model_func,
             experiment_config=config,
             param_order=param_order,
+            fixed_params=fixed_params,
             verbose=verbose,
+            save_dir=outdir / "dadi",
         )
         # if you later want to persist debug_txt, you can return it from fit_dadi_real_scaled;
         # for now, we don't have it unless you extend the function signature.

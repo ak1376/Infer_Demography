@@ -9,23 +9,23 @@
     "EUR": 20
   },
   "seed": 42,
-  "num_optimizations": 1,
+  "num_optimizations": 5,
   "top_k": 1,
   "num_draws": 100,
   "priors": {
-    "N0": [
+    "N_ANC": [
       3162,
       3162278
     ],
-    "AFR": [
+    "N_AFR": [
       3162,
       3162278
     ],
-    "EUR_bottleneck": [
+    "N_EUR_bottleneck": [
       3162,
       3162278
     ],
-    "EUR_recover": [
+    "N_EUR_recover": [
       3162,
       3162278
     ],
@@ -42,18 +42,48 @@
       50000
     ]
   },
+  "priors_real_data_analysis": {
+    "N_ANC": [
+      1,
+      1
+    ],
+    "N_AFR": [
+      0.001,
+      10.0
+    ],
+    "N_EUR_bottleneck": [
+      0.0001,
+      10.0
+    ],
+    "N_EUR_recover": [
+      0.001,
+      10.0
+    ],
+    "T_AFR_expansion": [
+      0.15,
+      1.0
+    ],
+    "T_AFR_EUR_split": [
+      0.025,
+      0.14
+    ],
+    "T_EUR_expansion": [
+      0.0001,
+      0.02
+    ]
+  },
   "parameter_order": [
-    "N0",
-    "AFR",
-    "EUR_bottleneck",
-    "EUR_recover",
+    "N_ANC",
+    "N_AFR",
+    "N_EUR_bottleneck",
+    "N_EUR_recover",
     "T_AFR_expansion",
     "T_AFR_EUR_split",
     "T_EUR_expansion"
   ],
   "fixed_parameters": {
-    "N0": "sampled"
-  }, 
+    "N_ANC": "sampled"
+  },
   "selection": {
     "enabled": true,
     "species": "HomSap",
@@ -71,7 +101,11 @@
   "residual_engines": "moments",
   "engine": "msprime",
   "use_gpu_ld": true,
-  "use_gpu_dadi": false, 
+  "use_gpu_dadi": false,
+  "generate_profiles": true,
+  "profile_points": 41,
+  "profile_widen": 0.5,
+  "profile_make_plots": true,
   "gram_schmidt": true,
   "gram_schmidt_k": 10
 

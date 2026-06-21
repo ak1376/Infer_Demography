@@ -174,13 +174,13 @@ def _scaled_to_absolute_params(
         if k.startswith("N_") and k != "N_ANC":
             out[k] = float(v) * float(N_anc_abs)
 
-    # time: T is tau
-    if "T" in out:
-        tau = float(out["T"])
-        if time_scale == "2N":
-            out["T"] = float(2.0 * N_anc_abs * tau)
-        else:
-            raise ValueError(f"Unknown time_scale={time_scale}")
+    # time: T or T_* keys are tau
+    for k, v in list(out.items()):
+        if k == "T" or k.startswith("T_"):
+            if time_scale == "2N":
+                out[k] = float(2.0 * N_anc_abs * float(v))
+            else:
+                raise ValueError(f"Unknown time_scale={time_scale}")
 
     # migration: keys starting with "m_" are treated as M = 2Nanc*m
     for k, v in list(out.items()):
@@ -238,6 +238,7 @@ def fit_model_realdata_scaled(
     rtol: float = 1e-8,
     eps: float = 1e-12,
     save_dir: Optional[str | Path] = None,
+    fixed_params: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, float], float, float, float]:
     """
     Returns:
@@ -245,6 +246,7 @@ def fit_model_realdata_scaled(
 
     Optimizer runs in scaled space (ratios/tau/M).
     Returned best_params_abs are ABSOLUTE with N_ANC = implied N_ANC.
+    fixed_params: scaled-space values to hold constant (lb=ub=value).
     """
     assert isinstance(sfs, moments.Spectrum)
 
@@ -262,6 +264,11 @@ def fit_model_realdata_scaled(
 
     lb = np.array([float(priors[p][0]) for p in param_names], dtype=float)
     ub = np.array([float(priors[p][1]) for p in param_names], dtype=float)
+    if fixed_params:
+        for p, v in fixed_params.items():
+            if p in param_names:
+                i = param_names.index(p)
+                lb[i] = ub[i] = float(v)
     if np.any(lb <= 0) or np.any(ub <= 0):
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
         raise ValueError(f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}")
@@ -314,7 +321,7 @@ def fit_model_realdata_scaled(
             print(f"loglik: {ll:.6g}  log10_params: {log10_params}")
         return ll
 
-    opt = nlopt.opt(nlopt.LD_LBFGS, len(param_names))
+    opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))
     opt.set_lower_bounds(np.log10(lb))
     opt.set_upper_bounds(np.log10(ub))
     opt.set_max_objective(objective)

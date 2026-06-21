@@ -104,13 +104,13 @@ def _scaled_to_absolute_params(
         if k.startswith("N_") and k != "N_ANC":
             out[k] = float(v) * float(N_anc_abs)
 
-    # time: T is tau
-    if "T" in out:
-        tau = float(out["T"])
-        if time_scale == "2N":
-            out["T"] = float(2.0 * N_anc_abs * tau)
-        else:
-            raise ValueError(f"Unknown time_scale={time_scale}")
+    # time: T or T_* keys are tau
+    for k, v in list(out.items()):
+        if k == "T" or k.startswith("T_"):
+            if time_scale == "2N":
+                out[k] = float(2.0 * N_anc_abs * float(v))
+            else:
+                raise ValueError(f"Unknown time_scale={time_scale}")
 
     # migration: keys starting with "m_" are treated as M = 2Nanc*m
     for k, v in list(out.items()):
@@ -176,6 +176,78 @@ def _base_sfs_theta1_from_scaled(
     return fs
 
 
+# ------------------------------ profile likelihood helpers --------------------------------
+def _profile_1d(
+    *,
+    xhat_log10: np.ndarray,
+    param_names: List[str],
+    lb_full: np.ndarray,
+    ub_full: np.ndarray,
+    loglikelihood_fn: Callable[[np.ndarray], float],
+    n_points: int = 41,
+    widen: float = 0.5,
+) -> Dict[str, Dict[str, np.ndarray]]:
+    lb_log10 = np.log10(lb_full)
+    ub_log10 = np.log10(ub_full)
+    out: Dict[str, Dict[str, np.ndarray]] = {}
+
+    for i, p in enumerate(param_names):
+        lo = lb_log10[i]
+        hi = ub_log10[i]
+
+        if widen > 0:
+            span = hi - lo
+            lo_g = max(lo, xhat_log10[i] - widen * span)
+            hi_g = min(hi, xhat_log10[i] + widen * span)
+        else:
+            lo_g, hi_g = lo, hi
+
+        grid = np.linspace(lo_g, hi_g, int(n_points))
+        ll = np.empty_like(grid)
+
+        x = xhat_log10.copy()
+        for k, g in enumerate(grid):
+            x[i] = g
+            ll[k] = loglikelihood_fn(x)
+
+        out[p] = {"grid_log10": grid, "ll": ll}
+
+    return out
+
+
+def _save_profiles(
+    profiles: Dict[str, Dict[str, np.ndarray]],
+    out_dir: Path,
+    *,
+    make_plots: bool = True,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for p, d in profiles.items():
+        np.savez(out_dir / f"profile_{p}.npz", grid_log10=d["grid_log10"], ll=d["ll"])
+
+    if not make_plots:
+        return
+
+    import matplotlib.pyplot as plt
+
+    for p, d in profiles.items():
+        grid_log10 = d["grid_log10"]
+        ll = d["ll"]
+        ll_max = float(np.max(ll))
+        dLL = ll_max - ll
+
+        plt.figure()
+        plt.plot(10 ** grid_log10, dLL)
+        plt.xscale("log")
+        plt.xlabel(p)
+        plt.ylabel("Δ log-likelihood (max - ll)")
+        plt.title(f"Scaled profile likelihood: {p}")
+        plt.tight_layout()
+        plt.savefig(out_dir / f"profile_{p}.png", dpi=150)
+        plt.close()
+
+
 # ------------------------------ main optimizer --------------------------------
 def fit_model_realdata_scaled(
     *,
@@ -186,6 +258,8 @@ def fit_model_realdata_scaled(
     verbose: bool = False,
     rtol: float = 1e-8,
     eps: float = 1e-12,
+    save_dir: Optional[Path] = None,
+    fixed_params: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, float], float, float, float]:
     """
     Returns:
@@ -216,6 +290,11 @@ def fit_model_realdata_scaled(
 
     lb = np.array([float(priors[p][0]) for p in param_names], dtype=float)
     ub = np.array([float(priors[p][1]) for p in param_names], dtype=float)
+    if fixed_params:
+        for p, v in fixed_params.items():
+            if p in param_names:
+                i = param_names.index(p)
+                lb[i] = ub[i] = float(v)
     if np.any(lb <= 0) or np.any(ub <= 0):
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
         raise ValueError(f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}")
@@ -317,7 +396,7 @@ def fit_model_realdata_scaled(
             print(f"loglik: {ll:.6g}  log10_params: {np.asarray(log10_params)}")
         return float(ll)
 
-    opt = nlopt.opt(nlopt.LD_LBFGS, len(param_names))
+    opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))
     opt.set_lower_bounds(np.log10(lb))
     opt.set_upper_bounds(np.log10(ub))
     opt.set_max_objective(objective)
@@ -406,5 +485,23 @@ def fit_model_realdata_scaled(
     # runner below saves it as "debug_txt" in best_fit.pkl.
     if debug_txt is not None:
         best_params_abs["_debug_txt_present"] = 1.0  # harmless marker if you like
+
+    # optional profile likelihood curves
+    if save_dir is not None and bool(experiment_config.get("generate_profiles", False)):
+        like_dir = Path(save_dir) / "likelihood_plots_scaled"
+        profiles = _profile_1d(
+            xhat_log10=xhat,
+            param_names=param_names,
+            lb_full=lb,
+            ub_full=ub,
+            loglikelihood_fn=loglikelihood,
+            n_points=int(experiment_config.get("profile_points", 41)),
+            widen=float(experiment_config.get("profile_widen", 0.5)),
+        )
+        _save_profiles(
+            profiles,
+            like_dir,
+            make_plots=bool(experiment_config.get("profile_make_plots", True)),
+        )
 
     return best_params_abs, ll_hat, theta_hat, N_anc_implied
