@@ -44,8 +44,12 @@ USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 USE_GS = bool(CFG.get("gram_schmidt", False))
 
 # Make sure these match files that actually exist in your repo
-REAL_VCF     = "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz"
-REAL_POPFILE = "real_data_analysis/data/drosophila/popfile.txt"
+RAW_HAPLOID_VCF  = "drosophila_data/data/Chr2L.vcf.gz"
+REAL_VCF         = "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz"   # diploid-recoded; used for MomentsLD LD windows
+POLARIZED_VCF    = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz"   # haploid + AA annotation; used for SFS
+UNFOLDED_SFS     = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl"
+REAL_POPFILE     = "real_data_analysis/data/drosophila/popfile.txt"
+ANCESTRAL_FASTA  = "/sietch_colab/data_share/drosophila_melanogaster/dpgp_ancestor/chr2L.q30.fa"
 
 
 def _resid_vector_fname():
@@ -177,9 +181,9 @@ rule all:
             # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
 
             # # ── 5. REAL DATA (DROSOPHILA) ───────────────────────────────────────
-            # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
-            # "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
-            # "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+            # POLARIZED_VCF,
+            # POLARIZED_VCF + ".tbi",
+            # UNFOLDED_SFS,
 
             # # ── 6. REAL DATA: SFS INFERENCE ─────────────────────────────────────
             # f"{REAL_INF_ROOT}/moments/best_fit.pkl",
@@ -1304,11 +1308,61 @@ rule compute_real_data_sfs:
 
 
 ##############################################################################
+# RULE annotate_ancestral_allele
+# Polarize the raw haploid VCF using the DPGP ML-ancestor FASTA.
+# Adds an AA= INFO field; sites where the ancestral base is N or matches
+# neither allele are dropped.  Output is bgzipped + tabix-indexed.
+##############################################################################
+rule annotate_ancestral_allele:
+    input:
+        vcf   = RAW_HAPLOID_VCF,
+        tbi   = RAW_HAPLOID_VCF + ".tbi",
+        fasta = ANCESTRAL_FASTA,
+    output:
+        vcf = POLARIZED_VCF,
+        tbi = POLARIZED_VCF + ".tbi",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/annotate_ancestral_allele.py \
+          --input-vcf       "{input.vcf}" \
+          --ancestral-fasta "{input.fasta}" \
+          --output-vcf      "{output.vcf}"
+        """
+
+
+##############################################################################
+# RULE compute_unfolded_sfs
+# Build the 2D unfolded SFS directly from the polarized haploid VCF.
+# Each sample contributes 1 chromosome (no diploid recoding needed).
+##############################################################################
+rule compute_unfolded_sfs:
+    input:
+        vcf     = POLARIZED_VCF,
+        tbi     = POLARIZED_VCF + ".tbi",
+        popfile = REAL_POPFILE,
+    output:
+        sfs = UNFOLDED_SFS,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/compute_unfolded_sfs.py \
+          --input-vcf  "{input.vcf}" \
+          --popfile    "{input.popfile}" \
+          --output-sfs "{output.sfs}"
+        """
+
+
+##############################################################################
 # REAL DATA – NLopt Poisson SFS optimisation (moments)
 ##############################################################################
 rule infer_moments_real:
     input:
-        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
+        sfs = UNFOLDED_SFS,
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl")
     params:
@@ -1341,7 +1395,7 @@ rule infer_moments_real:
 ##############################################################################
 rule infer_dadi_real:
     input:
-        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
+        sfs = UNFOLDED_SFS,
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl")
     params:
