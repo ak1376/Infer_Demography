@@ -8,6 +8,49 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 
+def build_scaled_param_dict(param_names: List[str], vec_real: np.ndarray) -> Dict[str, float]:
+    return {k: float(v) for k, v in zip(param_names, vec_real)}
+
+
+def scaled_to_absolute_params(
+    p_scaled: Dict[str, float],
+    *,
+    N_anc_abs: float,
+    time_scale: str = "2N",
+) -> Dict[str, float]:
+    """
+    Convert scaled ("shape") parameters to absolute params.
+
+    Scaled interpretation:
+      - N_ANC is a placeholder (ignored); absolute comes from theta or is passed in
+      - sizes (N_*) are ratios: N_*_abs = r_* * N_ANC_abs
+      - time T / T_* are tau: T_abs = 2 * N_ANC_abs * tau
+      - migrations m_* are M = 2*N*m: m_abs = M / (2 * N_ANC_abs)
+    """
+    if N_anc_abs <= 0:
+        raise ValueError(f"N_anc_abs must be > 0; got {N_anc_abs}")
+
+    out = dict(p_scaled)
+    out["N_ANC"] = float(N_anc_abs)
+
+    for k, v in list(out.items()):
+        if k.startswith("N_") and k != "N_ANC":
+            out[k] = float(v) * float(N_anc_abs)
+
+    for k, v in list(out.items()):
+        if k == "T" or k.startswith("T_"):
+            if time_scale == "2N":
+                out[k] = float(2.0 * N_anc_abs * float(v))
+            else:
+                raise ValueError(f"Unknown time_scale={time_scale}")
+
+    for k, v in list(out.items()):
+        if k.startswith("m_"):
+            out[k] = float(v) / float(2.0 * N_anc_abs)
+
+    return out
+
+
 def build_fixed_param_mapper(
     param_names: List[str], fixed_params: Dict[str, float]
 ) -> Tuple[List[int], List[int], Dict[str, float]]:

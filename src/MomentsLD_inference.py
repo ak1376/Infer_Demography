@@ -23,6 +23,8 @@ import moments
 import nlopt
 import numdifftools as nd
 
+from src.inference_utils import scaled_to_absolute_params
+
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -887,6 +889,22 @@ def _profile_1d_ld(
     logging.info("Profile likelihoods saved → %s", out_dir)
 
 
+def _wrap_scaled_demo(demographic_model):
+    """
+    Wrap a demographic model so it accepts scaled params:
+      N_ANC  – absolute (free parameter; sets the rho scale for LD)
+      N_*    – ratios r = N_*/N_ANC
+      T / T_* – dimensionless tau = T / (2*N_ANC)
+      m_*    – dimensionless M = 2*N_ANC*m
+    Converts to absolute before calling the underlying model.
+    """
+    def wrapped(param_dict: Dict[str, float]) -> object:
+        N_anc = float(param_dict["N_ANC"])
+        abs_params = scaled_to_absolute_params(param_dict, N_anc_abs=N_anc)
+        return demographic_model(abs_params)
+    return wrapped
+
+
 def run_momentsld_inference(
     config: Dict,
     empirical_data: Dict[str, List[np.ndarray]],
@@ -924,8 +942,20 @@ def run_momentsld_inference(
     # Load demographic model function
     demo_function = _load_demographic_function(config)
 
-    # Extract parameter setup from configuration
-    priors = config["priors"]
+    # Use scaled priors when available (same lookup chain as dadi/moments real-data inference).
+    # MomentsLD needs N_ANC as a free absolute parameter (rho = 4*N_ANC*r), so when the
+    # real-data priors fix N_ANC to [1,1] we replace it with the simulation absolute bounds.
+    scaled_priors = config.get("_active_priors") or config.get("priors_real_data_analysis")
+    if scaled_priors is not None:
+        priors = dict(scaled_priors)
+        raw_priors = config.get("priors", {})
+        if "N_ANC" in priors and "N_ANC" in raw_priors:
+            priors["N_ANC"] = raw_priors["N_ANC"]
+        demo_function = _wrap_scaled_demo(demo_function)
+        logging.info("Using scaled MomentsLD parameterisation (priors_real_data_analysis + absolute N_ANC)")
+    else:
+        priors = config["priors"]
+
     param_names = list(priors.keys())
     lower_bounds = np.array([prior[0] for prior in priors.values()])
     upper_bounds = np.array([prior[1] for prior in priors.values()])

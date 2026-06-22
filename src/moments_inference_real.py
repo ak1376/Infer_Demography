@@ -42,6 +42,8 @@ import moments
 import nlopt
 import numdifftools as nd
 
+from src.inference_utils import build_scaled_param_dict, scaled_to_absolute_params
+
 
 # ------------------------------ mask-safe helpers ------------------------------
 def _mask_safe_sum(sfs: moments.Spectrum, arr: np.ndarray) -> float:
@@ -105,7 +107,7 @@ def _profile_1d(
             x[i] = g
             ll[k] = loglikelihood_fn(x)
 
-        out[p] = {"grid_log10": grid, "ll": ll}
+        out[p] = {"grid_log10": grid, "ll": ll, "xhat_log10": xhat_log10[i]}
 
     return out
 
@@ -132,63 +134,17 @@ def _save_profiles(
         ll_max = float(np.max(ll))
         dLL = ll_max - ll
 
-        plt.figure()
-        plt.plot(10 ** grid_log10, dLL)
-        plt.xscale("log")
-        plt.xlabel(p)
-        plt.ylabel("Δ log-likelihood (max - ll)")
-        plt.title(f"Scaled profile likelihood: {p}")
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.plot(10 ** grid_log10, dLL)
+        ax.axvline(10 ** d["xhat_log10"], color="red", linestyle="--", lw=1, label="MLE")
+        ax.set_xscale("log")
+        ax.set_xlabel(p)
+        ax.set_ylabel("Δ log-likelihood (max - ll)")
+        ax.set_title(f"Scaled profile likelihood: {p}")
+        ax.legend(fontsize=8)
         plt.tight_layout()
-        plt.savefig(out_dir / f"profile_{p}.png", dpi=150)
-        plt.close()
-
-
-# ------------------------------ scaling logic --------------------------------
-def _build_scaled_param_dict(param_names: List[str], vec_real: np.ndarray) -> Dict[str, float]:
-    return {k: float(v) for k, v in zip(param_names, vec_real)}
-
-
-def _scaled_to_absolute_params(
-    p_scaled: Dict[str, float],
-    *,
-    N_anc_abs: float,
-    time_scale: str = "2N",   # "2N" means T_abs = 2*N_ANC*tau
-) -> Dict[str, float]:
-    """
-    Convert scaled ("shape") parameters to absolute params.
-
-    Scaled interpretation:
-      - N_ANC is a placeholder (ignored); absolute comes from theta
-      - sizes (N_*) are ratios: N_*_abs = r_* * N_ANC_abs
-      - time T is tau: T_abs = (2*N_ANC_abs)*tau
-      - migrations m_* are M: m_abs = M / (2*N_ANC_abs)
-    """
-    if N_anc_abs <= 0:
-        raise ValueError(f"N_anc_abs must be > 0; got {N_anc_abs}")
-
-    out = dict(p_scaled)
-    out["N_ANC"] = float(N_anc_abs)
-
-    # sizes: treat any key starting with "N_" (except N_ANC) as ratio
-    for k, v in list(out.items()):
-        if k.startswith("N_") and k != "N_ANC":
-            out[k] = float(v) * float(N_anc_abs)
-
-    # time: T or T_* keys are tau
-    for k, v in list(out.items()):
-        if k == "T" or k.startswith("T_"):
-            if time_scale == "2N":
-                out[k] = float(2.0 * N_anc_abs * float(v))
-            else:
-                raise ValueError(f"Unknown time_scale={time_scale}")
-
-    # migration: keys starting with "m_" are treated as M = 2Nanc*m
-    for k, v in list(out.items()):
-        if k.startswith("m_"):
-            M = float(v)
-            out[k] = float(M) / float(2.0 * N_anc_abs)
-
-    return out
+        fig.savefig(out_dir / f"profile_{p}.png", dpi=150)
+        plt.close(fig)
 
 
 # ------------------------------ diffusion call --------------------------------
@@ -209,10 +165,10 @@ def _base_sfs_theta1_from_scaled(
       then compute SFS with theta=1.0.
     """
     vec_real = 10 ** log10_params
-    p_scaled = _build_scaled_param_dict(param_names, vec_real)
+    p_scaled = build_scaled_param_dict(param_names, vec_real)
 
     # shape-only absolute params with N_ANC=1
-    p_abs_shape = _scaled_to_absolute_params(p_scaled, N_anc_abs=1.0, time_scale="2N")
+    p_abs_shape = scaled_to_absolute_params(p_scaled, N_anc_abs=1.0, time_scale="2N")
 
     graph = demo_model_abs(p_abs_shape)
 
@@ -349,8 +305,8 @@ def fit_model_realdata_scaled(
     N_anc_implied = float(theta_hat) / float(4.0 * muL)
 
     # convert scaled params at optimum to ABSOLUTE using implied N_ANC
-    p_scaled_hat = _build_scaled_param_dict(param_names, 10 ** xhat)
-    best_params_abs = _scaled_to_absolute_params(
+    p_scaled_hat = build_scaled_param_dict(param_names, 10 ** xhat)
+    best_params_abs = scaled_to_absolute_params(
         p_scaled_hat,
         N_anc_abs=N_anc_implied,
         time_scale="2N",
