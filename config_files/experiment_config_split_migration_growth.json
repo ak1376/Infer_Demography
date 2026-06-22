@@ -5,8 +5,8 @@
   "demographic_model": "split_migration_growth",
   "log_dir": "experiments/split_migration_growth/logs",
   "num_samples": {
-    "CO": 20,
-    "FR": 20
+    "CO": 10,
+    "FR": 9
   },
   "seed": 42,
   "num_optimizations": 5,
