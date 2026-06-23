@@ -1288,26 +1288,6 @@ rule recode_haploid_to_diploid_Chr2L:
         """
 
 ##############################################################################
-# RULE compute_real_data_sfs            
-##############################################################################
-rule compute_real_data_sfs:
-    input:
-        vcf     = "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
-        popfile = "real_data_analysis/data/drosophila/popfile.txt",
-    output:
-        sfs = f"real_data_analysis/data/drosophila/drosophila.sfs.pkl"
-    shell:
-        r"""
-        set -euo pipefail
-
-        python snakemake_scripts/real_data_sfs.py \
-          --input-vcf {input.vcf} \
-          --popfile   {input.popfile} \
-          --output-sfs {output.sfs}
-        """
-
-
-##############################################################################
 # RULE annotate_ancestral_allele
 # Polarize the raw haploid VCF using the DPGP ML-ancestor FASTA.
 # Adds an AA= INFO field; sites where the ancestral base is N or matches
@@ -1362,7 +1342,7 @@ rule compute_unfolded_sfs:
 ##############################################################################
 rule infer_moments_real:
     input:
-        sfs = UNFOLDED_SFS,
+        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl")
     params:
@@ -1395,7 +1375,7 @@ rule infer_moments_real:
 ##############################################################################
 rule infer_dadi_real:
     input:
-        sfs = UNFOLDED_SFS,
+        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl")
     params:

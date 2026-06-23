@@ -1,5 +1,5 @@
 """
-Neutral PPC for Drosophila.
+Neutral PPC for Drosophila — SFS statistics.
 
 Loads pre-computed SFS from neutral simulations, projects each one down to
 the observed sample sizes, computes Pi, Tajima's D, FST, and SFS shapes,
@@ -7,9 +7,14 @@ then compares to observed Chr2L data via violin plots.
 
 Uses the polarized (AA-annotated) haploid VCF so both observed and simulated
 SFS are unfolded (derived-allele oriented).
+
+Usage:
+    python neutral_ppc_drosophila.py --model split_migration_growth
+    python neutral_ppc_drosophila.py --model drosophila_three_epoch
 """
 
 from pathlib import Path
+import argparse
 import pickle
 import gzip
 from typing import Dict, List
@@ -21,12 +26,28 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 # ---------------------------------------------------------------------------
-# Paths
+# Per-model configuration
 # ---------------------------------------------------------------------------
-SIM_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/experiments_neutral/split_migration_growth/simulations')
-REAL_VCF = '/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz'
-POPFILE  = '/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/popfile.txt'
-OUT_DIR  = Path('/sietch_colab/akapoor/Infer_Demography/model_calibration_drosophila')
+ROOT = Path('/sietch_colab/akapoor/Infer_Demography')
+
+MODEL_CONFIGS = {
+    "split_migration_growth": {
+        "sim_dir":    ROOT / "experiments/split_migration_growth/simulations",
+        "pop_labels": ["CO", "FR"],
+        "out_name":   "neutral_ppc_sfs_split_migration_growth.png",
+    },
+    "drosophila_three_epoch": {
+        # simulations_ld_ppc uses current param names; the old 20k sims are
+        # fine for the SFS PPC since they only need SFS.pkl (no param dict lookup)
+        "sim_dir":    ROOT / "experiments/drosophila_three_epoch/simulations",
+        "pop_labels": ["CO", "FR"],
+        "out_name":   "neutral_ppc_sfs_drosophila_three_epoch.png",
+    },
+}
+
+REAL_VCF = str(ROOT / 'real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz')
+POPFILE  = str(ROOT / 'real_data_analysis/data/drosophila/popfile.txt')
+OUT_DIR  = ROOT / 'model_calibration_drosophila_model'
 OUT_DIR.mkdir(exist_ok=True)
 
 GENOME_LENGTH = 24_000_000  # bp
@@ -108,14 +129,14 @@ def fst_from_2d_sfs(sfs_2d) -> float:
 
 
 def stats_from_sfs(sfs) -> Dict[str, float]:
-    m_co = sfs.marginalize([1])
-    m_fr = sfs.marginalize([0])
+    m1 = sfs.marginalize([1])   # pop dim-0 marginal
+    m2 = sfs.marginalize([0])   # pop dim-1 marginal
     return {
-        'pi_CO':       pi_from_1d_sfs(m_co),
-        'pi_FR':       pi_from_1d_sfs(m_fr),
-        'tajima_d_CO': tajima_d_from_1d_sfs(m_co),
-        'tajima_d_FR': tajima_d_from_1d_sfs(m_fr),
-        'fst':         fst_from_2d_sfs(sfs),
+        'pi_pop1':       pi_from_1d_sfs(m1),
+        'pi_pop2':       pi_from_1d_sfs(m2),
+        'tajima_d_pop1': tajima_d_from_1d_sfs(m1),
+        'tajima_d_pop2': tajima_d_from_1d_sfs(m2),
+        'fst':           fst_from_2d_sfs(sfs),
     }
 
 
@@ -258,14 +279,14 @@ def compute_obs_stats(vcf_path: str, popfile: str, L: float = GENOME_LENGTH):
     fst = float(np.nansum(num) / np.nansum(den))
 
     scalar_stats = {
-        'pi_CO':       theta_pi_co / L,
-        'pi_FR':       theta_pi_fr / L,
-        'tajima_d_CO': taj_co,
-        'tajima_d_FR': taj_fr,
-        'fst':         fst,
+        'pi_pop1':       theta_pi_co / L,
+        'pi_pop2':       theta_pi_fr / L,
+        'tajima_d_pop1': taj_co,
+        'tajima_d_pop2': taj_fr,
+        'fst':           fst,
     }
 
-    print(f"  pi_CO={scalar_stats['pi_CO']:.4g}  pi_FR={scalar_stats['pi_FR']:.4g}  "
+    print(f"  pi_CO={scalar_stats['pi_pop1']:.4g}  pi_FR={scalar_stats['pi_pop2']:.4g}  "
           f"Taj_D_CO={taj_co:.4g}  Taj_D_FR={taj_fr:.4g}  FST={fst:.4g}")
 
     # Unfolded 1D SFS
@@ -299,20 +320,24 @@ def _norm_sfs(s: np.ndarray) -> np.ndarray:
 def plot_results(
     sim_stats: List[Dict],
     obs_stats: Dict,
-    sim_sfs_co: np.ndarray,
-    sim_sfs_fr: np.ndarray,
+    sim_sfs_1: np.ndarray,
+    sim_sfs_2: np.ndarray,
     sim_sfs_2d: np.ndarray,
-    obs_sfs_co: np.ndarray,
-    obs_sfs_fr: np.ndarray,
+    obs_sfs_1: np.ndarray,
+    obs_sfs_2: np.ndarray,
     obs_sfs_2d: np.ndarray,
+    pop_labels: List[str],
+    model: str,
     out_path: Path,
 ) -> None:
+    p1, p2 = pop_labels
+
     fig = plt.figure(figsize=(22, 15))
     gs  = gridspec.GridSpec(3, 5, figure=fig, hspace=0.50, wspace=0.38)
 
     # ---- Row 0: scalar violin plots ----------------------------------------
-    scalar_keys   = ['pi_CO', 'pi_FR', 'tajima_d_CO', 'tajima_d_FR', 'fst']
-    scalar_labels = ['π (CO)', 'π (FR)', "Tajima's D (CO)", "Tajima's D (FR)", r'$F_{ST}$']
+    scalar_keys   = ['pi_pop1', 'pi_pop2', 'tajima_d_pop1', 'tajima_d_pop2', 'fst']
+    scalar_labels = [f'π ({p1})', f'π ({p2})', f"Tajima's D ({p1})", f"Tajima's D ({p2})", r'$F_{ST}$']
 
     for col, (key, label) in enumerate(zip(scalar_keys, scalar_labels)):
         ax = fig.add_subplot(gs[0, col])
@@ -325,8 +350,8 @@ def plot_results(
 
     # ---- Row 1: 1D SFS comparison ------------------------------------------
     for col, (sim_mat, obs_sfs, pop) in enumerate([
-        (sim_sfs_co, obs_sfs_co, 'CO'),
-        (sim_sfs_fr, obs_sfs_fr, 'FR'),
+        (sim_sfs_1, obs_sfs_1, p1),
+        (sim_sfs_2, obs_sfs_2, p2),
     ]):
         ax = fig.add_subplot(gs[1, col*2 : col*2+2])
         norm_sim = np.array([_norm_sfs(s) for s in sim_mat])
@@ -350,15 +375,15 @@ def plot_results(
     ax_sim = fig.add_subplot(gs[2, :2])
     im1 = ax_sim.imshow(np.log1p(mean_2d.T), origin='lower', aspect='auto', cmap='viridis')
     ax_sim.set_title('2D SFS — mean simulated (log1p)', fontsize=11)
-    ax_sim.set_xlabel('CO derived allele count', fontsize=10)
-    ax_sim.set_ylabel('FR derived allele count', fontsize=10)
+    ax_sim.set_xlabel(f'{p1} derived allele count', fontsize=10)
+    ax_sim.set_ylabel(f'{p2} derived allele count', fontsize=10)
     plt.colorbar(im1, ax=ax_sim)
 
     ax_obs = fig.add_subplot(gs[2, 2:4])
     im2 = ax_obs.imshow(np.log1p(obs_sfs_2d.T), origin='lower', aspect='auto', cmap='viridis')
     ax_obs.set_title('2D SFS — observed (log1p)', fontsize=11)
-    ax_obs.set_xlabel('CO derived allele count', fontsize=10)
-    ax_obs.set_ylabel('FR derived allele count', fontsize=10)
+    ax_obs.set_xlabel(f'{p1} derived allele count', fontsize=10)
+    ax_obs.set_ylabel(f'{p2} derived allele count', fontsize=10)
     plt.colorbar(im2, ax=ax_obs)
 
     ax_diff = fig.add_subplot(gs[2, 4])
@@ -369,11 +394,11 @@ def plot_results(
     im3 = ax_diff.imshow(diff.T, origin='lower', aspect='auto', cmap='RdBu_r',
                          vmin=-vmax, vmax=vmax)
     ax_diff.set_title('2D SFS diff\n(obs − sim)', fontsize=10)
-    ax_diff.set_xlabel('CO count', fontsize=9)
-    ax_diff.set_ylabel('FR count', fontsize=9)
+    ax_diff.set_xlabel(f'{p1} count', fontsize=9)
+    ax_diff.set_ylabel(f'{p2} count', fontsize=9)
     plt.colorbar(im3, ax=ax_diff)
 
-    fig.suptitle('Neutral PPC — drosophila_three_epoch (Chr2L)', fontsize=14)
+    fig.suptitle(f'Neutral PPC — {model} (Chr2L)', fontsize=14)
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"Saved {out_path}")
@@ -384,34 +409,56 @@ def plot_results(
 # ---------------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model",
+        choices=list(MODEL_CONFIGS.keys()),
+        default="drosophila_three_epoch",
+        help="Which demographic model to run the PPC for.",
+    )
+    args = parser.parse_args()
+
+    mc         = MODEL_CONFIGS[args.model]
+    sim_dir    = mc["sim_dir"]
+    pop_labels = mc["pop_labels"]
+
     print("Computing observed stats from polarized VCF...")
-    obs_stats, obs_sfs_co, obs_sfs_fr, obs_sfs_2d, n_co, n_fr = compute_obs_stats(REAL_VCF, POPFILE)
+    obs_stats, obs_sfs_1, obs_sfs_2, obs_sfs_2d, n1, n2 = compute_obs_stats(REAL_VCF, POPFILE)
 
     print("\nLoading and projecting simulation SFS...")
-    all_sfs = load_sim_sfs(SIM_DIR, [n_co, n_fr])
+    all_sfs = load_sim_sfs(sim_dir, [n1, n2])
 
     print("\nComputing stats from simulations...")
     sim_stats = [stats_from_sfs(s) for s in all_sfs]
 
-    sim_sfs_co = np.array([_fill(s.marginalize([1])) for s in all_sfs])
-    sim_sfs_fr = np.array([_fill(s.marginalize([0])) for s in all_sfs])
+    sim_sfs_1  = np.array([_fill(s.marginalize([1])) for s in all_sfs])
+    sim_sfs_2  = np.array([_fill(s.marginalize([0])) for s in all_sfs])
     sim_sfs_2d = np.array([_fill(s) for s in all_sfs])
 
     print("\nPlotting...")
     plot_results(
         sim_stats, obs_stats,
-        sim_sfs_co, sim_sfs_fr, sim_sfs_2d,
-        obs_sfs_co, obs_sfs_fr, obs_sfs_2d,
-        OUT_DIR / 'neutral_ppc.png',
+        sim_sfs_1, sim_sfs_2, sim_sfs_2d,
+        obs_sfs_1, obs_sfs_2, obs_sfs_2d,
+        pop_labels=pop_labels,
+        model=args.model,
+        out_path=OUT_DIR / mc["out_name"],
     )
 
     print("\nSummary (simulated null vs observed):")
-    for key in ['pi_CO', 'pi_FR', 'tajima_d_CO', 'tajima_d_FR', 'fst']:
+    p1, p2 = pop_labels
+    for key, label in [
+        ('pi_pop1',       f'pi_{p1}'),
+        ('pi_pop2',       f'pi_{p2}'),
+        ('tajima_d_pop1', f'tajima_d_{p1}'),
+        ('tajima_d_pop2', f'tajima_d_{p2}'),
+        ('fst',           'fst'),
+    ]:
         vals = [s[key] for s in sim_stats if np.isfinite(s.get(key, np.nan))]
         lo, med, hi = np.percentile(vals, [5, 50, 95])
         obs = obs_stats[key]
         pct = float(np.mean(np.array(vals) <= obs)) * 100
-        print(f"  {key:16s}: obs={obs:.4g}  sim=[{lo:.4g}, {med:.4g}, {hi:.4g}]  "
+        print(f"  {label:20s}: obs={obs:.4g}  sim=[{lo:.4g}, {med:.4g}, {hi:.4g}]  "
               f"percentile={pct:.1f}%")
 
 

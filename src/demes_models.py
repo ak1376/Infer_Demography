@@ -157,18 +157,18 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
              T_EUR_expansion..T_split, then merges into AFR at T_split.
     """
 
-    # AFR sizes
-    N0  = float(sampled["N_ANC"])           # N_A1 (older)
-    AFR = float(sampled["N_AFR"])          # N_A0 (recent)
+    # AFR sizes — accept both current names (N_ANC, N_AFR) and legacy short names (N0, AFR)
+    N0  = float(sampled.get("N_ANC", sampled.get("N0")))
+    AFR = float(sampled.get("N_AFR", sampled.get("AFR")))
 
-    # EUR sizes
-    EUR_bottleneck = float(sampled["N_EUR_bottleneck"])  # N_E1
-    EUR_recover    = float(sampled["N_EUR_recover"])     # N_E0
+    # EUR sizes — accept both current names and legacy short names
+    EUR_bottleneck = float(sampled.get("N_EUR_bottleneck", sampled.get("EUR_bottleneck")))
+    EUR_recover    = float(sampled.get("N_EUR_recover",    sampled.get("EUR_recover")))
 
-    # Times (backward, generations)
-    T_AFR_expansion = float(sampled["T_AFR_expansion"])   # t_A0
-    T_split         = float(sampled["T_AFR_EUR_split"])   # t_AE
-    T_EUR_exp       = float(sampled["T_EUR_expansion"])   # t_E1
+    # Times (backward, generations) — names unchanged between versions
+    T_AFR_expansion = float(sampled["T_AFR_expansion"])
+    T_split         = float(sampled["T_AFR_EUR_split"])
+    T_EUR_exp       = float(sampled["T_EUR_expansion"])
 
     if not (T_AFR_expansion > T_split > T_EUR_exp > 0):
         raise ValueError(
@@ -180,20 +180,20 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
 
     # IMPORTANT: epochs are oldest -> youngest, and youngest must end_time=0.
     b.add_deme(
-        "AFR",
+        "CO",
         epochs=[
-            dict(start_size=N0,  end_time=T_AFR_expansion),  # older than T_AFR_expansion
-            dict(start_size=AFR, end_time=0),                # 0 .. T_AFR_expansion
+            dict(start_size=N0,  end_time=T_AFR_expansion),
+            dict(start_size=AFR, end_time=0),
         ],
     )
 
     b.add_deme(
-        "EUR",
-        ancestors=["AFR"],
+        "FR",
+        ancestors=["CO"],
         start_time=T_split,
         epochs=[
-            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),  # T_EUR_exp .. T_split
-            dict(start_size=EUR_recover,    end_time=0),          # 0 .. T_EUR_exp
+            dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),
+            dict(start_size=EUR_recover,    end_time=0),
         ],
     )
 

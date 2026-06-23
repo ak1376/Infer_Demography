@@ -40,7 +40,10 @@ from src.stdpopsim_wrappers import define_sps_model  # noqa: E402
 # ============================================================================
 
 def sample_params(
-    priors: Dict[str, List[float]], *, rng: Optional[np.random.Generator] = None
+    priors: Dict[str, List[float]],
+    *,
+    rng: Optional[np.random.Generator] = None,
+    fixed_params: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
     rng = rng or np.random.default_rng()
     params: Dict[str, float] = {}
@@ -48,13 +51,13 @@ def sample_params(
     for k, bounds in priors.items():
         params[k] = float(rng.uniform(*bounds))
 
-    # # keep bottleneck start > end if both are present
-    # if {"t_bottleneck_start", "t_bottleneck_end"}.issubset(params):
-    #     if params["t_bottleneck_start"] <= params["t_bottleneck_end"]:
-    #         params["t_bottleneck_start"], params["t_bottleneck_end"] = (
-    #             params["t_bottleneck_end"],
-    #             params["t_bottleneck_start"],
-    #         )
+    # Override with any numerically-fixed parameters from the config
+    if fixed_params:
+        for k, v in fixed_params.items():
+            if isinstance(v, (int, float)):
+                params[k] = float(v)
+                print(f"  [fixed] {k} = {v}")
+
     return params
 
 
@@ -226,15 +229,15 @@ def save_demes_png(g: demes.Graph, fig_path: Path, model_type: str) -> None:
                 t.set_visible(False)
 
         ax.set_title(f"{model_type}")
-        ax.set_xlabel("time ago (generations)")
+        ax.set_xlabel("Population")
         ax.set_ylabel("")
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
         return
 
     ax = demesdraw.tubes(g)
-    ax.set_xlabel("Time (generations)")
-    ax.set_ylabel("N")
+    ax.set_xlabel("Population")
+    ax.set_ylabel("Time (generations)")
     ax.figure.savefig(fig_path, dpi=300, bbox_inches="tight")
     plt.close(ax.figure)
 
@@ -343,8 +346,12 @@ def run_one_simulation_to_dir(
         rng = np.random.default_rng()
         print("• No seed specified, using random state")
 
-    # sample params
-    sampled_params = sample_params(cfg["priors"], rng=rng)
+    # sample params (numeric entries in fixed_parameters pin those params every run)
+    fixed_params = {
+        k: v for k, v in cfg.get("fixed_parameters", {}).items()
+        if isinstance(v, (int, float))
+    }
+    sampled_params = sample_params(cfg["priors"], rng=rng, fixed_params=fixed_params)
 
     # sample coverage if SLiM
     if engine == "slim":

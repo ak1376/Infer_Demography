@@ -5,8 +5,8 @@
   "demographic_model": "drosophila_three_epoch",
   "log_dir": "bottleneck/inferences/moments/logs",
   "num_samples": {
-    "AFR": 20,
-    "EUR": 20
+    "CO": 10,
+    "FR": 9
   },
   "seed": 42,
   "num_optimizations": 5,
@@ -82,12 +82,19 @@
     "T_EUR_expansion"
   ],
   "fixed_parameters": {
-    "N_ANC": "sampled"
+    "N_ANC": 4396894.708928244, 
+    "N_AFR": 916208.3135814125,
+    "N_EUR_bottleneck": 322707.3865953726, 
+    "N_EUR_recover": 891262.6786783487,
+    "T_AFR_expansion": 8793789.417856488,
+    "T_AFR_EUR_split": 219844.73544641226, 
+    "T_EUR_expansion": 1263.8126785331287
+
   },
   "selection": {
     "enabled": true,
     "species": "HomSap",
-    "dfe_id": "Gamma_K17",
+    "dfe_id": "Gamma_H17",
     "coverage_percent": [
       1,
       95

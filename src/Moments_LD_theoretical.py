@@ -32,7 +32,7 @@ def drosophila_three_epoch_MomentsLD(
     params,
     rho=None,
     theta=0.001,
-    pop_ids=("AFR", "EUR"),
+    pop_ids=("CO", "FR"),
 ):
     """
     Out-of-Africa three-epoch model for LD inference.
