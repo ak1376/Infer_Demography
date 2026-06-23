@@ -42,7 +42,7 @@ import moments
 import nlopt
 import numdifftools as nd
 
-from src.inference_utils import build_scaled_param_dict, scaled_to_absolute_params
+from src.inference_utils import build_scaled_param_dict, scaled_to_absolute_params, lhs_start_log10, profile_1d, save_profiles
 
 
 # ------------------------------ mask-safe helpers ------------------------------
@@ -71,80 +71,6 @@ def _mask_safe_poisson_ll(sfs: moments.Spectrum, exp_sfs: np.ndarray, eps: float
         return float(ll.sum())
     mask = np.asarray(mask, dtype=bool)
     return float(ll[~mask].sum())
-
-
-# ------------------------------ profiles (scaled space) ------------------------
-def _profile_1d(
-    *,
-    xhat_log10: np.ndarray,
-    param_names: List[str],
-    lb_full: np.ndarray,
-    ub_full: np.ndarray,
-    loglikelihood_fn: Callable[[np.ndarray], float],
-    n_points: int = 41,
-    widen: float = 0.5,
-) -> Dict[str, Dict[str, np.ndarray]]:
-    lb_log10 = np.log10(lb_full)
-    ub_log10 = np.log10(ub_full)
-    out: Dict[str, Dict[str, np.ndarray]] = {}
-
-    for i, p in enumerate(param_names):
-        lo = lb_log10[i]
-        hi = ub_log10[i]
-
-        if widen > 0:
-            span = hi - lo
-            lo_g = max(lo, xhat_log10[i] - widen * span)
-            hi_g = min(hi, xhat_log10[i] + widen * span)
-        else:
-            lo_g, hi_g = lo, hi
-
-        grid = np.linspace(lo_g, hi_g, int(n_points))
-        ll = np.empty_like(grid)
-
-        x = xhat_log10.copy()
-        for k, g in enumerate(grid):
-            x[i] = g
-            ll[k] = loglikelihood_fn(x)
-
-        out[p] = {"grid_log10": grid, "ll": ll, "xhat_log10": xhat_log10[i]}
-
-    return out
-
-
-def _save_profiles(
-    profiles: Dict[str, Dict[str, np.ndarray]],
-    out_dir: Path,
-    *,
-    make_plots: bool = True,
-) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    for p, d in profiles.items():
-        np.savez(out_dir / f"profile_{p}.npz", grid_log10=d["grid_log10"], ll=d["ll"])
-
-    if not make_plots:
-        return
-
-    import matplotlib.pyplot as plt
-
-    for p, d in profiles.items():
-        grid_log10 = d["grid_log10"]
-        ll = d["ll"]
-        ll_max = float(np.max(ll))
-        dLL = ll_max - ll
-
-        fig, ax = plt.subplots(figsize=(4, 3))
-        ax.plot(10 ** grid_log10, dLL)
-        ax.axvline(10 ** d["xhat_log10"], color="red", linestyle="--", lw=1, label="MLE")
-        ax.set_xscale("log")
-        ax.set_xlabel(p)
-        ax.set_ylabel("Δ log-likelihood (max - ll)")
-        ax.set_title(f"Scaled profile likelihood: {p}")
-        ax.legend(fontsize=8)
-        plt.tight_layout()
-        fig.savefig(out_dir / f"profile_{p}.png", dpi=150)
-        plt.close(fig)
 
 
 # ------------------------------ diffusion call --------------------------------
@@ -229,15 +155,9 @@ def fit_model_realdata_scaled(
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
         raise ValueError(f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}")
 
-    # start = geometric midpoint (+ optional jitter)
-    x0_real = 10 ** ((np.log10(lb) + np.log10(ub)) / 2.0)
-    sigma = float(experiment_config.get("start_jitter_sigma", 0.0))
-    if sigma > 0:
-        seed = experiment_config.get("opt_seed", None)
-        rng = np.random.default_rng(None if seed is None else int(seed))
-        x0_real = x0_real * (10 ** rng.normal(0.0, sigma, size=x0_real.shape))
-    x0_real = np.clip(x0_real, lb, ub)
-    x0 = np.log10(x0_real)
+    # start = LHS point for this run (diverse, well-spread across prior)
+    x0 = lhs_start_log10(lb, ub, experiment_config)
+    x0_real = 10 ** x0
 
     sampled_demes = list(getattr(sfs, "pop_ids", []))
     if not sampled_demes:
@@ -315,7 +235,7 @@ def fit_model_realdata_scaled(
     # optional scaled profile likelihood curves
     if save_dir is not None and bool(experiment_config.get("generate_profiles", False)):
         like_dir = Path(save_dir) / "likelihood_plots_scaled"
-        profiles = _profile_1d(
+        profiles = profile_1d(
             xhat_log10=xhat,
             param_names=param_names,
             lb_full=lb,
@@ -324,7 +244,7 @@ def fit_model_realdata_scaled(
             n_points=int(experiment_config.get("profile_points", 41)),
             widen=float(experiment_config.get("profile_widen", 0.5)),
         )
-        _save_profiles(
+        save_profiles(
             profiles,
             like_dir,
             make_plots=bool(experiment_config.get("profile_make_plots", True)),

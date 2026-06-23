@@ -65,6 +65,11 @@ def _parse_args():
         default=None,
         help="Comma-separated r-bin edges. If omitted, uses DEFAULT_R_BINS",
     )
+    p.add_argument(
+        "--skip-optimize",
+        action="store_true",
+        help="Stop after aggregation + comparison PDF; do not run the NLopt optimisation.",
+    )
     p.add_argument("-v", "--verbose", action="count", default=0)
     return p.parse_args()
 
@@ -115,7 +120,8 @@ def main():
     # ------------------------------------------------------------------
     # 3) custom NLopt L-BFGS optimisation (skips if best_fit.pkl exists)
     # ------------------------------------------------------------------
-    run_momentsld_inference(cfg, empirical_data, a.output_root, r_vec, sampled_params)
+    if not a.skip_optimize:
+        run_momentsld_inference(cfg, empirical_data, a.output_root, r_vec, sampled_params)
 
 
 if __name__ == "__main__":

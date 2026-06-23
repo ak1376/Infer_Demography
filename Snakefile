@@ -1523,6 +1523,8 @@ rule compute_ld_real:
         vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
     output:
         pkl = f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl"
+    resources:
+        gpu = 1
     params:
         script = "snakemake_scripts/compute_ld_window.py",
         config = EXP_CFG,
@@ -1567,35 +1569,26 @@ rule compute_fim_real:
         """
 
 ##############################################################################
-# REAL DATA: optimize_momentsld_real – aggregate windows & optimise momentsLD #
+# REAL DATA: aggregate_ld_windows_real – aggregate LD windows (once)         #
 ##############################################################################
-rule optimize_momentsld_real:
+rule aggregate_ld_windows_real:
     """
-    Uses the real-data LD_stats pkls under:
-      {REAL_LD_ROOT}/LD_stats/LD_stats_window_{i}.pkl
-
-    Runs LD_inference.py to:
-      - aggregate windows
-      - build means/varcovs + bootstrap sets
-      - optimize MomentsLD demographic parameters
-      - write best_fit.pkl + comparison PDF
+    Aggregate per-window LD stats into means/varcovs and write comparison PDF.
+    Runs once; the per-opt optimisation rules consume the means.varcovs.pkl output.
     """
     input:
         pkls = lambda w: expand(
             f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl",
             i=WINDOWS
-        )
+        ),
     output:
-        mv   = temp(f"{REAL_LD_ROOT}/means.varcovs.pkl"),
-        boot = temp(f"{REAL_LD_ROOT}/bootstrap_sets.pkl"),
+        mv   = f"{REAL_LD_ROOT}/means.varcovs.pkl",
+        boot = f"{REAL_LD_ROOT}/bootstrap_sets.pkl",
         pdf  = f"{REAL_LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
-        best = f"{REAL_LD_ROOT}/best_fit.pkl"
     params:
-        # LD_inference.py in your sim rule expects --run-dir and --output-root.
-        # For real data, we point --run-dir at REAL_INF_ROOT (a stable "run context" directory).
         run_dir     = REAL_INF_ROOT,
         output_root = REAL_LD_ROOT,
-        cfg         = EXP_CFG
+        cfg         = EXP_CFG,
     threads: 1
     shell:
         r"""
@@ -1604,16 +1597,74 @@ rule optimize_momentsld_real:
 
         PYTHONPATH={workflow.basedir} \
         python "snakemake_scripts/LD_inference.py" \
-            --run-dir     "{params.run_dir}" \
-            --output-root "{params.output_root}" \
-            --config-file "{params.cfg}"
+            --run-dir       "{params.run_dir}" \
+            --output-root   "{params.output_root}" \
+            --config-file   "{params.cfg}" \
+            --skip-optimize
 
-        # sanity checks
         test -f "{output.mv}"
         test -f "{output.boot}"
         test -f "{output.pdf}"
-        test -f "{output.best}"
         """
+
+
+##############################################################################
+# REAL DATA: infer_momentsld_real – one LHS start per opt wildcard           #
+##############################################################################
+rule infer_momentsld_real:
+    input:
+        mv = f"{REAL_LD_ROOT}/means.varcovs.pkl",
+    output:
+        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/MomentsLD/best_fit.pkl"),
+    params:
+        outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/MomentsLD",
+        cfg    = EXP_CFG,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.outdir}"
+
+        PYTHONPATH={workflow.basedir} \
+        python "src/MomentsLD_real_data.py" \
+            --config        "{params.cfg}" \
+            --empirical     "{input.mv}" \
+            --outdir        "{params.outdir}" \
+            --normalization 0 \
+            --opt-seed      {wildcards.opt} \
+            --verbose
+
+        test -f "{output.pkl}"
+        """
+
+
+##############################################################################
+# REAL DATA: aggregate_opts_momentsld_real – pick best across LHS restarts   #
+##############################################################################
+rule aggregate_opts_momentsld_real:
+    input:
+        runs = [f"{REAL_RUN_ROOT}/run_{o}/inferences/MomentsLD/best_fit.pkl"
+                for o in range(NUM_REAL_OPTIMS)],
+    output:
+        best = f"{REAL_LD_ROOT}/best_fit.pkl",
+    run:
+        import pickle, numpy as np, pathlib
+
+        records = []
+        for opt_idx, pkl in enumerate(input.runs):
+            d = pickle.load(open(pkl, "rb"))
+            records.append((float(d["best_ll"]), opt_idx, d))
+
+        records.sort(key=lambda t: t[0], reverse=True)
+        best_ll, best_opt, best_d = records[0]
+
+        out = dict(best_d)
+        out["opt_index"] = best_opt
+
+        pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
+        pickle.dump(out, open(output.best, "wb"))
+
+        print(f"✅ [REAL MomentsLD] Best run: opt={best_opt}  ll={best_ll:.6f}  → {output.best}")
 
 
 ##############################################################################

@@ -4,8 +4,53 @@ inference_utils.py - Shared utilities for parameter fixing and optimization
 """
 
 from __future__ import annotations
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 import numpy as np
+
+
+def lhs_start_log10(
+    lb: np.ndarray,
+    ub: np.ndarray,
+    experiment_config: Dict[str, Any],
+) -> np.ndarray:
+    """
+    Return a starting point in log10 space using Latin Hypercube Sampling.
+
+    Generates a full LHS grid of shape (n_runs, n_params) once, keyed by the
+    global config seed, so every run sees the same grid and each picks a
+    different, well-spread row.  Fixed parameters (lb == ub) are left at their
+    fixed log10 value regardless of the LHS draw.
+
+    Parameters
+    ----------
+    lb, ub : bounds arrays (real, positive)
+    experiment_config : must contain
+        "seed"             – global RNG seed for reproducible grid
+        "opt_seed"         – run index (0-based), set by Snakemake wildcard
+        "num_optimizations"– total number of parallel runs (rows in LHS grid)
+    """
+    from scipy.stats.qmc import LatinHypercube
+
+    lb_log10 = np.log10(lb)
+    ub_log10 = np.log10(ub)
+
+    n_runs = int(experiment_config.get("num_optimizations", 5))
+    global_seed = int(experiment_config.get("seed", 42))
+    run_idx = int(experiment_config.get("opt_seed", 0))
+    n_params = len(lb)
+
+    sampler = LatinHypercube(d=n_params, seed=global_seed)
+    unit_samples = sampler.random(n=n_runs)          # (n_runs, n_params) in [0, 1]
+
+    # Map [0, 1] -> [lb_log10, ub_log10]
+    log10_starts = lb_log10 + unit_samples * (ub_log10 - lb_log10)
+
+    # Fixed params (lb == ub): clamp to the fixed value so LHS doesn't perturb them
+    fixed_mask = (lb == ub)
+    log10_starts[:, fixed_mask] = lb_log10[fixed_mask]
+
+    x0 = log10_starts[run_idx % n_runs]
+    return np.clip(x0, lb_log10, ub_log10)
 
 
 def build_scaled_param_dict(param_names: List[str], vec_real: np.ndarray) -> Dict[str, float]:
@@ -175,3 +220,64 @@ def create_fixed_params_list_for_dadi(
             fixed_list.append(None)
 
     return fixed_list
+
+
+def profile_1d(
+    *,
+    xhat_log10: np.ndarray,
+    param_names: List[str],
+    lb_full: np.ndarray,
+    ub_full: np.ndarray,
+    loglikelihood_fn,
+    n_points: int = 41,
+    widen: float = 0.5,
+) -> Dict[str, Dict[str, np.ndarray]]:
+    """Compute 1-D profile likelihood slices around the MLE in log10 space."""
+    lb_log10 = np.log10(lb_full)
+    ub_log10 = np.log10(ub_full)
+    out: Dict[str, Dict[str, np.ndarray]] = {}
+    for i, p in enumerate(param_names):
+        lo, hi = lb_log10[i], ub_log10[i]
+        if widen > 0:
+            span = hi - lo
+            lo = max(lo, xhat_log10[i] - widen * span)
+            hi = min(hi, xhat_log10[i] + widen * span)
+        grid = np.linspace(lo, hi, int(n_points))
+        ll = np.empty_like(grid)
+        x = xhat_log10.copy()
+        for k, g in enumerate(grid):
+            x[i] = g
+            ll[k] = loglikelihood_fn(x)
+        out[p] = {"grid_log10": grid, "ll": ll, "xhat_log10": xhat_log10[i]}
+    return out
+
+
+def save_profiles(
+    profiles: Dict[str, Dict[str, np.ndarray]],
+    out_dir,
+    *,
+    make_plots: bool = True,
+    title_prefix: str = "Scaled profile likelihood",
+) -> None:
+    """Save profile likelihood npz files and optional PNG plots."""
+    from pathlib import Path
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for p, d in profiles.items():
+        np.savez(out_dir / f"profile_{p}.npz", grid_log10=d["grid_log10"], ll=d["ll"])
+    if not make_plots:
+        return
+    import matplotlib.pyplot as plt
+    for p, d in profiles.items():
+        ll_max = float(np.max(d["ll"]))
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.plot(10 ** d["grid_log10"], ll_max - d["ll"])
+        ax.axvline(10 ** d["xhat_log10"], color="red", linestyle="--", lw=1, label="MLE")
+        ax.set_xscale("log")
+        ax.set_xlabel(p)
+        ax.set_ylabel("Δ log-likelihood (max − ll)")
+        ax.set_title(f"{title_prefix}: {p}")
+        ax.legend(fontsize=8)
+        plt.tight_layout()
+        fig.savefig(out_dir / f"profile_{p}.png", dpi=150)
+        plt.close(fig)
