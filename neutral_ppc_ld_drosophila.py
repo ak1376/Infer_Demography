@@ -55,7 +55,7 @@ MODEL_CONFIGS = {
 N_SIM         = 100
 R_BINS        = DEFAULT_R_BINS
 NORMALIZATION = 0
-OUT_DIR       = Path("model_calibration_drosophila")
+OUT_DIR       = Path("model_calibration_drosophila_model")
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,8 @@ def main():
     )[:N_SIM]
 
     # probe first sim to get num_pops / n_stats
-    _params    = pickle.load(open(sim_dirs[0] / "sampled_params.pkl", "rb"))
+    with open(sim_dirs[0] / "sampled_params.pkl", "rb") as f:
+        _params = pickle.load(f)
     _log_p     = [np.log10(_params[n]) for n in param_names]
     _ld        = compute_theoretical_ld(_log_p, param_names, demo_function, R_BINS, populations)
     num_pops   = _ld.num_pops
@@ -136,7 +137,8 @@ def main():
 
     for i, d in enumerate(sim_dirs):
         try:
-            params     = pickle.load(open(d / "sampled_params.pkl", "rb"))
+            with open(d / "sampled_params.pkl", "rb") as f:
+                params = pickle.load(f)
             log_params = [np.log10(params[n]) for n in param_names]
             sigmaD2    = compute_theoretical_ld(
                 log_params, param_names, demo_function, R_BINS, populations

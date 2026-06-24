@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
+EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -45,7 +45,7 @@ USE_GS = bool(CFG.get("gram_schmidt", False))
 
 # Make sure these match files that actually exist in your repo
 RAW_HAPLOID_VCF  = "drosophila_data/data/Chr2L.vcf.gz"
-REAL_VCF         = "real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz"   # diploid-recoded; used for MomentsLD LD windows
+REAL_VCF         = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf.gz"   # diploid-recoded polarized VCF; same sites as SFS
 POLARIZED_VCF    = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz"   # haploid + AA annotation; used for SFS
 UNFOLDED_SFS     = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl"
 REAL_POPFILE     = "real_data_analysis/data/drosophila/popfile.txt"
@@ -1282,6 +1282,31 @@ rule recode_haploid_to_diploid_Chr2L:
         # Ensure output directory exists
         mkdir -p "$(dirname "{params.tmp_vcf}")"
         
+        python "{params.script}" "{input.vcf}" "{params.tmp_vcf}"
+        bgzip -f "{params.tmp_vcf}"
+        tabix -f -p vcf "{output.vcf}"
+        """
+
+##############################################################################
+# RULE recode_polarized_to_diploid
+# Recode the AA-annotated haploid VCF to diploid GTs so that MomentsLD can
+# use exactly the same sites as the SFS analysis.
+##############################################################################
+rule recode_polarized_to_diploid:
+    input:
+        vcf = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz",
+        tbi = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz.tbi",
+    output:
+        vcf = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf.gz",
+        tbi = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf.gz.tbi",
+    params:
+        script  = f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
+        tmp_vcf = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname "{params.tmp_vcf}")"
         python "{params.script}" "{input.vcf}" "{params.tmp_vcf}"
         bgzip -f "{params.tmp_vcf}"
         tabix -f -p vcf "{output.vcf}"
