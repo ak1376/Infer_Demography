@@ -20,6 +20,7 @@ import numpy as np
 import tskit
 
 from pg_gpu.moments_ld import compute_ld_statistics as _pg_compute_ld_statistics
+from moments.LD.Parsing import compute_ld_statistics as _cpu_compute_ld_statistics
 
 
 # -----------------------------------------------------------------------------
@@ -270,16 +271,26 @@ def compute_ld_window(
     config: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Compute LD stats for one window using pg_gpu.moments_ld.compute_ld_statistics.
+    Compute LD stats for one window.
 
-    Always uses GPU-accelerated pg_gpu; no CPU fallback.
+    Uses pg_gpu (GPU) when config["use_gpu_ld"] is true, otherwise falls back
+    to moments.LD.Parsing (CPU).
 
     Pop-order is taken from config["num_samples"].keys().
     """
+    use_gpu = config.get("use_gpu_ld", False)
     pops_cpu = list(config["num_samples"].keys())
-    _select_best_gpu()
+
+    if use_gpu:
+        _select_best_gpu()
+        compute_fn = _pg_compute_ld_statistics
+        backend = "pg_gpu"
+    else:
+        compute_fn = _cpu_compute_ld_statistics
+        backend = "moments (CPU)"
+
     t0 = time.perf_counter()
-    stats = _pg_compute_ld_statistics(
+    stats = compute_fn(
         vcf_file=str(vcf_gz),
         rec_map_file=str(rec_map_file),
         pop_file=str(samples_file),
@@ -288,5 +299,5 @@ def compute_ld_window(
         report=False,
     )
     dt = time.perf_counter() - t0
-    print(f"[LD] window {window_index:04d}: pg_gpu completed in {dt:.2f}s")
+    print(f"[LD] window {window_index:04d}: {backend} completed in {dt:.2f}s")
     return stats
