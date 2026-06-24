@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
+EXP_CFG = "config_files/experiment_config_drosophila_three_epoch.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -1353,7 +1353,7 @@ rule infer_moments_real:
             if MODEL != "drosophila_three_epoch"
             else "demes_models:drosophila_three_epoch"
         ),
-    threads: 8
+    threads: 2
     shell:
         r"""
         set -euo pipefail
@@ -1386,7 +1386,7 @@ rule infer_dadi_real:
             if MODEL != "drosophila_three_epoch"
             else "demes_models:drosophila_three_epoch"
         ),
-    threads: 8
+    threads: 2
     shell:
         r"""
         set -euo pipefail
@@ -1613,7 +1613,8 @@ rule aggregate_ld_windows_real:
 ##############################################################################
 rule infer_momentsld_real:
     input:
-        mv = f"{REAL_LD_ROOT}/means.varcovs.pkl",
+        mv       = f"{REAL_LD_ROOT}/means.varcovs.pkl",
+        sfs_best = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/MomentsLD/best_fit.pkl"),
     params:
@@ -1627,11 +1628,12 @@ rule infer_momentsld_real:
 
         PYTHONPATH={workflow.basedir} \
         python "src/MomentsLD_real_data.py" \
-            --config        "{params.cfg}" \
-            --empirical     "{input.mv}" \
-            --outdir        "{params.outdir}" \
-            --normalization 0 \
-            --opt-seed      {wildcards.opt} \
+            --config           "{params.cfg}" \
+            --empirical        "{input.mv}" \
+            --outdir           "{params.outdir}" \
+            --sfs-best-fit-pkl "{input.sfs_best}" \
+            --normalization    0 \
+            --opt-seed         {wildcards.opt} \
             --verbose
 
         test -f "{output.pkl}"

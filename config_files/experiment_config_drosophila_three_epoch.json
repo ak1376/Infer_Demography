@@ -72,6 +72,15 @@
       0.02
     ]
   },
+  "fixed_parameters": {
+    "N_ANC": 848951.5652704649,
+    "N_AFR": 1821848.9589133211,
+    "N_EUR_bottleneck": 277654.4524829869,
+    "N_EUR_recover": 8465389.802022463,
+    "T_AFR_expansion": 276506.38066582475,
+    "T_AFR_EUR_split": 234529.50785072707,
+    "T_EUR_expansion": 33958.06261081862
+  },
   "parameter_order": [
     "N_ANC",
     "N_AFR",
@@ -81,16 +90,6 @@
     "T_AFR_EUR_split",
     "T_EUR_expansion"
   ],
-  "fixed_parameters": {
-    "N_ANC": 4396894.708928244, 
-    "N_AFR": 916208.3135814125,
-    "N_EUR_bottleneck": 322707.3865953726, 
-    "N_EUR_recover": 891262.6786783487,
-    "T_AFR_expansion": 8793789.417856488,
-    "T_AFR_EUR_split": 219844.73544641226, 
-    "T_EUR_expansion": 1263.8126785331287
-
-  },
   "selection": {
     "enabled": true,
     "species": "HomSap",
@@ -108,7 +107,9 @@
   "residual_engines": "moments",
   "engine": "msprime",
   "use_gpu_ld": true,
-  "use_gpu_dadi": false,
+  "use_gpu_dadi": true,
+  "pts_base": [20, 25, 30],
+  "dadi_maxeval": 300,
   "generate_profiles": true,
   "profile_points": 41,
   "profile_widen": 0.5,

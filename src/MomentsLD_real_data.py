@@ -2,22 +2,32 @@
 """
 MomentsLD_real_data.py
 
-Real-data MomentsLD inference in RAW (absolute) parameter space.
-Optimises N_ANC, N_*, T, m_* directly in their natural units; N_ANC is
-used on-the-fly as the rho anchor: rho = 4 * N_ANC * r_bins.
+Real-data MomentsLD inference in SCALED parameter space.
+N_ref is fixed from the moments/dadi SFS best-fit so that
+rho = 4 * N_ref * r_bins is correctly anchored.
+
+Scaled parameterisation (matches priors_real_data_analysis in the config):
+  N_ANC   : fixed to 1 (placeholder; absolute value = N_ref)
+  N_*     : ratio  r  = N_*/N_ref
+  T       : tau    τ  = T_abs / (2 * N_ref)
+  m_*     : scaled M  = 2 * N_ref * m_abs
 
 Inputs:
-- --config  : experiment config JSON  (priors_real_data_analysis must hold
-              ABSOLUTE bounds for all parameters)
-- --empirical: means.varcovs.pkl (from moments.LD.Parsing.bootstrap_data)
-- --outdir  : where to write best_fit.pkl
+- --config          : experiment config JSON
+- --empirical       : means.varcovs.pkl
+- --outdir          : where to write best_fit.pkl
+- --sfs-best-fit-pkl: moments/dadi best_fit.pkl (to extract N_ref = N_ANC)
+  OR
+- --n-ref           : fixed N_ref float
 
 Usage example:
   python src/MomentsLD_real_data.py \
     --config config_files/experiment_config_split_migration_growth.json \
     --empirical experiments/split_migration_growth/real_data_analysis/inferences/MomentsLD/means.varcovs.pkl \
-    --outdir experiments/split_migration_growth/real_data_analysis/inferences/MomentsLD \
+    --outdir experiments/split_migration_growth/real_data_analysis/runs/run_0/inferences/MomentsLD \
+    --sfs-best-fit-pkl experiments/split_migration_growth/real_data_analysis/inferences/moments/best_fit.pkl \
     --normalization 0 \
+    --opt-seed 0 \
     --verbose
 """
 
@@ -78,37 +88,97 @@ def load_demographic_function(config: Dict[str, Any]):
     return getattr(demo_module, model_name + "_model")
 
 
-# ------------------------- theoretical LD -------------------------
+# ------------------------- scaling -------------------------
 
 
 def _build_param_dict(param_names: List[str], vec: np.ndarray) -> Dict[str, float]:
     return {k: float(v) for k, v in zip(param_names, vec)}
 
 
+def scaled_to_absolute_params(
+    p_scaled: Dict[str, float],
+    *,
+    N_ref: float,
+    time_scale: str = "2N",
+) -> Dict[str, float]:
+    """Convert scaled params (ratios / tau / M) to absolute using fixed N_ref."""
+    if N_ref <= 0:
+        raise ValueError(f"N_ref must be > 0, got {N_ref}")
+    out = dict(p_scaled)
+    out["N_ANC"] = float(N_ref)
+    for k, v in list(out.items()):
+        if k.startswith("N_") and k != "N_ANC":
+            out[k] = float(v) * float(N_ref)
+    if "T" in out:
+        if time_scale != "2N":
+            raise ValueError(f"Unknown time_scale={time_scale}")
+        out["T"] = float(2.0 * N_ref * float(out["T"]))
+    for k, v in list(out.items()):
+        if k.startswith("m_"):
+            out[k] = float(v) / float(2.0 * N_ref)
+    return out
+
+
+# ------------------------- N_ref resolution -------------------------
+
+
+def resolve_n_ref(args) -> float:
+    if args.n_ref is not None:
+        return float(args.n_ref)
+
+    if args.sfs_best_fit_pkl is None:
+        raise ValueError("Provide --n-ref or --sfs-best-fit-pkl")
+
+    d = load_pickle(Path(args.sfs_best_fit_pkl))
+
+    if isinstance(d, dict):
+        # list written by aggregate_opts_* rules — take the first (best) entry
+        if "N_ANC_implied_from_theta" in d:
+            v = d["N_ANC_implied_from_theta"]
+            return float(v[0] if isinstance(v, (list, tuple)) else v)
+        if "N_ANC_implied" in d:
+            return float(d["N_ANC_implied"])
+        # best_params_abs is a plain dict (single-run output)
+        if "best_params_abs" in d and isinstance(d["best_params_abs"], dict):
+            return float(d["best_params_abs"]["N_ANC"])
+        # best_params is a list of dicts (aggregate_opts output)
+        if "best_params" in d and isinstance(d["best_params"], list) and d["best_params"]:
+            return float(d["best_params"][0]["N_ANC"])
+        # best_params is a plain dict (single-run output)
+        if "best_params" in d and isinstance(d["best_params"], dict):
+            return float(d["best_params"]["N_ANC"])
+
+    raise ValueError(
+        f"Could not find N_ref in {args.sfs_best_fit_pkl}. "
+        "Expected keys: N_ANC_implied_from_theta, N_ANC_implied, "
+        "best_params_abs['N_ANC'], or best_params[0]['N_ANC']."
+    )
+
+
+# ------------------------- theoretical LD -------------------------
+
+
 def compute_theoretical_ld(
-    log10_abs_params: np.ndarray,
+    log10_scaled_params: np.ndarray,
     *,
     param_names: List[str],
     demographic_model_abs,
     r_bins: np.ndarray,
     populations: List[str],
+    N_ref: float,
     _diagnostic_once: Dict[str, bool],
 ) -> moments.LD.LDstats:
-    """
-    Compute expected sigmaD2 in absolute parameter space.
-    N_ANC from the parameter vector is used as the rho anchor:
-      rho = 4 * N_ANC * r_bins
-    """
-    p_abs = _build_param_dict(param_names, 10 ** np.asarray(log10_abs_params, dtype=float))
-    N_anc = float(p_abs["N_ANC"])
+    """Compute expected sigmaD2 with rho = 4*N_ref*r_bins and scaled→absolute conversion."""
+    vec_scaled = 10 ** np.asarray(log10_scaled_params, dtype=float)
+    p_scaled = _build_param_dict(param_names, vec_scaled)
+    p_abs = scaled_to_absolute_params(p_scaled, N_ref=N_ref, time_scale="2N")
 
     graph = demographic_model_abs(p_abs)
-
-    rho_edges = 4.0 * N_anc * np.asarray(r_bins, dtype=float)
+    rho_edges = 4.0 * float(N_ref) * np.asarray(r_bins, dtype=float)
 
     if not _diagnostic_once.get("did", False):
         _diagnostic_once["did"] = True
-        logging.info("[diagnostic] N_ANC = %.6g  (rho anchor)", N_anc)
+        logging.info("[diagnostic] Fixed N_ref = %.6g", N_ref)
         logging.info(
             "[diagnostic] rho_edges min/max = %.3e, %.3e",
             float(rho_edges.min()), float(rho_edges.max()),
@@ -148,8 +218,7 @@ def prepare_data_for_comparison(
     emp_covars = [np.asarray(x) for x in empirical_mv["varcovs"]]
 
     emp_means, emp_covars = moments.LD.Inference.remove_normalized_data(
-        emp_means,
-        emp_covars,
+        emp_means, emp_covars,
         normalization=normalization,
         num_pops=theoretical_sigmaD2.num_pops,
     )
@@ -194,6 +263,13 @@ def main() -> None:
     ap.add_argument("--rtol", type=float, default=1e-8)
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--r-bins", type=str, default=None, help="Comma-separated r-bin edges")
+    ap.add_argument("--n-ref", type=float, default=None, help="Fixed N_ref for rho scaling")
+    ap.add_argument(
+        "--sfs-best-fit-pkl",
+        type=Path,
+        default=None,
+        help="moments/dadi best_fit.pkl from which N_ANC is extracted as N_ref",
+    )
     ap.add_argument(
         "--opt-seed",
         type=int,
@@ -226,16 +302,19 @@ def main() -> None:
     if not populations:
         raise ValueError("config['num_samples'] must specify populations")
 
-    param_names = list(cfg.get("parameter_order", list(cfg["priors"].keys())))
-    priors_abs = cfg.get("priors")
-    if priors_abs is None:
-        raise ValueError("Need config['priors'] with absolute bounds for MomentsLD")
+    param_names = list(cfg.get("parameter_order", list(cfg["priors_real_data_analysis"].keys())))
+    priors_scaled = cfg.get("priors_real_data_analysis")
+    if priors_scaled is None:
+        raise ValueError("Need config['priors_real_data_analysis'] with scaled bounds")
 
-    lb = np.array([float(priors_abs[p][0]) for p in param_names], dtype=float)
-    ub = np.array([float(priors_abs[p][1]) for p in param_names], dtype=float)
+    lb = np.array([float(priors_scaled[p][0]) for p in param_names], dtype=float)
+    ub = np.array([float(priors_scaled[p][1]) for p in param_names], dtype=float)
     if np.any(lb <= 0) or np.any(ub <= 0):
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
-        raise ValueError(f"All bounds must be >0 for log10 optimisation. Bad: {bad}")
+        raise ValueError(f"All scaled bounds must be >0 for log10 optimisation. Bad: {bad}")
+
+    N_ref = resolve_n_ref(args)
+    logging.info("Using N_ref = %.6g", N_ref)
 
     x0 = lhs_start_log10(lb, ub, cfg)
 
@@ -248,6 +327,7 @@ def main() -> None:
             demographic_model_abs=demo_fn,
             r_bins=r_bins,
             populations=populations,
+            N_ref=N_ref,
             _diagnostic_once=_diag_once,
         )
         theory_arrays, emp_means, emp_covars = prepare_data_for_comparison(
@@ -258,9 +338,11 @@ def main() -> None:
     def objective(x: np.ndarray, grad: np.ndarray) -> float:
         ll = float(loglik(x))
         if args.verbose:
-            p_abs = _build_param_dict(param_names, 10 ** np.asarray(x))
+            vec = 10 ** np.asarray(x)
+            p_scaled = _build_param_dict(param_names, vec)
+            p_abs = scaled_to_absolute_params(p_scaled, N_ref=N_ref, time_scale="2N")
             show = ", ".join(f"{k}={p_abs[k]:.3g}" for k in param_names)
-            print(f"LL = {ll:.6f} | {show}")
+            print(f"LL = {ll:.6f} | {show} | (N_ref={N_ref:.3g})")
         return ll
 
     opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))
@@ -273,7 +355,8 @@ def main() -> None:
     status = opt.last_optimize_result()
     best_ll = opt.last_optimum_value()
 
-    best_params_abs = _build_param_dict(param_names, 10 ** np.asarray(best_x))
+    best_scaled = _build_param_dict(param_names, 10 ** np.asarray(best_x))
+    best_abs = scaled_to_absolute_params(best_scaled, N_ref=N_ref, time_scale="2N")
 
     if cfg.get("generate_profiles", False):
         logging.info("Computing 1-D profile likelihoods …")
@@ -288,11 +371,11 @@ def main() -> None:
         )
         save_profiles(
             profiles,
-            args.outdir / "likelihood_plots",
+            args.outdir / "likelihood_plots_scaled",
             make_plots=bool(cfg.get("profile_make_plots", True)),
-            title_prefix="MomentsLD profile likelihood",
+            title_prefix="MomentsLD profile likelihood (scaled)",
         )
-        logging.info("Profiles written to %s/likelihood_plots/", args.outdir)
+        logging.info("Profiles written to %s/likelihood_plots_scaled/", args.outdir)
 
     args.outdir.mkdir(parents=True, exist_ok=True)
     out_pkl = args.outdir / "best_fit.pkl"
@@ -300,7 +383,9 @@ def main() -> None:
         {
             "status": int(status),
             "best_ll": float(best_ll),
-            "best_params_abs": best_params_abs,
+            "fixed_N_ref": float(N_ref),
+            "best_params_scaled": best_scaled,
+            "best_params_abs": best_abs,
             "param_order": param_names,
             "normalization": int(args.normalization),
             "r_bins": np.asarray(r_bins, dtype=float),
