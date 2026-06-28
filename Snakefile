@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
+EXP_CFG = "config_files/experiment_config_split_migration_growth_both.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -33,7 +33,7 @@ NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
 NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
-WINDOW_SIZE   = 10_000_000
+WINDOW_SIZE   = 1_000_000
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
@@ -1549,7 +1549,7 @@ rule compute_ld_real:
     output:
         pkl = f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl"
     resources:
-        gpu = 1
+        gpu = 1 if USE_GPU_LD else 0
     params:
         script = "snakemake_scripts/compute_ld_window.py",
         config = EXP_CFG,

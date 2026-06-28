@@ -288,6 +288,100 @@ def split_migration_growth_model(
     return b.resolve()
 
 
+def split_migration_growth_both_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    CO trunk carries the ancestral epoch implicitly, then splits to FR at time T.
+    Migration between CO and FR (forward-time rates), with optional exponential
+    growth in both CO and FR after the split.
+
+    Deme names: 'CO' and 'FR'.
+
+    Parameters:
+    - N_CO1:   CO size at present (time 0).
+    - G_CO:    CO forward-time growth rate (optional); infers N_CO0 = N_CO1 * exp(-G_CO * T).
+               If absent, provide N_CO0 explicitly, else CO is constant post-split.
+    - N_CO0:   CO size at split time T (explicit alternative to G_CO).
+    - N_FR1:   FR size at present (time 0).
+    - G_FR:    FR forward-time growth rate (optional); infers N_FR0 = N_FR1 * exp(-G_FR * T).
+               If absent, provide N_FR0 explicitly, else FR is constant post-split.
+    - N_FR0:   FR size at split time T (explicit alternative to G_FR).
+    - N_ANC:   ancestral size (older than T; the trunk before split).
+    - m_CO_FR: migration CO -> FR (forward time).
+    - m_FR_CO: migration FR -> CO (forward time).
+    - T:       split time (generations ago, backward-time).
+    """
+
+    N_CO1   = float(sampled.get("N_CO1", sampled.get("N_CO", sampled.get("N1"))))
+    N_FR1   = float(sampled.get("N_FR1", sampled.get("N2")))
+    N_ANC   = float(sampled.get("N_ANC", sampled.get("N0")))
+    m_CO_FR = float(sampled.get("m_CO_FR", 0.0))
+    m_FR_CO = float(sampled.get("m_FR_CO", 0.0))
+    T       = float(sampled.get("T", sampled.get("T_split")))
+
+    if not (T > 0):
+        raise ValueError(f"Need T > 0 (generations ago). Got {T=}.")
+    for name, val in [("N_CO1", N_CO1), ("N_FR1", N_FR1), ("N_ANC", N_ANC)]:
+        if not (val > 0):
+            raise ValueError(f"Need {name} > 0. Got {val}.")
+    for name, val in [("m_CO_FR", m_CO_FR), ("m_FR_CO", m_FR_CO)]:
+        if val < 0:
+            raise ValueError(f"Need {name} >= 0. Got {val}.")
+
+    # CO growth: N_CO0 = size at split (backward), N_CO1 = size at present
+    if "G_CO" in sampled:
+        G_CO  = float(sampled["G_CO"])
+        N_CO0 = N_CO1 * np.exp(-G_CO * T)
+    elif "N_CO0" in sampled:
+        N_CO0 = float(sampled["N_CO0"])
+    else:
+        N_CO0 = N_CO1
+
+    if not (N_CO0 > 0):
+        raise ValueError(f"Need N_CO0 > 0 (inferred or provided). Got {N_CO0=}.")
+
+    # FR growth: N_FR0 = size at split (backward), N_FR1 = size at present
+    if "G_FR" in sampled:
+        G_FR  = float(sampled["G_FR"])
+        N_FR0 = N_FR1 * np.exp(-G_FR * T)
+    elif "N_FR0" in sampled:
+        N_FR0 = float(sampled["N_FR0"])
+    else:
+        N_FR0 = N_FR1
+
+    if not (N_FR0 > 0):
+        raise ValueError(f"Need N_FR0 > 0 (inferred or provided). Got {N_FR0=}.")
+
+    b = demes.Builder()
+
+    # CO trunk:
+    # - older than T: size N_ANC
+    # - from T to present: grows from N_CO0 -> N_CO1
+    b.add_deme(
+        "CO",
+        epochs=[
+            dict(start_size=N_ANC, end_time=T),
+            dict(start_size=N_CO0, end_size=N_CO1, end_time=0),
+        ],
+    )
+
+    # FR splits off at time T from CO; grows from N_FR0 -> N_FR1
+    b.add_deme(
+        "FR",
+        ancestors=["CO"],
+        start_time=T,
+        epochs=[dict(start_size=N_FR0, end_size=N_FR1, end_time=0)],
+    )
+
+    if m_CO_FR > 0:
+        b.add_migration(source="CO", dest="FR", rate=m_CO_FR)
+    if m_FR_CO > 0:
+        b.add_migration(source="FR", dest="CO", rate=m_FR_CO)
+
+    return b.resolve()
+
+
 def OOA_three_pop_model_simplified(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
 ) -> demes.Graph:

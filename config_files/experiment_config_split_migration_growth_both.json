@@ -1,0 +1,133 @@
+{
+  "genome_length": 24000000,
+  "mutation_rate": 1.45e-09,
+  "recombination_rate": 1.45e-09,
+  "demographic_model": "split_migration_growth_both",
+  "log_dir": "experiments/split_migration_growth_both/logs",
+  "num_samples": {
+    "CO": 10,
+    "FR": 9
+  },
+  "seed": 42,
+  "num_optimizations": 5,
+  "top_k": 1,
+  "num_draws": 100,
+  "priors": {
+    "N_ANC": [
+      3162,
+      3162278
+    ],
+    "N_CO0": [
+      3162,
+      3162278
+    ],
+    "N_CO1": [
+      3162,
+      3162278
+    ],
+    "N_FR0": [
+      3162,
+      3162278
+    ],
+    "N_FR1": [
+      3162,
+      3162278
+    ],
+    "T": [
+      1000,
+      1000000
+    ],
+    "m_CO_FR": [
+      1e-08,
+      0.001
+    ],
+    "m_FR_CO": [
+      1e-08,
+      0.001
+    ]
+  },
+  "priors_real_data_analysis": {
+    "N_ANC": [
+      1,
+      1
+    ],
+    "N_CO0": [
+      0.001,
+      10.0
+    ],
+    "N_CO1": [
+      0.0001,
+      10.0
+    ],
+    "N_FR0": [
+      0.001,
+      10.0
+    ],
+    "N_FR1": [
+      0.0001,
+      10.0
+    ],
+    "T": [
+      0.0001,
+      10.0
+    ],
+    "m_CO_FR": [
+      1e-06,
+      2.0
+    ],
+    "m_FR_CO": [
+      1e-06,
+      2.0
+    ]
+  },
+  "fixed_parameters": {
+    "N_ANC": 845990.8823287553,
+    "N_CO0": 426493.0500825415,
+    "N_CO1": 8459908.823287554,
+    "N_FR0": 49560.19481386005,
+    "N_FR1": 1351353.9538597974,
+    "T": 304055.0143539537,
+    "m_CO_FR": 1.182045836294718e-06,
+    "m_FR_CO": 6.257419200534825e-12
+  },
+  "parameter_order": [
+    "N_ANC",
+    "N_CO0",
+    "N_CO1",
+    "N_FR0",
+    "N_FR1",
+    "T",
+    "m_CO_FR",
+    "m_FR_CO"
+  ],
+  "selection": {
+    "enabled": true,
+    "species": "DroMel",
+    "dfe_id": "Gamma_H17",
+    "coverage_percent": [
+      1,
+      95
+    ],
+    "slim_scaling": 10.0
+  },
+  "use_fim_features": false,
+  "fim_engines": [
+    "moments"
+  ],
+  "use_residuals": false,
+  "residual_engines": "moments",
+  "engine": "msprime",
+  "use_gpu_ld": true,
+  "use_gpu_dadi": false,
+  "pts_base": [10, 15, 20],
+  "dadi_maxeval": 300,
+  "generate_profiles": true,
+  "profile_points": 41,
+  "profile_widen": 0.5,
+  "profile_make_plots": true,
+  "profile_theta": true,
+  "start_jitter_sigma": 0.05,
+  "prune_keep_fractions": [
+    0.15
+  ]
+}

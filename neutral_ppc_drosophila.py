@@ -36,6 +36,11 @@ MODEL_CONFIGS = {
         "pop_labels": ["CO", "FR"],
         "out_name":   "neutral_ppc_sfs_split_migration_growth.png",
     },
+    "split_migration_growth_both": {
+        "sim_dir":    ROOT / "experiments/split_migration_growth_both/simulations",
+        "pop_labels": ["CO", "FR"],
+        "out_name":   "neutral_ppc_sfs_split_migration_growth_both.png",
+    },
     "drosophila_three_epoch": {
         # simulations_ld_ppc uses current param names; the old 20k sims are
         # fine for the SFS PPC since they only need SFS.pkl (no param dict lookup)

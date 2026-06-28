@@ -25,6 +25,7 @@ def main():
             "IM_asymmetric",
             "drosophila_three_epoch",
             "split_migration_growth",
+            "split_migration_growth_both",
             "OOA_three_pop",
             "OOA_three_pop_gutenkunst",
         ],

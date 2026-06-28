@@ -290,14 +290,16 @@ def compute_ld_window(
         backend = "moments (CPU)"
 
     t0 = time.perf_counter()
-    stats = compute_fn(
+    kwargs: Dict[str, Any] = dict(
         vcf_file=str(vcf_gz),
         rec_map_file=str(rec_map_file),
         pop_file=str(samples_file),
         pops=pops_cpu,
         r_bins=r_bins,
         report=False,
+        use_genotypes=True,
     )
+    stats = compute_fn(**kwargs)
     dt = time.perf_counter() - t0
     print(f"[LD] window {window_index:04d}: {backend} completed in {dt:.2f}s")
     return stats

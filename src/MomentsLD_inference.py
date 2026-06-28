@@ -591,9 +591,10 @@ def optimize_parameters(
     tolerance: float = CONVERGENCE_TOL,
     verbose: bool = True,
     fixed_values: Optional[List[Optional[float]]] = None,
+    algorithm: int = nlopt.LN_BOBYQA,
 ):
     """
-    Optimize demographic parameters using L-BFGS (via nlopt).
+    Optimize demographic parameters via nlopt (default: derivative-free BOBYQA).
 
     Returns
     -------
@@ -641,7 +642,7 @@ def optimize_parameters(
             best_likelihood = likelihood
             best_params = np.array(free_params)
 
-        # Compute numerical gradient if requested
+        # Gradient only needed for gradient-based algorithms (e.g. LD_LBFGS)
         if gradient.size > 0:
             gradient_func = nd.Gradient(
                 lambda p: objective_function(
@@ -667,7 +668,7 @@ def optimize_parameters(
         return likelihood
 
     # Set up and run optimization
-    optimizer = nlopt.opt(nlopt.LD_LBFGS, len(free_start))
+    optimizer = nlopt.opt(algorithm, len(free_start))
     optimizer.set_lower_bounds(free_lower)
     optimizer.set_upper_bounds(free_upper)
     optimizer.set_max_objective(nlopt_objective)
