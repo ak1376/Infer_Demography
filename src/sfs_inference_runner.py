@@ -35,10 +35,10 @@ import matplotlib.pyplot as plt  # noqa: F401
 import dadi_inference
 import moments_inference
 
-
 # =============================================================================
 # Parameter ordering / validation helpers
 # =============================================================================
+
 
 def _validate_parameter_order(config: Dict[str, Any]) -> List[str]:
     if "parameter_order" not in config or not config["parameter_order"]:
@@ -62,7 +62,9 @@ def _validate_parameterization(
     prior_set = set(priors.keys())
     fixed_set = set(fixed_params.keys())
 
-    missing_coverage = [p for p in param_order if (p not in fixed_set and p not in prior_set)]
+    missing_coverage = [
+        p for p in param_order if (p not in fixed_set and p not in prior_set)
+    ]
     if missing_coverage:
         raise ValueError(
             "Parameters in 'parameter_order' missing from both priors and fixed params: "
@@ -187,7 +189,9 @@ def _apply_fixed_bounds_to_config(
     for p, v in fixed_params.items():
         v = float(v)
         if v <= 0:
-            raise ValueError(f"Fixed parameter '{p}' must be > 0 for log10 optimization; got {v}")
+            raise ValueError(
+                f"Fixed parameter '{p}' must be > 0 for log10 optimization; got {v}"
+            )
         pri[p] = [v, v]
 
     cfg["priors"] = pri
@@ -198,6 +202,7 @@ def _apply_fixed_bounds_to_config(
 # =============================================================================
 # Main entry
 # =============================================================================
+
 
 def run_cli(
     mode: str,
@@ -225,6 +230,7 @@ def run_cli(
 
     # Signature (informational)
     import inspect
+
     sig = inspect.signature(model_func)
 
     # ------------------------------------------------------------------
@@ -307,14 +313,16 @@ def run_cli(
         fitted_real, ll_value = moments_inference.fit_model(
             sfs=sfs_m,
             demo_model=model_func,
-            experiment_config=config_fit_local,   # <-- uses fixed bounds
+            experiment_config=config_fit_local,  # <-- uses fixed bounds
             start_vec=start_perturbed,
             param_order=param_order,
             verbose=verbose,
-            save_dir=moments_dir,                # <-- KEY: enables likelihood_plots location
+            save_dir=moments_dir,  # <-- KEY: enables likelihood_plots location
         )
 
-        best_params = {param_order[i]: float(fitted_real[i]) for i in range(len(param_order))}
+        best_params = {
+            param_order[i]: float(fitted_real[i]) for i in range(len(param_order))
+        }
         # enforce fixed exactly (belt + suspenders)
         for p, v in fixed_params.items():
             best_params[p] = float(v)
@@ -336,7 +344,7 @@ def run_cli(
         result = dadi_inference.fit_model(
             sfs=sfs_d,
             demo_model=model_func,
-            experiment_config=config_fit,   # <-- uses fixed bounds
+            experiment_config=config_fit,  # <-- uses fixed bounds
             start_vec=start_perturbed,
             param_order=param_order,
             verbose=verbose,
@@ -345,7 +353,9 @@ def run_cli(
         fitted_params = result.params
         ll_value = result.loglik
 
-        best_params = {param_order[i]: float(fitted_params[i]) for i in range(len(param_order))}
+        best_params = {
+            param_order[i]: float(fitted_params[i]) for i in range(len(param_order))
+        }
         for p, v in fixed_params.items():
             best_params[p] = float(v)
 
@@ -359,7 +369,9 @@ def run_cli(
         )
 
         if result.debug_txt is not None:
-            sim = config_fit.get("_simulation_number", config_fit.get("simulation_number", "NA"))
+            sim = config_fit.get(
+                "_simulation_number", config_fit.get("simulation_number", "NA")
+            )
             run = config_fit.get("_run_number", config_fit.get("run_number", "NA"))
             dbg_path = (outdir / mode) / f"dadi_runtime_debug_sim{sim}_run{run}.txt"
             dbg_path.write_text(result.debug_txt)

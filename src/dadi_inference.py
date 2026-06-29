@@ -64,13 +64,19 @@ def fit_model(
     ub_full = np.array([float(priors[p][1]) for p in param_names], dtype=float)
 
     if np.any(lb_full <= 0) or np.any(ub_full <= 0):
-        bad = [p for p, lo, hi in zip(param_names, lb_full, ub_full) if lo <= 0 or hi <= 0]
-        raise ValueError(f"All bounds must be positive for log10 optimization. Bad: {bad}")
+        bad = [
+            p for p, lo, hi in zip(param_names, lb_full, ub_full) if lo <= 0 or hi <= 0
+        ]
+        raise ValueError(
+            f"All bounds must be positive for log10 optimization. Bad: {bad}"
+        )
 
     # ---- deme labels ----
     sampled_demes = list(getattr(sfs, "pop_ids", []) or [])
     if not sampled_demes:
-        raise ValueError("Observed dadi SFS has no pop_ids; cannot infer sampled_demes order.")
+        raise ValueError(
+            "Observed dadi SFS has no pop_ids; cannot infer sampled_demes order."
+        )
 
     # dadi uses haploid ns = dim - 1
     ns = tuple(int(dim - 1) for dim in sfs.shape)
@@ -93,7 +99,9 @@ def fit_model(
             pts=pts,
         )
 
-        muL = float(experiment_config["mutation_rate"]) * float(experiment_config["genome_length"])
+        muL = float(experiment_config["mutation_rate"]) * float(
+            experiment_config["genome_length"]
+        )
         theta = 4.0 * float(p_dict[param_names[0]]) * muL
         return fs * theta
 
@@ -206,7 +214,9 @@ def fit_model(
         debug_txt = _build_debug_txt("bobyqa_roundoff_limited")
 
     except RuntimeError:
-        print("[DADI DEBUG] LN_BOBYQA runtime_error; capturing debug state and falling back to LN_COBYLA")
+        print(
+            "[DADI DEBUG] LN_BOBYQA runtime_error; capturing debug state and falling back to LN_COBYLA"
+        )
         debug_txt = _build_debug_txt("bobyqa_runtime_error")
 
         x_start = last_eval.get("log10_params", None)

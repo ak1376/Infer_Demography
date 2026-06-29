@@ -23,7 +23,7 @@ import moments
 import nlopt
 import numdifftools as nd
 
-from src.inference_utils import scaled_to_absolute_params
+from src.inference_utils import absolute_to_scaled_params, scaled_to_absolute_params
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -129,8 +129,20 @@ def aggregate_ld_statistics(
                     ld_stats[window_id] = pickle.load(f)
         logging.info(
             "Mixed LD stats: %d primary + %d fallback windows",
-            len([k for k in ld_stats if (ld_stats_dir / f"LD_stats_window_{k}.pkl").exists()]),
-            len([k for k in ld_stats if not (ld_stats_dir / f"LD_stats_window_{k}.pkl").exists()]),
+            len(
+                [
+                    k
+                    for k in ld_stats
+                    if (ld_stats_dir / f"LD_stats_window_{k}.pkl").exists()
+                ]
+            ),
+            len(
+                [
+                    k
+                    for k in ld_stats
+                    if not (ld_stats_dir / f"LD_stats_window_{k}.pkl").exists()
+                ]
+            ),
         )
 
     if not ld_stats:
@@ -490,10 +502,31 @@ def objective_function(
 # =============================================================================
 
 
+def _load_moments_best_params(config: Dict) -> Optional[Dict[str, float]]:
+    """Load best-fit absolute params from the moments inference pickle named in config."""
+    path_str = config.get("moments_best_fit_path")
+    if not path_str:
+        return None
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[1] / path
+    if not path.exists():
+        logging.warning("moments_best_fit_path %s not found", path)
+        return None
+    data = pickle.loads(path.read_bytes())
+    best_params_list = data.get("best_params", [])
+    if not best_params_list:
+        logging.warning("moments_best_fit_path pickle has no best_params entry")
+        return None
+    return dict(best_params_list[0])
+
+
 def handle_fixed_parameters(
     config: Dict,
     sampled_params: Optional[Dict[str, float]],
     param_names: List[str],
+    moments_best_params: Optional[Dict[str, float]] = None,
+    use_scaled_units: bool = False,
 ) -> List[Optional[float]]:
     """
     Parse configuration to determine which parameters should be fixed.
@@ -506,6 +539,13 @@ def handle_fixed_parameters(
         Dictionary of sampled parameter values (optional).
     param_names
         List of all parameter names.
+    moments_best_params
+        Absolute best-fit params from a prior moments SFS inference.  Used when
+        a ``fixed_parameters`` entry is the string ``"moments_best"``.
+    use_scaled_units
+        When True and ``"moments_best"`` values are used, convert them from
+        absolute to scaled units before fixing (matching the MomentsLD optimizer
+        space when ``momentsld_use_scaled_units`` is True).
 
     Returns
     -------
@@ -514,6 +554,14 @@ def handle_fixed_parameters(
     """
     fixed_values = [None] * len(param_names)
     fixed_config = config.get("fixed_parameters", {})
+
+    # Pre-compute scaled moments params once (only needed when use_scaled_units).
+    moments_best_scaled: Optional[Dict[str, float]] = None
+    if use_scaled_units and moments_best_params is not None:
+        N_anc_abs = float(moments_best_params.get("N_ANC", 1.0))
+        moments_best_scaled = absolute_to_scaled_params(
+            moments_best_params, N_anc_abs=N_anc_abs
+        )
 
     for i, param_name in enumerate(param_names):
         if param_name not in fixed_config:
@@ -533,9 +581,26 @@ def handle_fixed_parameters(
                 )
                 continue
             fixed_values[i] = float(sampled_params[param_name])
+        elif isinstance(fixed_spec, str) and fixed_spec.lower() == "moments_best":
+            source = moments_best_scaled if use_scaled_units else moments_best_params
+            if source is None or param_name not in source:
+                logging.warning(
+                    "Config requested %s be fixed to 'moments_best', but moments_best_params "
+                    "are unavailable or missing this param. Leaving free instead.",
+                    param_name,
+                )
+                continue
+            fixed_values[i] = float(source[param_name])
+            logging.info(
+                "Fixing %s = %.6g (%s) from moments best-fit",
+                param_name,
+                fixed_values[i],
+                "scaled units" if use_scaled_units else "absolute units",
+            )
         else:
             raise ValueError(
-                f"Invalid fixed parameter specification for {param_name}: {fixed_spec}"
+                f"Invalid fixed parameter specification for {param_name}: {fixed_spec!r}. "
+                "Valid specs: a number, 'sampled', or 'moments_best'."
             )
 
     return fixed_values
@@ -868,7 +933,13 @@ def _profile_1d_ld(
         for k, g in enumerate(grid):
             x[i] = g
             ll[k] = objective_function(
-                x, param_names, demographic_model, r_bins, empirical_data, populations, normalization
+                x,
+                param_names,
+                demographic_model,
+                r_bins,
+                empirical_data,
+                populations,
+                normalization,
             )
 
         np.savez(out_dir / f"profile_{param}.npz", grid_log10=grid, ll=ll)
@@ -877,7 +948,9 @@ def _profile_1d_ld(
             delta_ll = ll.max() - ll
             fig, ax = plt.subplots(figsize=(4, 3))
             ax.plot(10**grid, delta_ll)
-            ax.axvline(10**xhat_log10[i], color="red", linestyle="--", lw=1, label="MLE")
+            ax.axvline(
+                10 ** xhat_log10[i], color="red", linestyle="--", lw=1, label="MLE"
+            )
             ax.set_xscale("log")
             ax.set_xlabel(param)
             ax.set_ylabel("ΔLL (max − ll)")
@@ -899,10 +972,12 @@ def _wrap_scaled_demo(demographic_model):
       m_*    – dimensionless M = 2*N_ANC*m
     Converts to absolute before calling the underlying model.
     """
+
     def wrapped(param_dict: Dict[str, float]) -> object:
         N_anc = float(param_dict["N_ANC"])
         abs_params = scaled_to_absolute_params(param_dict, N_anc_abs=N_anc)
         return demographic_model(abs_params)
+
     return wrapped
 
 
@@ -943,19 +1018,35 @@ def run_momentsld_inference(
     # Load demographic model function
     demo_function = _load_demographic_function(config)
 
-    # Use scaled priors when available (same lookup chain as dadi/moments real-data inference).
-    # MomentsLD needs N_ANC as a free absolute parameter (rho = 4*N_ANC*r), so when the
-    # real-data priors fix N_ANC to [1,1] we replace it with the simulation absolute bounds.
-    scaled_priors = config.get("_active_priors") or config.get("priors_real_data_analysis")
-    if scaled_priors is not None:
+    # Determine whether to optimise in scaled or absolute units.
+    # "momentsld_use_scaled_units" in the config is the explicit toggle.
+    # Falls back to the old heuristic (presence of priors_real_data_analysis) when absent.
+    use_scaled_units = config.get("momentsld_use_scaled_units")
+    if use_scaled_units is None:
+        use_scaled_units = (
+            config.get("_active_priors") or config.get("priors_real_data_analysis")
+        ) is not None
+
+    if use_scaled_units:
+        scaled_priors = config.get("_active_priors") or config.get(
+            "priors_real_data_analysis"
+        )
+        if scaled_priors is None:
+            raise ValueError(
+                "momentsld_use_scaled_units=True but neither '_active_priors' nor "
+                "'priors_real_data_analysis' found in config."
+            )
+        # MomentsLD needs N_ANC as a free absolute parameter (rho = 4*N_ANC*r),
+        # so replace the placeholder [1,1] with the simulation absolute bounds.
         priors = dict(scaled_priors)
         raw_priors = config.get("priors", {})
         if "N_ANC" in priors and "N_ANC" in raw_priors:
             priors["N_ANC"] = raw_priors["N_ANC"]
         demo_function = _wrap_scaled_demo(demo_function)
-        logging.info("Using scaled MomentsLD parameterisation (priors_real_data_analysis + absolute N_ANC)")
+        logging.info("MomentsLD: optimising in scaled units")
     else:
         priors = config["priors"]
+        logging.info("MomentsLD: optimising in absolute units")
 
     param_names = list(priors.keys())
     lower_bounds = np.array([prior[0] for prior in priors.values()])
@@ -974,8 +1065,15 @@ def run_momentsld_inference(
     tolerance = config.get("ld_rtol", CONVERGENCE_TOL)
     verbose = config.get("ld_verbose", True)
 
-    # Handle fixed parameters
-    fixed_values = handle_fixed_parameters(config, sampled_params, param_names)
+    # Handle fixed parameters (load moments best if any entry requests it)
+    moments_best_params = _load_moments_best_params(config)
+    fixed_values = handle_fixed_parameters(
+        config,
+        sampled_params,
+        param_names,
+        moments_best_params=moments_best_params,
+        use_scaled_units=use_scaled_units,
+    )
 
     # Run optimization
     logging.info("Starting MomentsLD parameter optimization...")

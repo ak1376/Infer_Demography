@@ -40,20 +40,22 @@ def lhs_start_log10(
     n_params = len(lb)
 
     sampler = LatinHypercube(d=n_params, seed=global_seed)
-    unit_samples = sampler.random(n=n_runs)          # (n_runs, n_params) in [0, 1]
+    unit_samples = sampler.random(n=n_runs)  # (n_runs, n_params) in [0, 1]
 
     # Map [0, 1] -> [lb_log10, ub_log10]
     log10_starts = lb_log10 + unit_samples * (ub_log10 - lb_log10)
 
     # Fixed params (lb == ub): clamp to the fixed value so LHS doesn't perturb them
-    fixed_mask = (lb == ub)
+    fixed_mask = lb == ub
     log10_starts[:, fixed_mask] = lb_log10[fixed_mask]
 
     x0 = log10_starts[run_idx % n_runs]
     return np.clip(x0, lb_log10, ub_log10)
 
 
-def build_scaled_param_dict(param_names: List[str], vec_real: np.ndarray) -> Dict[str, float]:
+def build_scaled_param_dict(
+    param_names: List[str], vec_real: np.ndarray
+) -> Dict[str, float]:
     return {k: float(v) for k, v in zip(param_names, vec_real)}
 
 
@@ -92,6 +94,45 @@ def scaled_to_absolute_params(
     for k, v in list(out.items()):
         if k.startswith("m_"):
             out[k] = float(v) / float(2.0 * N_anc_abs)
+
+    return out
+
+
+def absolute_to_scaled_params(
+    p_abs: Dict[str, float],
+    *,
+    N_anc_abs: float,
+    time_scale: str = "2N",
+) -> Dict[str, float]:
+    """
+    Convert absolute demographic params to scaled ("shape") params.
+
+    Inverse of scaled_to_absolute_params:
+      N_ANC  → kept as absolute (anchor for rho in MomentsLD)
+      N_*    → ratio r = N_*/N_ANC_abs
+      T / T_*→ dimensionless tau = T / (2*N_ANC_abs)
+      m_*    → dimensionless M = 2*N_ANC_abs*m
+    """
+    if N_anc_abs <= 0:
+        raise ValueError(f"N_anc_abs must be > 0; got {N_anc_abs}")
+
+    out = dict(p_abs)
+    out["N_ANC"] = float(N_anc_abs)
+
+    for k, v in list(out.items()):
+        if k.startswith("N_") and k != "N_ANC":
+            out[k] = float(v) / float(N_anc_abs)
+
+    for k, v in list(out.items()):
+        if k == "T" or k.startswith("T_"):
+            if time_scale == "2N":
+                out[k] = float(v) / (2.0 * float(N_anc_abs))
+            else:
+                raise ValueError(f"Unknown time_scale={time_scale}")
+
+    for k, v in list(out.items()):
+        if k.startswith("m_"):
+            out[k] = float(v) * 2.0 * float(N_anc_abs)
 
     return out
 
@@ -261,6 +302,7 @@ def save_profiles(
 ) -> None:
     """Save profile likelihood npz files and optional PNG plots."""
     from pathlib import Path
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for p, d in profiles.items():
@@ -268,11 +310,14 @@ def save_profiles(
     if not make_plots:
         return
     import matplotlib.pyplot as plt
+
     for p, d in profiles.items():
         ll_max = float(np.max(d["ll"]))
         fig, ax = plt.subplots(figsize=(4, 3))
         ax.plot(10 ** d["grid_log10"], ll_max - d["ll"])
-        ax.axvline(10 ** d["xhat_log10"], color="red", linestyle="--", lw=1, label="MLE")
+        ax.axvline(
+            10 ** d["xhat_log10"], color="red", linestyle="--", lw=1, label="MLE"
+        )
         ax.set_xscale("log")
         ax.set_xlabel(p)
         ax.set_ylabel("Δ log-likelihood (max − ll)")

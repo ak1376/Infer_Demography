@@ -27,6 +27,7 @@ BGS_COVERAGE_COL: str = "bgs_target_coverage_frac"
 # IO utilities
 # =============================================================================
 
+
 def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text())
 
@@ -48,6 +49,7 @@ def load_pickle(path: Path) -> Any:
 # =============================================================================
 # BGS coverage reader
 # =============================================================================
+
 
 def read_bgs_target_coverage_frac(sim_dir: Path) -> float:
     """
@@ -78,7 +80,10 @@ def read_bgs_target_coverage_frac(sim_dir: Path) -> float:
 # Stats / normalization helpers
 # =============================================================================
 
-def prior_stats(priors: Dict[str, List[float]]) -> Tuple[Dict[str, float], Dict[str, float]]:
+
+def prior_stats(
+    priors: Dict[str, List[float]],
+) -> Tuple[Dict[str, float], Dict[str, float]]:
     """Uniform priors ⇒ μ=(lo+hi)/2, σ=(hi-lo)/sqrt(12)."""
     mu: Dict[str, float] = {}
     sigma: Dict[str, float] = {}
@@ -100,13 +105,15 @@ def base_param(col: str) -> str:
     name = col
     for pref in ("moments_", "dadi_", "momentsLD_"):
         if name.startswith(pref):
-            name = name[len(pref):]
+            name = name[len(pref) :]
             break
     name = name.split("_rep_", 1)[0]
     return name
 
 
-def normalise_df(df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]) -> pd.DataFrame:
+def normalise_df(
+    df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]
+) -> pd.DataFrame:
     """
     Z-score normalize columns whose base_param exists in mu/sigma.
 
@@ -125,6 +132,7 @@ def normalise_df(df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]
 # =============================================================================
 # Inference extraction helpers
 # =============================================================================
+
 
 def param_dicts(tool: str, blob: dict) -> List[Dict[str, float]]:
     """Return a list of {param: value} dicts (1 per replicate) from all_inferences.pkl."""
@@ -152,8 +160,9 @@ def param_dicts(tool: str, blob: dict) -> List[Dict[str, float]]:
     return []
 
 
-
-def infer_common_params(features_df: pd.DataFrame, targets_df: pd.DataFrame, tools: Sequence[str]) -> List[str]:
+def infer_common_params(
+    features_df: pd.DataFrame, targets_df: pd.DataFrame, tools: Sequence[str]
+) -> List[str]:
     """Parameters present for all tools AND in targets."""
     common: set[str] = set(targets_df.columns)
     for tool in tools:
@@ -224,6 +233,7 @@ def per_sim_mse_array(
 # Residual-engine selector
 # =============================================================================
 
+
 def norm_resid_engines(val: Any) -> List[str]:
     """Normalize residual engine selector from config."""
     if isinstance(val, str):
@@ -238,6 +248,7 @@ def norm_resid_engines(val: Any) -> List[str]:
 # =============================================================================
 # Plotting helpers
 # =============================================================================
+
 
 def plot_mse_bars_with_sem(
     features_df: pd.DataFrame,
@@ -325,11 +336,20 @@ def plot_estimates_vs_truth_grid_multi_rep(
     params = list(params)
     colorize_reps_tools = set(colorize_reps_tools)
 
-    palette = plt.rcParams["axes.prop_cycle"].by_key().get("color", []) or ["C0", "C1", "C2", "C3", "C4", "C5"]
+    palette = plt.rcParams["axes.prop_cycle"].by_key().get("color", []) or [
+        "C0",
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+    ]
     tool_color = {tool: palette[i % len(palette)] for i, tool in enumerate(tools)}
 
     n_rows, n_cols = len(tools), len(params)
-    fig = plt.figure(figsize=(figsize_per_panel[0] * n_cols, figsize_per_panel[1] * n_rows))
+    fig = plt.figure(
+        figsize=(figsize_per_panel[0] * n_cols, figsize_per_panel[1] * n_rows)
+    )
 
     for r, tool in enumerate(tools):
         for c, p in enumerate(params):
@@ -364,7 +384,9 @@ def plot_estimates_vs_truth_grid_multi_rep(
                     ax.scatter(x, y, s=16, alpha=0.75, label=lbl)
                 else:
                     lbl = tool if not made_tool_label else None
-                    ax.scatter(x, y, s=16, alpha=0.75, label=lbl, color=tool_color[tool])
+                    ax.scatter(
+                        x, y, s=16, alpha=0.75, label=lbl, color=tool_color[tool]
+                    )
                     if lbl is not None:
                         made_tool_label = True
 
@@ -391,6 +413,7 @@ def plot_estimates_vs_truth_grid_multi_rep(
 # =============================================================================
 # Metrics
 # =============================================================================
+
 
 def compute_split_metrics_for_tool(
     features_df: pd.DataFrame,
@@ -438,6 +461,7 @@ def compute_split_metrics_for_tool(
 # Outlier filtering
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class OutlierFilterConfig:
     tol_rel: float = 1e-9
@@ -464,6 +488,7 @@ def filter_extreme_outliers(
     Note: This only considers columns whose base_param(col) is present in priors.
     So BGS_COVERAGE_COL is ignored unless you add it to priors.
     """
+
     def _parse_tool_rep(col: str) -> Tuple[str, Optional[int]]:
         tool = col.split("_", 1)[0]
         m = re.search(r"_rep_(\d+)$", col)
@@ -523,7 +548,9 @@ def filter_extreme_outliers(
                         "hi": hi,
                         "mu": mu_k,
                         "sigma": sg_k,
-                        "z": float(((val - mu_k) / sg_k) if np.isfinite(val) else np.nan),
+                        "z": float(
+                            ((val - mu_k) / sg_k) if np.isfinite(val) else np.nan
+                        ),
                         "eps": eps,
                         "reason": reason,
                     }
@@ -551,16 +578,30 @@ def filter_extreme_outliers(
             outliers_df.to_csv(outliers_path, sep="\t", index=False)
 
             show_all = (cfg.preview_rows is None) or (int(cfg.preview_rows) < 0)
-            to_show = len(outliers_df) if show_all else min(int(cfg.preview_rows), len(outliers_df))
+            to_show = (
+                len(outliers_df)
+                if show_all
+                else min(int(cfg.preview_rows), len(outliers_df))
+            )
 
             with open(preview_path, "w") as fh:
                 fh.write("Outlier filtering summary\n")
                 fh.write("=========================\n")
-                fh.write(f"kept {kept_count} / {total_rows} rows ({dropped_count} dropped)\n")
-                fh.write(f"zmax={cfg.zmax}, tol_rel={cfg.tol_rel}, tol_abs={cfg.tol_abs}\n")
+                fh.write(
+                    f"kept {kept_count} / {total_rows} rows ({dropped_count} dropped)\n"
+                )
+                fh.write(
+                    f"zmax={cfg.zmax}, tol_rel={cfg.tol_rel}, tol_abs={cfg.tol_abs}\n"
+                )
                 fh.write(f"total outlier rows: {len(outliers_df)}\n\n")
-                fh.write("All outlier rows:\n" if show_all else f"First {to_show} rows:\n")
-                fh.write((outliers_df if show_all else outliers_df.head(to_show)).to_string(index=False))
+                fh.write(
+                    "All outlier rows:\n" if show_all else f"First {to_show} rows:\n"
+                )
+                fh.write(
+                    (outliers_df if show_all else outliers_df.head(to_show)).to_string(
+                        index=False
+                    )
+                )
                 fh.write("\n\nCounts by base_param and reason:\n")
                 counts = (
                     outliers_df.groupby(["base_param", "reason"])
@@ -576,8 +617,12 @@ def filter_extreme_outliers(
             with open(preview_path, "w") as fh:
                 fh.write("Outlier filtering summary\n")
                 fh.write("=========================\n")
-                fh.write(f"kept {kept_count} / {total_rows} rows ({dropped_count} dropped)\n")
-                fh.write(f"zmax={cfg.zmax}, tol_rel={cfg.tol_rel}, tol_abs={cfg.tol_abs}\n")
+                fh.write(
+                    f"kept {kept_count} / {total_rows} rows ({dropped_count} dropped)\n"
+                )
+                fh.write(
+                    f"zmax={cfg.zmax}, tol_rel={cfg.tol_rel}, tol_abs={cfg.tol_abs}\n"
+                )
                 fh.write("No extreme outliers detected.\n")
 
     return (
@@ -591,6 +636,7 @@ def filter_extreme_outliers(
 # =============================================================================
 # Dataset building: load → assemble features/targets
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class DatasetBuildConfig:
@@ -700,8 +746,8 @@ def split_indices(
     n_tune = min(n_tune, max(0, n_rows - n_train))
 
     train_idx = index[perm[:n_train]]
-    tune_idx = index[perm[n_train:n_train + n_tune]]
-    val_idx = index[perm[n_train + n_tune:]]
+    tune_idx = index[perm[n_train : n_train + n_tune]]
+    val_idx = index[perm[n_train + n_tune :]]
 
     return {"train_idx": train_idx, "tune_idx": tune_idx, "val_idx": val_idx}
 
@@ -729,13 +775,24 @@ def write_dataset_pickles(
 
     # raw splits
     for name, idx in split.items():
-        dump_pickle(features_df.loc[idx], datasets_dir / f"{name.replace('_idx','')}_features.pkl")
-        dump_pickle(targets_df.loc[idx], datasets_dir / f"{name.replace('_idx','')}_targets.pkl")
+        dump_pickle(
+            features_df.loc[idx],
+            datasets_dir / f"{name.replace('_idx','')}_features.pkl",
+        )
+        dump_pickle(
+            targets_df.loc[idx], datasets_dir / f"{name.replace('_idx','')}_targets.pkl"
+        )
 
     # normalized splits
     for name, idx in split.items():
-        dump_pickle(features_norm_df.loc[idx], datasets_dir / f"normalized_{name.replace('_idx','')}_features.pkl")
-        dump_pickle(targets_norm_df.loc[idx], datasets_dir / f"normalized_{name.replace('_idx','')}_targets.pkl")
+        dump_pickle(
+            features_norm_df.loc[idx],
+            datasets_dir / f"normalized_{name.replace('_idx','')}_features.pkl",
+        )
+        dump_pickle(
+            targets_norm_df.loc[idx],
+            datasets_dir / f"normalized_{name.replace('_idx','')}_targets.pkl",
+        )
 
 
 def write_metrics_and_plots(
@@ -807,6 +864,7 @@ def write_metrics_and_plots(
 # One-call pipeline entrypoint
 # =============================================================================
 
+
 def build_modeling_datasets(
     *,
     experiment_config_path: Path,
@@ -865,12 +923,16 @@ def build_modeling_datasets(
         infer_basedir=infer_basedir,
     )
     if len(feat_df) == 0:
-        raise RuntimeError("No rows loaded (did you generate inferences + sampled_params.pkl?).")
+        raise RuntimeError(
+            "No rows loaded (did you generate inferences + sampled_params.pkl?)."
+        )
 
     datasets_dir = out_root / "datasets"
     datasets_dir.mkdir(parents=True, exist_ok=True)
 
-    of_cfg = OutlierFilterConfig(tol_rel=tol_rel, tol_abs=tol_abs, zmax=zmax, preview_rows=preview_rows)
+    of_cfg = OutlierFilterConfig(
+        tol_rel=tol_rel, tol_abs=tol_abs, zmax=zmax, preview_rows=preview_rows
+    )
     feat_df, targ_df, keep_mask, outliers_df = filter_extreme_outliers(
         feat_df, targ_df, priors, mu, sigma, of_cfg, save_dir=datasets_dir
     )

@@ -51,8 +51,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from inference_utils import lhs_start_log10, profile_1d, save_profiles  # noqa: E402
-
+from inference_utils import absolute_to_scaled_params, lhs_start_log10, profile_1d, save_profiles  # noqa: E402
 
 DEFAULT_R_BINS = np.array(
     [0, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3],
@@ -142,7 +141,11 @@ def resolve_n_ref(args) -> float:
         if "best_params_abs" in d and isinstance(d["best_params_abs"], dict):
             return float(d["best_params_abs"]["N_ANC"])
         # best_params is a list of dicts (aggregate_opts output)
-        if "best_params" in d and isinstance(d["best_params"], list) and d["best_params"]:
+        if (
+            "best_params" in d
+            and isinstance(d["best_params"], list)
+            and d["best_params"]
+        ):
             return float(d["best_params"][0]["N_ANC"])
         # best_params is a plain dict (single-run output)
         if "best_params" in d and isinstance(d["best_params"], dict):
@@ -159,29 +162,38 @@ def resolve_n_ref(args) -> float:
 
 
 def compute_theoretical_ld(
-    log10_scaled_params: np.ndarray,
+    log10_params: np.ndarray,
     *,
     param_names: List[str],
     demographic_model_abs,
     r_bins: np.ndarray,
     populations: List[str],
     N_ref: float,
+    use_scaled_units: bool,
     _diagnostic_once: Dict[str, bool],
 ) -> moments.LD.LDstats:
-    """Compute expected sigmaD2 with rho = 4*N_ref*r_bins and scaled→absolute conversion."""
-    vec_scaled = 10 ** np.asarray(log10_scaled_params, dtype=float)
-    p_scaled = _build_param_dict(param_names, vec_scaled)
-    p_abs = scaled_to_absolute_params(p_scaled, N_ref=N_ref, time_scale="2N")
+    """Compute expected sigmaD2. Handles both scaled and absolute parameterisations."""
+    vec = 10 ** np.asarray(log10_params, dtype=float)
+    p_dict = _build_param_dict(param_names, vec)
+    if use_scaled_units:
+        p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref, time_scale="2N")
+        ref = N_ref
+    else:
+        p_abs = p_dict
+        ref = float(p_dict.get("N_ANC") or p_dict.get("N0") or next(
+            (v for k, v in p_dict.items() if k.startswith("N")), N_ref
+        ))
 
     graph = demographic_model_abs(p_abs)
-    rho_edges = 4.0 * float(N_ref) * np.asarray(r_bins, dtype=float)
+    rho_edges = 4.0 * float(ref) * np.asarray(r_bins, dtype=float)
 
     if not _diagnostic_once.get("did", False):
         _diagnostic_once["did"] = True
-        logging.info("[diagnostic] Fixed N_ref = %.6g", N_ref)
+        logging.info("[diagnostic] ref size for rho = %.6g", ref)
         logging.info(
             "[diagnostic] rho_edges min/max = %.3e, %.3e",
-            float(rho_edges.min()), float(rho_edges.max()),
+            float(rho_edges.min()),
+            float(rho_edges.max()),
         )
         logging.info("[diagnostic] populations = %s", populations)
 
@@ -190,10 +202,15 @@ def compute_theoretical_ld(
     rho_mids = (rho_edges[:-1] + rho_edges[1:]) / 2.0
     ld_mids = moments.Demes.LD(graph, sampled_demes=populations, rho=rho_mids)
 
-    ld_bins = [(ld_edges[i] + ld_edges[i + 1] + 4.0 * ld_mids[i]) / 6.0 for i in range(len(rho_mids))]
+    ld_bins = [
+        (ld_edges[i] + ld_edges[i + 1] + 4.0 * ld_mids[i]) / 6.0
+        for i in range(len(rho_mids))
+    ]
     ld_bins.append(ld_edges[-1])
 
-    ld_stats = moments.LD.LDstats(ld_bins, num_pops=ld_edges.num_pops, pop_ids=ld_edges.pop_ids)
+    ld_stats = moments.LD.LDstats(
+        ld_bins, num_pops=ld_edges.num_pops, pop_ids=ld_edges.pop_ids
+    )
     return moments.LD.Inference.sigmaD2(ld_stats)
 
 
@@ -211,14 +228,17 @@ def prepare_data_for_comparison(
         num_pops=theoretical_sigmaD2.num_pops,
         pop_ids=theoretical_sigmaD2.pop_ids,
     )
-    theory_processed = moments.LD.Inference.remove_normalized_lds(theory_processed, normalization=normalization)
+    theory_processed = moments.LD.Inference.remove_normalized_lds(
+        theory_processed, normalization=normalization
+    )
     theory_arrays = [np.asarray(x) for x in theory_processed[:-1]]
 
     emp_means = [np.asarray(x) for x in empirical_mv["means"]]
     emp_covars = [np.asarray(x) for x in empirical_mv["varcovs"]]
 
     emp_means, emp_covars = moments.LD.Inference.remove_normalized_data(
-        emp_means, emp_covars,
+        emp_means,
+        emp_covars,
         normalization=normalization,
         num_pops=theoretical_sigmaD2.num_pops,
     )
@@ -262,8 +282,12 @@ def main() -> None:
     ap.add_argument("--normalization", type=int, default=0)
     ap.add_argument("--rtol", type=float, default=1e-8)
     ap.add_argument("--verbose", action="store_true")
-    ap.add_argument("--r-bins", type=str, default=None, help="Comma-separated r-bin edges")
-    ap.add_argument("--n-ref", type=float, default=None, help="Fixed N_ref for rho scaling")
+    ap.add_argument(
+        "--r-bins", type=str, default=None, help="Comma-separated r-bin edges"
+    )
+    ap.add_argument(
+        "--n-ref", type=float, default=None, help="Fixed N_ref for rho scaling"
+    )
     ap.add_argument(
         "--sfs-best-fit-pkl",
         type=Path,
@@ -302,19 +326,49 @@ def main() -> None:
     if not populations:
         raise ValueError("config['num_samples'] must specify populations")
 
-    param_names = list(cfg.get("parameter_order", list(cfg["priors_real_data_analysis"].keys())))
-    priors_scaled = cfg.get("priors_real_data_analysis")
-    if priors_scaled is None:
-        raise ValueError("Need config['priors_real_data_analysis'] with scaled bounds")
+    use_scaled_units = cfg.get("momentsld_use_scaled_units", True)
+    priors_key = "priors_real_data_analysis" if use_scaled_units else "priors"
+    priors = cfg.get(priors_key)
+    if priors is None:
+        raise ValueError(f"Need config['{priors_key}']")
 
-    lb = np.array([float(priors_scaled[p][0]) for p in param_names], dtype=float)
-    ub = np.array([float(priors_scaled[p][1]) for p in param_names], dtype=float)
+    param_names = list(cfg.get("parameter_order", list(priors.keys())))
+    lb = np.array([float(priors[p][0]) for p in param_names], dtype=float)
+    ub = np.array([float(priors[p][1]) for p in param_names], dtype=float)
     if np.any(lb <= 0) or np.any(ub <= 0):
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
-        raise ValueError(f"All scaled bounds must be >0 for log10 optimisation. Bad: {bad}")
+        raise ValueError(f"All bounds must be >0 for log10 optimisation. Bad: {bad}")
 
     N_ref = resolve_n_ref(args)
-    logging.info("Using N_ref = %.6g", N_ref)
+    logging.info("Using N_ref = %.6g (use_scaled_units=%s)", N_ref, use_scaled_units)
+
+    # Pin any parameters listed in fixed_parameters.
+    # Value can be a number or "moments_best" (loaded from --sfs-best-fit-pkl).
+    fixed_cfg = cfg.get("fixed_parameters", {})
+    if fixed_cfg:
+        sfs_best_abs: Dict[str, float] = {}
+        if args.sfs_best_fit_pkl is not None:
+            d = load_pickle(Path(args.sfs_best_fit_pkl))
+            bp = d.get("best_params", [])
+            sfs_best_abs = dict(bp[0]) if isinstance(bp, list) and bp else {}
+        for pname, spec in fixed_cfg.items():
+            if pname not in param_names:
+                continue
+            if spec == "moments_best":
+                val_abs = sfs_best_abs.get(pname)
+                if val_abs is None:
+                    logging.warning("moments_best requested for %s but not found in SFS pkl; skipping", pname)
+                    continue
+                if use_scaled_units:
+                    N_anc = float(sfs_best_abs.get("N_ANC", N_ref))
+                    val = absolute_to_scaled_params(sfs_best_abs, N_anc_abs=N_anc)[pname]
+                else:
+                    val = float(val_abs)
+            else:
+                val = float(spec)
+            idx = param_names.index(pname)
+            lb[idx] = ub[idx] = val
+            logging.info("Fixing %s = %.6g (%s)", pname, val, "scaled" if use_scaled_units else "absolute")
 
     x0 = lhs_start_log10(lb, ub, cfg)
 
@@ -328,6 +382,7 @@ def main() -> None:
             r_bins=r_bins,
             populations=populations,
             N_ref=N_ref,
+            use_scaled_units=use_scaled_units,
             _diagnostic_once=_diag_once,
         )
         theory_arrays, emp_means, emp_covars = prepare_data_for_comparison(
@@ -339,8 +394,8 @@ def main() -> None:
         ll = float(loglik(x))
         if args.verbose:
             vec = 10 ** np.asarray(x)
-            p_scaled = _build_param_dict(param_names, vec)
-            p_abs = scaled_to_absolute_params(p_scaled, N_ref=N_ref, time_scale="2N")
+            p_dict = _build_param_dict(param_names, vec)
+            p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref) if use_scaled_units else p_dict
             show = ", ".join(f"{k}={p_abs[k]:.3g}" for k in param_names)
             print(f"LL = {ll:.6f} | {show} | (N_ref={N_ref:.3g})")
         return ll
@@ -355,8 +410,8 @@ def main() -> None:
     status = opt.last_optimize_result()
     best_ll = opt.last_optimum_value()
 
-    best_scaled = _build_param_dict(param_names, 10 ** np.asarray(best_x))
-    best_abs = scaled_to_absolute_params(best_scaled, N_ref=N_ref, time_scale="2N")
+    best_dict = _build_param_dict(param_names, 10 ** np.asarray(best_x))
+    best_abs = scaled_to_absolute_params(best_dict, N_ref=N_ref) if use_scaled_units else best_dict
 
     if cfg.get("generate_profiles", False):
         logging.info("Computing 1-D profile likelihoods …")
@@ -384,7 +439,8 @@ def main() -> None:
             "status": int(status),
             "best_ll": float(best_ll),
             "fixed_N_ref": float(N_ref),
-            "best_params_scaled": best_scaled,
+            "use_scaled_units": use_scaled_units,
+            "best_params_optimizer_space": best_dict,
             "best_params_abs": best_abs,
             "param_order": param_names,
             "normalization": int(args.normalization),

@@ -10,10 +10,10 @@ from typing import Dict, Optional
 import demes
 import numpy as np
 
-'''
+"""
 Just ensure before each demes model that all the params are in the dict.
 We could be passing in parameters that are named differently. 
-'''
+"""
 
 
 def bottleneck_model(
@@ -38,7 +38,9 @@ def bottleneck_model(
     return b.resolve()
 
 
-def IM_symmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+def IM_symmetric_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
     """
     Split + symmetric migration (YRI/CEU), but *no separate ancestral-only deme*.
     YRI carries the ancestral epoch pre-split; CEU branches off at T_split.
@@ -53,8 +55,8 @@ def IM_symmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) ->
     N0 = float(sampled["N_anc"])
     N1 = float(sampled["N_YRI"])
     N2 = float(sampled["N_CEU"])
-    T  = float(sampled["T_split"])
-    m  = float(sampled["m"])
+    T = float(sampled["T_split"])
+    m = float(sampled["m"])
 
     assert T > 0, "T_split must be > 0"
 
@@ -87,7 +89,9 @@ def IM_symmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) ->
     return b.resolve()
 
 
-def IM_asymmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+def IM_asymmetric_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
     """
     Split + asymmetric migration (two rates), but *no separate ancestral-only deme*.
     YRI carries the ancestral epoch pre-split; CEU branches off at T_split.
@@ -146,7 +150,9 @@ def IM_asymmetric_model(sampled: Dict[str, float], cfg: Optional[Dict] = None) -
     return b.resolve()
 
 
-def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None) -> demes.Graph:
+def drosophila_three_epoch(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
     """
     Demes equivalent of stdpopsim OutOfAfrica_2L06 (Li & Stephan 2006),
     using your parameter names.
@@ -158,17 +164,19 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
     """
 
     # AFR sizes — accept both current names (N_ANC, N_AFR) and legacy short names (N0, AFR)
-    N0  = float(sampled.get("N_ANC", sampled.get("N0")))
+    N0 = float(sampled.get("N_ANC", sampled.get("N0")))
     AFR = float(sampled.get("N_AFR", sampled.get("AFR")))
 
     # EUR sizes — accept both current names and legacy short names
-    EUR_bottleneck = float(sampled.get("N_EUR_bottleneck", sampled.get("EUR_bottleneck")))
-    EUR_recover    = float(sampled.get("N_EUR_recover",    sampled.get("EUR_recover")))
+    EUR_bottleneck = float(
+        sampled.get("N_EUR_bottleneck", sampled.get("EUR_bottleneck"))
+    )
+    EUR_recover = float(sampled.get("N_EUR_recover", sampled.get("EUR_recover")))
 
     # Times (backward, generations) — names unchanged between versions
     T_AFR_expansion = float(sampled["T_AFR_expansion"])
-    T_split         = float(sampled["T_AFR_EUR_split"])
-    T_EUR_exp       = float(sampled["T_EUR_expansion"])
+    T_split = float(sampled["T_AFR_EUR_split"])
+    T_EUR_exp = float(sampled["T_EUR_expansion"])
 
     if not (T_AFR_expansion > T_split > T_EUR_exp > 0):
         raise ValueError(
@@ -182,7 +190,7 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
     b.add_deme(
         "CO",
         epochs=[
-            dict(start_size=N0,  end_time=T_AFR_expansion),
+            dict(start_size=N0, end_time=T_AFR_expansion),
             dict(start_size=AFR, end_time=0),
         ],
     )
@@ -193,12 +201,11 @@ def drosophila_three_epoch(sampled: Dict[str, float], cfg: Optional[Dict] = None
         start_time=T_split,
         epochs=[
             dict(start_size=EUR_bottleneck, end_time=T_EUR_exp),
-            dict(start_size=EUR_recover,    end_time=0),
+            dict(start_size=EUR_recover, end_time=0),
         ],
     )
 
     return b.resolve()
-
 
 
 def split_migration_growth_model(
@@ -222,12 +229,12 @@ def split_migration_growth_model(
     """
 
     # --- pull params with your fallbacks ---
-    N_CO   = float(sampled.get("N_CO", sampled.get("N1")))
-    N_FR1  = float(sampled.get("N_FR1", sampled.get("N2")))
-    N_ANC  = float(sampled.get("N_ANC", sampled.get("N0")))
+    N_CO = float(sampled.get("N_CO", sampled.get("N1")))
+    N_FR1 = float(sampled.get("N_FR1", sampled.get("N2")))
+    N_ANC = float(sampled.get("N_ANC", sampled.get("N0")))
     m_CO_FR = float(sampled.get("m_CO_FR", 0.0))
     m_FR_CO = float(sampled.get("m_FR_CO", 0.0))
-    T      = float(sampled.get("T", sampled.get("T_split")))
+    T = float(sampled.get("T", sampled.get("T_split")))
 
     # --- basic validation (helps catch silent weirdness) ---
     if not (T > 0):
@@ -265,7 +272,7 @@ def split_migration_growth_model(
         "CO",
         epochs=[
             dict(start_size=N_ANC, end_time=T),  # older trunk (implicit ANC)
-            dict(start_size=N_CO,  end_time=0),  # CO after split to present
+            dict(start_size=N_CO, end_time=0),  # CO after split to present
         ],
     )
 
@@ -313,12 +320,12 @@ def split_migration_growth_both_model(
     - T:       split time (generations ago, backward-time).
     """
 
-    N_CO1   = float(sampled.get("N_CO1", sampled.get("N_CO", sampled.get("N1"))))
-    N_FR1   = float(sampled.get("N_FR1", sampled.get("N2")))
-    N_ANC   = float(sampled.get("N_ANC", sampled.get("N0")))
+    N_CO1 = float(sampled.get("N_CO1", sampled.get("N_CO", sampled.get("N1"))))
+    N_FR1 = float(sampled.get("N_FR1", sampled.get("N2")))
+    N_ANC = float(sampled.get("N_ANC", sampled.get("N0")))
     m_CO_FR = float(sampled.get("m_CO_FR", 0.0))
     m_FR_CO = float(sampled.get("m_FR_CO", 0.0))
-    T       = float(sampled.get("T", sampled.get("T_split")))
+    T = float(sampled.get("T", sampled.get("T_split")))
 
     if not (T > 0):
         raise ValueError(f"Need T > 0 (generations ago). Got {T=}.")
@@ -331,7 +338,7 @@ def split_migration_growth_both_model(
 
     # CO growth: N_CO0 = size at split (backward), N_CO1 = size at present
     if "G_CO" in sampled:
-        G_CO  = float(sampled["G_CO"])
+        G_CO = float(sampled["G_CO"])
         N_CO0 = N_CO1 * np.exp(-G_CO * T)
     elif "N_CO0" in sampled:
         N_CO0 = float(sampled["N_CO0"])
@@ -343,7 +350,7 @@ def split_migration_growth_both_model(
 
     # FR growth: N_FR0 = size at split (backward), N_FR1 = size at present
     if "G_FR" in sampled:
-        G_FR  = float(sampled["G_FR"])
+        G_FR = float(sampled["G_FR"])
         N_FR0 = N_FR1 * np.exp(-G_FR * T)
     elif "N_FR0" in sampled:
         N_FR0 = float(sampled["N_FR0"])
@@ -476,8 +483,8 @@ def OOA_three_pop_Gutenkunst(
 
     # ---------------- sizes ----------------
     N_AFR_ancient = getf("N_AFR_ancient", "N_A", default=7300)
-    N_AFR_recent  = getf("N_AFR_recent",  "N_AF", default=12300)
-    N_OOA         = getf("N_OOA",          "N_B",  default=2100)
+    N_AFR_recent = getf("N_AFR_recent", "N_AF", default=12300)
+    N_OOA = getf("N_OOA", "N_B", default=2100)
 
     # Endpoint parameterization (NO growth rates)
     N_CEU_founder = getf("N_CEU_founder", "N_EU0", default=1000)
@@ -488,14 +495,14 @@ def OOA_three_pop_Gutenkunst(
 
     # ---------------- times ----------------
     T_AFR_ancient_change = getf("T_AFR_ancient_change", "T_AF", default=220e3 / 25)
-    T_AFR_OOA            = getf("T_AFR_OOA",            "T_B",  default=140e3 / 25)
-    T_OOA_EU_AS          = getf("T_OOA_EU_AS",          "T_EU_AS", default=21.2e3 / 25)
+    T_AFR_OOA = getf("T_AFR_OOA", "T_B", default=140e3 / 25)
+    T_OOA_EU_AS = getf("T_OOA_EU_AS", "T_EU_AS", default=21.2e3 / 25)
 
     if not (T_AFR_ancient_change > T_AFR_OOA > T_OOA_EU_AS >= 0):
         raise ValueError("Require T_AF > T_B > T_EU_AS >= 0")
 
     # ---------------- migration ----------------
-    m_YRI_OOA = getf("m_YRI_OOA", "m_AF_B",  default=25e-5)
+    m_YRI_OOA = getf("m_YRI_OOA", "m_AF_B", default=25e-5)
     m_YRI_CEU = getf("m_YRI_CEU", "m_AF_EU", default=3e-5)
     m_YRI_CHB = getf("m_YRI_CHB", "m_AF_AS", default=1.9e-5)
     m_CEU_CHB = getf("m_CEU_CHB", "m_EU_AS", default=9.6e-5)
@@ -514,7 +521,7 @@ def OOA_three_pop_Gutenkunst(
         ancestors=["ANC"],
         epochs=[
             dict(start_size=N_AFR_ancient, end_time=T_AFR_OOA),
-            dict(start_size=N_AFR_recent,  end_time=0),
+            dict(start_size=N_AFR_recent, end_time=0),
         ],
     )
 
@@ -556,9 +563,15 @@ def OOA_three_pop_Gutenkunst(
     )
 
     # ---------------- migration ----------------
-    b.add_migration(demes=["YRI", "CEU"], rate=m_YRI_CEU, start_time=T_OOA_EU_AS, end_time=0)
-    b.add_migration(demes=["YRI", "CHB"], rate=m_YRI_CHB, start_time=T_OOA_EU_AS, end_time=0)
-    b.add_migration(demes=["CEU", "CHB"], rate=m_CEU_CHB, start_time=T_OOA_EU_AS, end_time=0)
+    b.add_migration(
+        demes=["YRI", "CEU"], rate=m_YRI_CEU, start_time=T_OOA_EU_AS, end_time=0
+    )
+    b.add_migration(
+        demes=["YRI", "CHB"], rate=m_YRI_CHB, start_time=T_OOA_EU_AS, end_time=0
+    )
+    b.add_migration(
+        demes=["CEU", "CHB"], rate=m_CEU_CHB, start_time=T_OOA_EU_AS, end_time=0
+    )
 
     b.add_migration(
         demes=["YRI", "OOA"],

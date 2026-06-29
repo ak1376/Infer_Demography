@@ -35,10 +35,10 @@ from src.demes_models import (  # noqa: E402
 from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals  # noqa: E402
 from src.stdpopsim_wrappers import define_sps_model  # noqa: E402
 
-
 # ============================================================================
 # Sampling helpers (moved from script)
 # ============================================================================
+
 
 def sample_params(
     priors: Dict[str, List[float]],
@@ -84,12 +84,14 @@ def next_sim_number(simulation_dir: Path) -> str:
 # ============================================================================
 
 
-# Make sampled_coverage optional 
+# Make sampled_coverage optional
 def simulation_runner(
-    g: demes.Graph, experiment_config: Dict[str, Any], sampled_coverage: Optional[float] = None
+    g: demes.Graph,
+    experiment_config: Dict[str, Any],
+    sampled_coverage: Optional[float] = None,
 ) -> Tuple[tskit.TreeSequence, demes.Graph]:
 
-    model = define_sps_model(g) 
+    model = define_sps_model(g)
 
     print(f'• Using engine: {experiment_config.get("engine")}')
 
@@ -103,16 +105,18 @@ def simulation_runner(
     print("contig.mutation_rate:", contig.mutation_rate)
     print("contig.recombination_map.mean_rate:", contig.recombination_map.mean_rate)
 
-    # Ensure that the sampled_params and the parameter_order have the same parameter names 
+    # Ensure that the sampled_params and the parameter_order have the same parameter names
     # assert set(experiment_config.get("sampled_params", {}).keys()) == set(experiment_config.get("parameter_order", [])), (
     #     "Mismatch between sampled_params and parameter_order keys. "
-    #     f"sampled_params keys: {set(experiment_config.get('sampled_params', {}).keys())}, " 
+    #     f"sampled_params keys: {set(experiment_config.get('sampled_params', {}).keys())}, "
     #     f"parameter_order: {experiment_config.get('parameter_order', [])}"
     # )
 
     if experiment_config.get("engine") == "slim":
 
-        sel_summary = _apply_dfe_intervals(contig, sel, sampled_coverage=sampled_coverage)
+        sel_summary = _apply_dfe_intervals(
+            contig, sel, sampled_coverage=sampled_coverage
+        )
 
         eng = sps.get_engine("slim")
         ts = eng.simulate(
@@ -121,21 +125,15 @@ def simulation_runner(
             samples,
             slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
             slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
-            seed=seed
-
+            seed=seed,
         )
 
         ts._bgs_selection_summary = sel_summary
-    else: 
+    else:
 
         eng = sps.get_engine("msprime")
 
-        ts = eng.simulate(
-            model,
-            contig,
-            samples,
-            seed=seed
-        )
+        ts = eng.simulate(model, contig, samples, seed=seed)
 
     return ts, g
 
@@ -150,14 +148,13 @@ def simulation(
 
     g = build_demes_graph(model_type, sampled_params, experiment_config)
 
-    return simulation_runner(
-        g, experiment_config, sampled_coverage=sampled_coverage
-    )
+    return simulation_runner(g, experiment_config, sampled_coverage=sampled_coverage)
 
 
 # ============================================================================
 # SFS utility (your existing code)
 # ============================================================================
+
 
 def pop_id_by_name(ts: tskit.TreeSequence, name: str) -> int:
     for pop in ts.populations():
@@ -168,12 +165,20 @@ def pop_id_by_name(ts: tskit.TreeSequence, name: str) -> int:
         f"Population with metadata name='{name}' not found. "
         "Available names: "
         + ", ".join(
-            str((p.id, (p.metadata.get('name') if isinstance(p.metadata, dict) else None)))
+            str(
+                (
+                    p.id,
+                    (p.metadata.get("name") if isinstance(p.metadata, dict) else None),
+                )
+            )
             for p in ts.populations()
         )
     )
 
-def create_SFS(ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")) -> moments.Spectrum:
+
+def create_SFS(
+    ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")
+) -> moments.Spectrum:
     """
     Create a 2D site-frequency spectrum for exactly the two populations in pop_names,
     using ts population metadata 'name' field (robust to population ID ordering).
@@ -183,18 +188,22 @@ def create_SFS(ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")
         pid = pop_id_by_name(ts, name)
         samps = ts.samples(population=pid)
         if len(samps) == 0:
-            raise ValueError(f"Population '{name}' (id={pid}) has zero samples in this TS.")
+            raise ValueError(
+                f"Population '{name}' (id={pid}) has zero samples in this TS."
+            )
         sample_sets.append(samps)
 
     # Ensure that the order of the sample_sets matches the order of pop_names (and thus moments SFS axes)
-    assert len(sample_sets) == len(pop_names), "Mismatch between sample_sets and pop_names lengths."
+    assert len(sample_sets) == len(
+        pop_names
+    ), "Mismatch between sample_sets and pop_names lengths."
     for i, name in enumerate(pop_names):
-        assert pop_id_by_name(ts, name) == ts.populations()[i].id, (
-            f"Population '{name}' is not in the expected order."
-        )
-        assert pop_id_by_name(ts, name) == ts.populations()[i].id, (
-            f"Population '{name}' is not in the expected order."
-        )
+        assert (
+            pop_id_by_name(ts, name) == ts.populations()[i].id
+        ), f"Population '{name}' is not in the expected order."
+        assert (
+            pop_id_by_name(ts, name) == ts.populations()[i].id
+        ), f"Population '{name}' is not in the expected order."
 
     sfs = ts.allele_frequency_spectrum(
         sample_sets=sample_sets,
@@ -215,9 +224,11 @@ def create_SFS(ts: tskit.TreeSequence, pop_names: Sequence[str] = ("YRI", "CEU")
 
     return sfs
 
+
 # ============================================================================
 # Plotting + metadata + run-to-disk (moved from script)
 # ============================================================================
+
 
 def save_demes_png(g: demes.Graph, fig_path: Path, model_type: str) -> None:
     if model_type == "OOA_three_pop_gutenkunst":
@@ -275,7 +286,11 @@ def write_bgs_meta_json(
         coverage_fraction=(
             None
             if not is_bgs
-            else (None if sel_cfg.get("coverage_fraction") is None else float(sel_cfg["coverage_fraction"]))
+            else (
+                None
+                if sel_cfg.get("coverage_fraction") is None
+                else float(sel_cfg["coverage_fraction"])
+            )
         ),
         coverage_percent=(
             None
@@ -283,19 +298,32 @@ def write_bgs_meta_json(
             else (
                 None
                 if sel_cfg.get("coverage_percent") is None
-                else [float(sel_cfg["coverage_percent"][0]), float(sel_cfg["coverage_percent"][1])]
+                else [
+                    float(sel_cfg["coverage_percent"][0]),
+                    float(sel_cfg["coverage_percent"][1]),
+                ]
             )
         ),
         exon_bp=(int(sel_cfg.get("exon_bp", 200)) if is_bgs else None),
         jitter_bp=(int(sel_cfg.get("jitter_bp", 0)) if is_bgs else None),
-        tile_bp=(int(sel_cfg["tile_bp"]) if is_bgs and sel_cfg.get("tile_bp") is not None else None),
+        tile_bp=(
+            int(sel_cfg["tile_bp"])
+            if is_bgs and sel_cfg.get("tile_bp") is not None
+            else None
+        ),
         selected_bp=(int(sel_summary.get("selected_bp", 0)) if is_bgs else 0),
         selected_frac=(float(sel_summary.get("selected_frac", 0.0)) if is_bgs else 0.0),
-        sampled_coverage_percent=(float(sampled_coverage) if is_bgs and sampled_coverage is not None else None),
+        sampled_coverage_percent=(
+            float(sampled_coverage) if is_bgs and sampled_coverage is not None else None
+        ),
         target_coverage_frac=(
             (float(sampled_coverage) / 100.0)
             if is_bgs and sampled_coverage is not None and float(sampled_coverage) > 1.0
-            else (float(sampled_coverage) if is_bgs and sampled_coverage is not None else None)
+            else (
+                float(sampled_coverage)
+                if is_bgs and sampled_coverage is not None
+                else None
+            )
         ),
         slim_scaling=(float(sel_cfg.get("slim_scaling", 10.0)) if is_bgs else None),
         slim_burn_in=(float(sel_cfg.get("slim_burn_in", 5.0)) if is_bgs else None),
@@ -341,7 +369,9 @@ def run_one_simulation_to_dir(
     if base_seed is not None:
         simulation_seed = int(base_seed) + int(simulation_number)
         rng = np.random.default_rng(simulation_seed)
-        print(f"• Using seed {simulation_seed} (base: {base_seed} + sim: {simulation_number})")
+        print(
+            f"• Using seed {simulation_seed} (base: {base_seed} + sim: {simulation_number})"
+        )
     else:
         simulation_seed = None
         rng = np.random.default_rng()
@@ -349,7 +379,8 @@ def run_one_simulation_to_dir(
 
     # sample params (numeric entries in fixed_parameters pin those params every run)
     fixed_params = {
-        k: v for k, v in cfg.get("fixed_parameters", {}).items()
+        k: v
+        for k, v in cfg.get("fixed_parameters", {}).items()
         if isinstance(v, (int, float))
     }
     sampled_params = sample_params(cfg["priors"], rng=rng, fixed_params=fixed_params)
@@ -357,7 +388,9 @@ def run_one_simulation_to_dir(
     # sample coverage if SLiM
     if engine == "slim":
         if "coverage_percent" not in sel_cfg:
-            raise ValueError("engine='slim' requires selection.coverage_percent=[low, high].")
+            raise ValueError(
+                "engine='slim' requires selection.coverage_percent=[low, high]."
+            )
         sampled_coverage = sample_coverage_percent(sel_cfg, rng=rng)
         print(f"• engine=slim → sampled coverage: {sampled_coverage:.2f}%")
     elif engine == "msprime":
@@ -373,10 +406,10 @@ def run_one_simulation_to_dir(
 
     # Some common pitfalls to avoid:
     # - Having different parameters in the parameter order vs the sampled params
-    # - Ensure the order of the populations (make sure they are not flipped in the SFS) 
+    # - Ensure the order of the populations (make sure they are not flipped in the SFS)
 
     ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
-    sfs = create_SFS(ts, pop_names = tuple(list(cfg['num_samples'].keys())))
+    sfs = create_SFS(ts, pop_names=tuple(list(cfg["num_samples"].keys())))
 
     # --- DEBUG: site vs branch vs moments expectation ---
 
@@ -416,7 +449,6 @@ def run_one_simulation_to_dir(
     print("DEBUG sum(site):", float(arr_site.sum()))
     print("DEBUG sum(branch * mu):", float(arr_branch.sum()))
 
-
     # save artifacts
     (out_dir / "sampled_params.pkl").write_bytes(pickle.dumps(sampled_params))
     (out_dir / "SFS.pkl").write_bytes(pickle.dumps(sfs))
@@ -440,12 +472,16 @@ def run_one_simulation_to_dir(
 
     return out_dir
 
+
 # ============================================================================
 # Windowed replicate utilities (moved from simulate_one_window.py)
 # ============================================================================
 
+
 def build_demes_graph(
-    model_type: str, sampled_params: Dict[str, float], cfg: Optional[Dict[str, Any]] = None
+    model_type: str,
+    sampled_params: Dict[str, float],
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> demes.Graph:
     """
     Build a Demes graph for the given model_type + sampled_params.
@@ -471,7 +507,9 @@ def build_demes_graph(
     raise ValueError(f"Unknown model_type: {model_type}")
 
 
-def write_samples_and_map(*, L: int, r: float, samples: Dict[str, int], out_dir: Path) -> None:
+def write_samples_and_map(
+    *, L: int, r: float, samples: Dict[str, int], out_dir: Path
+) -> None:
     """
     Write two small helper files next to each window:
       - samples.txt  (tsk_i -> pop label)
@@ -525,7 +563,9 @@ def load_sampled_coverage_from_meta(meta_file: Optional[Path]) -> Optional[float
     )
 
 
-def window_seed_from_base(base_seed: Optional[int], rep_index: int, *, stride: int = 10000) -> Optional[int]:
+def window_seed_from_base(
+    base_seed: Optional[int], rep_index: int, *, stride: int = 10000
+) -> Optional[int]:
     """
     Deterministic per-window seed from base seed.
     Keeps your existing behavior: base_seed + rep_index * 10000.
@@ -567,16 +607,22 @@ def simulate_one_window_replicate(
     cfg: Dict[str, Any] = json.loads(config_file.read_text())
     engine = str(cfg["engine"]).lower()
 
-    sampled_params: Dict[str, float] = pickle.load((sim_dir / "sampled_params.pkl").open("rb"))
+    sampled_params: Dict[str, float] = pickle.load(
+        (sim_dir / "sampled_params.pkl").open("rb")
+    )
 
     # Determine model_type:
     # Prefer explicit "model_type" if present, else fall back to legacy "demographic_model".
     model_type = cfg.get("model_type", None) or cfg.get("demographic_model", None)
     if model_type is None:
-        raise KeyError("Config must contain either 'model_type' or 'demographic_model'.")
+        raise KeyError(
+            "Config must contain either 'model_type' or 'demographic_model'."
+        )
 
     # Reuse exact coverage for BGS (if engine=slim)
-    sampled_coverage = load_sampled_coverage_from_meta(meta_file) if engine == "slim" else None
+    sampled_coverage = (
+        load_sampled_coverage_from_meta(meta_file) if engine == "slim" else None
+    )
 
     # Window seed
     base_seed = cfg.get("seed", None)
@@ -585,7 +631,9 @@ def simulate_one_window_replicate(
     window_cfg = dict(cfg)
     if w_seed is not None:
         window_cfg["seed"] = w_seed
-        print(f"• Window {rep_index}: using seed {w_seed} (base: {base_seed} + {rep_index} * {seed_stride})")
+        print(
+            f"• Window {rep_index}: using seed {w_seed} (base: {base_seed} + {rep_index} * {seed_stride})"
+        )
     else:
         print(f"• Window {rep_index}: no seed specified, using random state")
 
@@ -603,15 +651,19 @@ def simulate_one_window_replicate(
         "num_samples": {k: int(v) for k, v in window_cfg["num_samples"].items()},
         "sampled_params": {k: float(v) for k, v in sampled_params.items()},
         "sampled_coverage": sampled_coverage,
-        "selection_enabled": (bool(sel_cfg.get("enabled", False)) if engine == "slim" else False),
+        "selection_enabled": (
+            bool(sel_cfg.get("enabled", False)) if engine == "slim" else False
+        ),
     }
 
     # Simulate
 
-    ts, g = simulation(sampled_params=sampled_params,
-                      model_type=model_type,
-                      experiment_config=window_cfg,
-                      sampled_coverage=sampled_coverage)
+    ts, g = simulation(
+        sampled_params=sampled_params,
+        model_type=model_type,
+        experiment_config=window_cfg,
+        sampled_coverage=sampled_coverage,
+    )
 
     #     def simulation(
     #     sampled_params: Dict[str, float],
@@ -673,7 +725,9 @@ def simulate_one_window_replicate(
     )
 
     # metadata
-    (out_dir / f"window_{rep_index}.meta.json").write_text(json.dumps(window_metadata, indent=2))
+    (out_dir / f"window_{rep_index}.meta.json").write_text(
+        json.dumps(window_metadata, indent=2)
+    )
 
     print(f"✓ replicate {rep_index:04d} → {ts_file.name} + .vcf.gz + metadata")
     return out_dir

@@ -30,7 +30,5 @@ class _ModelFromDemes(sps.DemographicModel):
         )
 
 
-def define_sps_model(
-     g: demes.Graph
-) -> sps.DemographicModel:
-        return _ModelFromDemes(g, model_id=f"custom_model", desc="custom demes")
+def define_sps_model(g: demes.Graph) -> sps.DemographicModel:
+    return _ModelFromDemes(g, model_id=f"custom_model", desc="custom demes")

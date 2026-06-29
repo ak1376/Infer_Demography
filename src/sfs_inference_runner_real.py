@@ -25,7 +25,9 @@ from collections import Counter
 import moments
 import dadi
 
-from src.moments_inference_real import fit_model_realdata_scaled as fit_moments_real_scaled
+from src.moments_inference_real import (
+    fit_model_realdata_scaled as fit_moments_real_scaled,
+)
 from src.dadi_inference_real import fit_model_realdata_scaled as fit_dadi_real_scaled
 
 
@@ -83,7 +85,7 @@ def run_cli_real(
     config_file: Path,
     model_py: str,
     outdir: Path,
-    mode: str = "moments",            # "moments" or "dadi"
+    mode: str = "moments",  # "moments" or "dadi"
     opt_seed: Optional[int] = None,
     verbose: bool = False,
 ) -> None:

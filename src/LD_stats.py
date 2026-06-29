@@ -22,7 +22,6 @@ import tskit
 from pg_gpu.moments_ld import compute_ld_statistics as _pg_compute_ld_statistics
 from moments.LD.Parsing import compute_ld_statistics as _cpu_compute_ld_statistics
 
-
 # -----------------------------------------------------------------------------
 # moments-compatible stat naming (match moments.LD order)
 # -----------------------------------------------------------------------------

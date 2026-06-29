@@ -45,10 +45,12 @@ def _write_thinned(args):
     header, variants, n_full, frac, dest_str = args
     dest = Path(dest_str)
     if dest.exists():
-        return f"  {dest.parent.parent.name}/windows/{dest.name}: already exists, skipping"
+        return (
+            f"  {dest.parent.parent.name}/windows/{dest.name}: already exists, skipping"
+        )
 
-    n_keep   = max(1, round(n_full * frac))
-    rng      = np.random.default_rng(SEED + round(frac * 100))
+    n_keep = max(1, round(n_full * frac))
+    rng = np.random.default_rng(SEED + round(frac * 100))
     keep_idx = np.sort(rng.choice(n_full, size=n_keep, replace=False))
 
     with gzip.open(str(dest), "wt") as fh:
@@ -59,8 +61,9 @@ def _write_thinned(args):
     return f"  {_frac_tag(frac)}/windows/{dest.name}: kept {n_keep}/{n_full} sites ({frac:.0%})"
 
 
-def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1,
-              copy_unpruned: bool = True) -> None:
+def prune_vcf(
+    vcf_in: Path, out_dir: Path, workers: int = 1, copy_unpruned: bool = True
+) -> None:
     """Prune vcf_in into out_dir/{unpruned,thin*}/windows/ subdirs."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -69,7 +72,7 @@ def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1,
         for line in fh:
             (header if line.startswith("#") else variants).append(line)
     n_full = len(variants)
-    fname  = vcf_in.name
+    fname = vcf_in.name
 
     print(f"{fname}: {n_full} sites")
 
@@ -99,8 +102,13 @@ def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1,
 
     # Fan out gzip-compression across workers
     tasks = [
-        (header, variants, n_full, frac,
-         str(out_dir / _frac_tag(frac) / "windows" / fname))
+        (
+            header,
+            variants,
+            n_full,
+            frac,
+            str(out_dir / _frac_tag(frac) / "windows" / fname),
+        )
         for frac in THIN_FRACTIONS
     ]
 
@@ -116,21 +124,34 @@ def prune_vcf(vcf_in: Path, out_dir: Path, workers: int = 1,
 def _parse_args():
     p = argparse.ArgumentParser(description="Prune a VCF at multiple keep-fractions")
     grp = p.add_mutually_exclusive_group(required=True)
-    grp.add_argument("--vcf",         type=Path, help="Single input VCF (gzipped)")
-    grp.add_argument("--windows-dir", type=Path, help="Directory of window_*.vcf.gz files")
-    p.add_argument("--out-dir",  required=True, type=Path, help="Root output directory")
-    p.add_argument("--workers",  type=int, default=4,
-                   help="Parallel workers for gzip compression (default: 4)")
-    p.add_argument("--keep-fractions", type=str, default=None,
-                   help="Comma-separated keep fractions to run, e.g. 0.15 or 0.10,0.15 "
-                        "(default: all five)")
-    p.add_argument("--no-unpruned", action="store_true",
-                   help="Skip copying the original VCF into unpruned/ (saves disk space)")
+    grp.add_argument("--vcf", type=Path, help="Single input VCF (gzipped)")
+    grp.add_argument(
+        "--windows-dir", type=Path, help="Directory of window_*.vcf.gz files"
+    )
+    p.add_argument("--out-dir", required=True, type=Path, help="Root output directory")
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Parallel workers for gzip compression (default: 4)",
+    )
+    p.add_argument(
+        "--keep-fractions",
+        type=str,
+        default=None,
+        help="Comma-separated keep fractions to run, e.g. 0.15 or 0.10,0.15 "
+        "(default: all five)",
+    )
+    p.add_argument(
+        "--no-unpruned",
+        action="store_true",
+        help="Skip copying the original VCF into unpruned/ (saves disk space)",
+    )
     return p.parse_args()
 
 
 if __name__ == "__main__":
-    args    = _parse_args()
+    args = _parse_args()
     out_dir = args.out_dir.resolve()
 
     # Override THIN_FRACTIONS if --keep-fractions specified
@@ -140,13 +161,19 @@ if __name__ == "__main__":
     copy_unpruned = not args.no_unpruned
 
     if args.vcf:
-        prune_vcf(args.vcf.resolve(), out_dir, workers=args.workers,
-                  copy_unpruned=copy_unpruned)
+        prune_vcf(
+            args.vcf.resolve(),
+            out_dir,
+            workers=args.workers,
+            copy_unpruned=copy_unpruned,
+        )
     else:
         vcf_files = sorted(args.windows_dir.resolve().glob("window_*.vcf.gz"))
         if not vcf_files:
             raise FileNotFoundError(f"No window_*.vcf.gz in {args.windows_dir}")
-        print(f"Found {len(vcf_files)} windows, processing with {args.workers} workers each\n")
+        print(
+            f"Found {len(vcf_files)} windows, processing with {args.workers} workers each\n"
+        )
         for vcf in vcf_files:
             prune_vcf(vcf, out_dir, workers=args.workers, copy_unpruned=copy_unpruned)
 

@@ -46,12 +46,14 @@ def _diffusion_sfs(
     return_graph: bool = False,
     folded: bool = False,
 ):
-    real_space_vec = 10 ** log_space_vec
+    real_space_vec = 10**log_space_vec
     p_dict = {k: float(v) for k, v in zip(param_names, real_space_vec)}
 
     graph = demo_model(p_dict)
 
-    muL = float(experiment_config["mutation_rate"]) * float(experiment_config["genome_length"])
+    muL = float(experiment_config["mutation_rate"]) * float(
+        experiment_config["genome_length"]
+    )
     # Convention: first parameter is N_ANC/N0 for theta scaling
     N0 = float(p_dict[param_names[0]])
     theta = 4.0 * N0 * muL
@@ -142,7 +144,7 @@ def _save_profiles(
         dLL = ll_max - ll
 
         plt.figure()
-        plt.plot(10 ** grid_log10, dLL)
+        plt.plot(10**grid_log10, dLL)
         plt.xscale("log")
         plt.xlabel(p)
         plt.ylabel("Δ log-likelihood (max - ll)")
@@ -196,8 +198,12 @@ def fit_model(
     ub_full = np.array([float(priors[p][1]) for p in param_names], dtype=float)
 
     if np.any(lb_full <= 0) or np.any(ub_full <= 0):
-        bad = [p for p, lo, hi in zip(param_names, lb_full, ub_full) if lo <= 0 or hi <= 0]
-        raise ValueError(f"All bounds must be positive for log10 optimization. Bad: {bad}")
+        bad = [
+            p for p, lo, hi in zip(param_names, lb_full, ub_full) if lo <= 0 or hi <= 0
+        ]
+        raise ValueError(
+            f"All bounds must be positive for log10 optimization. Bad: {bad}"
+        )
 
     # ---- build geometric-midpoint start (+ optional jitter) ----
     start_vec = 10 ** ((np.log10(lb_full) + np.log10(ub_full)) / 2.0)
@@ -213,7 +219,9 @@ def fit_model(
     # ---- SFS demes order ----
     sampled_demes = list(getattr(sfs, "pop_ids", []))
     if not sampled_demes:
-        raise ValueError("Observed SFS has no pop_ids; cannot infer sampled_demes order.")
+        raise ValueError(
+            "Observed SFS has no pop_ids; cannot infer sampled_demes order."
+        )
 
     haploid_sizes = [n - 1 for n in sfs.shape]
     obs_folded = bool(getattr(sfs, "folded", False))
@@ -265,7 +273,7 @@ def fit_model(
     xhat = opt.optimize(x0)
 
     ll_hat = loglikelihood(xhat)
-    fitted_real = 10 ** xhat
+    fitted_real = 10**xhat
 
     # ---- optional profile likelihood curves -> <save_dir>/likelihood_plots/ ----
     if save_dir is not None and bool(experiment_config.get("generate_profiles", False)):

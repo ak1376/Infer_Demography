@@ -42,7 +42,13 @@ import moments
 import nlopt
 import numdifftools as nd
 
-from src.inference_utils import build_scaled_param_dict, scaled_to_absolute_params, lhs_start_log10, profile_1d, save_profiles
+from src.inference_utils import (
+    build_scaled_param_dict,
+    scaled_to_absolute_params,
+    lhs_start_log10,
+    profile_1d,
+    save_profiles,
+)
 
 
 # ------------------------------ mask-safe helpers ------------------------------
@@ -62,7 +68,9 @@ def _theta_hat_poisson_mle(sfs: moments.Spectrum, base_sfs: np.ndarray) -> float
     return s_obs / s_base
 
 
-def _mask_safe_poisson_ll(sfs: moments.Spectrum, exp_sfs: np.ndarray, eps: float) -> float:
+def _mask_safe_poisson_ll(
+    sfs: moments.Spectrum, exp_sfs: np.ndarray, eps: float
+) -> float:
     obs = np.asarray(sfs)
     exp = np.asarray(exp_sfs)
     ll = obs * np.log(exp + eps) - exp
@@ -90,7 +98,7 @@ def _base_sfs_theta1_from_scaled(
       convert scaled -> absolute with N_ANC=1.0 (so it’s pure shape),
       then compute SFS with theta=1.0.
     """
-    vec_real = 10 ** log10_params
+    vec_real = 10**log10_params
     p_scaled = build_scaled_param_dict(param_names, vec_real)
 
     # shape-only absolute params with N_ANC=1
@@ -140,9 +148,13 @@ def fit_model_realdata_scaled(
     if priors is None:
         priors = experiment_config.get("priors_real_data_analysis", None)
     if priors is None:
-        priors = experiment_config.get("priors", experiment_config.get("parameters", {}))
+        priors = experiment_config.get(
+            "priors", experiment_config.get("parameters", {})
+        )
     if not priors:
-        raise ValueError("Real-data scaled inference needs scaled priors (prefer _active_priors or priors_real_data_analysis).")
+        raise ValueError(
+            "Real-data scaled inference needs scaled priors (prefer _active_priors or priors_real_data_analysis)."
+        )
 
     lb = np.array([float(priors[p][0]) for p in param_names], dtype=float)
     ub = np.array([float(priors[p][1]) for p in param_names], dtype=float)
@@ -153,15 +165,19 @@ def fit_model_realdata_scaled(
                 lb[i] = ub[i] = float(v)
     if np.any(lb <= 0) or np.any(ub <= 0):
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
-        raise ValueError(f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}")
+        raise ValueError(
+            f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}"
+        )
 
     # start = LHS point for this run (diverse, well-spread across prior)
     x0 = lhs_start_log10(lb, ub, experiment_config)
-    x0_real = 10 ** x0
+    x0_real = 10**x0
 
     sampled_demes = list(getattr(sfs, "pop_ids", []))
     if not sampled_demes:
-        raise ValueError("Observed SFS has no pop_ids; cannot infer sampled_demes order.")
+        raise ValueError(
+            "Observed SFS has no pop_ids; cannot infer sampled_demes order."
+        )
     haploid_sizes = [n - 1 for n in sfs.shape]
     obs_folded = bool(getattr(sfs, "folded", False))
 
@@ -182,6 +198,7 @@ def fit_model_realdata_scaled(
 
     # --- quick timing diagnostic (one eval) ---
     import time
+
     t0 = time.time()
     ll0 = loglikelihood(x0)
     dt = time.time() - t0
@@ -225,7 +242,7 @@ def fit_model_realdata_scaled(
     N_anc_implied = float(theta_hat) / float(4.0 * muL)
 
     # convert scaled params at optimum to ABSOLUTE using implied N_ANC
-    p_scaled_hat = build_scaled_param_dict(param_names, 10 ** xhat)
+    p_scaled_hat = build_scaled_param_dict(param_names, 10**xhat)
     best_params_abs = scaled_to_absolute_params(
         p_scaled_hat,
         N_anc_abs=N_anc_implied,

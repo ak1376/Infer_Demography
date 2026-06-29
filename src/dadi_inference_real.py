@@ -44,7 +44,13 @@ import dadi
 import nlopt
 import numdifftools as nd
 
-from src.inference_utils import build_scaled_param_dict, scaled_to_absolute_params, lhs_start_log10, profile_1d, save_profiles
+from src.inference_utils import (
+    build_scaled_param_dict,
+    scaled_to_absolute_params,
+    lhs_start_log10,
+    profile_1d,
+    save_profiles,
+)
 
 
 # ------------------------------ mask-safe helpers ------------------------------
@@ -111,7 +117,7 @@ def _base_sfs_theta1_from_scaled(
       convert scaled -> absolute with N_ANC=1.0 (shape-only),
       then compute dadi SFS with theta=1.0 (i.e., DO NOT multiply by theta).
     """
-    vec_real = 10 ** log10_params
+    vec_real = 10**log10_params
     p_scaled = build_scaled_param_dict(param_names, vec_real)
 
     # shape-only absolute params with N_ANC=1
@@ -164,7 +170,9 @@ def fit_model_realdata_scaled(
     if priors is None:
         priors = experiment_config.get("priors_real_data_analysis", None)
     if priors is None:
-        priors = experiment_config.get("priors", experiment_config.get("parameters", {}))
+        priors = experiment_config.get(
+            "priors", experiment_config.get("parameters", {})
+        )
     if not priors:
         raise ValueError(
             "Real-data scaled inference needs scaled priors (prefer _active_priors or priors_real_data_analysis)."
@@ -179,15 +187,19 @@ def fit_model_realdata_scaled(
                 lb[i] = ub[i] = float(v)
     if np.any(lb <= 0) or np.any(ub <= 0):
         bad = [p for p, lo, hi in zip(param_names, lb, ub) if lo <= 0 or hi <= 0]
-        raise ValueError(f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}")
+        raise ValueError(
+            f"All scaled bounds must be > 0 for log10 optimization. Bad: {bad}"
+        )
 
     # start = LHS point for this run (diverse, well-spread across prior)
     x0 = lhs_start_log10(lb, ub, experiment_config)
-    x0_real = 10 ** x0
+    x0_real = 10**x0
 
     sampled_demes = list(getattr(sfs, "pop_ids", []) or [])
     if not sampled_demes:
-        raise ValueError("Observed dadi SFS has no pop_ids; cannot infer sampled_demes order.")
+        raise ValueError(
+            "Observed dadi SFS has no pop_ids; cannot infer sampled_demes order."
+        )
 
     # dadi uses haploid ns = dim - 1
     ns_haploid = tuple(int(dim - 1) for dim in sfs.shape)
@@ -197,12 +209,16 @@ def fit_model_realdata_scaled(
     pts_l = _choose_pts_l(sfs, experiment_config)
 
     # Extrapolation wrapper (like your sim code)
-    def _raw_wrapper(params_vec: np.ndarray, ns_local: Tuple[int, ...], pts: List[int]) -> dadi.Spectrum:
+    def _raw_wrapper(
+        params_vec: np.ndarray, ns_local: Tuple[int, ...], pts: List[int]
+    ) -> dadi.Spectrum:
         # params_vec is in REAL (scaled) space already here for base; inside wrapper we are called by extrap func
         p_scaled = build_scaled_param_dict(param_names, np.asarray(params_vec, float))
 
         # shape-only absolute params with N_ANC=1
-        p_abs_shape = scaled_to_absolute_params(p_scaled, N_anc_abs=1.0, time_scale="2N")
+        p_abs_shape = scaled_to_absolute_params(
+            p_scaled, N_anc_abs=1.0, time_scale="2N"
+        )
         graph = demo_model_abs(p_abs_shape)
 
         fs = dadi.Spectrum.from_demes(
@@ -251,10 +267,13 @@ def fit_model_realdata_scaled(
 
     # --- quick timing diagnostic (one eval) ---
     import time
+
     t0 = time.time()
     ll0 = loglikelihood(x0)
     dt = time.time() - t0
-    print(f"[diagnostic dadi real] one loglik eval took {dt:.3f}s  (ll={ll0:.6g})  pts_l={pts_l}  ns={ns_haploid}")
+    print(
+        f"[diagnostic dadi real] one loglik eval took {dt:.3f}s  (ll={ll0:.6g})  pts_l={pts_l}  ns={ns_haploid}"
+    )
 
     # gradient
     step = float(experiment_config.get("dadi_grad_step", 3e-4))
@@ -311,7 +330,9 @@ def fit_model_realdata_scaled(
     try:
         xhat = opt.optimize(x0)
     except nlopt.runtime_error:
-        print("[DADI REAL DEBUG] LD_LBFGS runtime_error; capturing debug state and falling back to LN_COBYLA")
+        print(
+            "[DADI REAL DEBUG] LD_LBFGS runtime_error; capturing debug state and falling back to LN_COBYLA"
+        )
         debug_txt = _build_debug_txt("lbfgs_runtime_error")
 
         x_start = last_eval.get("log10_params", None)
@@ -328,7 +349,9 @@ def fit_model_realdata_scaled(
         try:
             xhat = opt_fb.optimize(np.asarray(x_start, float))
         except nlopt.runtime_error:
-            print("[DADI REAL DEBUG] LN_COBYLA runtime_error too; capturing debug state and re-raising")
+            print(
+                "[DADI REAL DEBUG] LN_COBYLA runtime_error too; capturing debug state and re-raising"
+            )
             debug_txt = _build_debug_txt("cobyla_runtime_error")
             raise
 
