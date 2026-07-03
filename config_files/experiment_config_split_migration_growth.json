@@ -73,13 +73,6 @@
     ]
   },
   "fixed_parameters": {
-    "N_ANC": 825796.7496742705,
-    "N_CO": 1677893.9802064863,
-    "N_FR0": 53567.50124137373,
-    "N_FR1": 1128269.3617131782,
-    "T": 324304.70546652074,
-    "m_CO_FR": 1.2109517267952953e-06,
-    "m_FR_CO": 7.011688490175164e-08
   },
   "parameter_order": [
     "N_ANC",
@@ -107,7 +100,7 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": true,
+  "use_gpu_ld": false,
   "use_gpu_dadi": false,
   "pts_base": [10, 15, 20],
   "dadi_maxeval": 300,

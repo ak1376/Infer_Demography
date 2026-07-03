@@ -33,7 +33,7 @@ NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
 NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
-WINDOW_SIZE   = 1_000_000
+WINDOW_SIZE   = 10_000_000
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])

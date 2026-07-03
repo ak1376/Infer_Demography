@@ -43,6 +43,13 @@ MODEL_CONFIGS = {
         "pop_labels":  ["CO", "FR"],
         "out_name":    "neutral_ppc_ld_split_migration_growth.png",
     },
+    "split_migration_growth_both": {
+        "config":      "config_files/experiment_config_split_migration_growth_both.json",
+        "sim_dir":     "experiments/split_migration_growth_both/simulations",
+        "real_ld_pkl": "experiments/split_migration_growth_both/real_data_analysis/inferences/MomentsLD/means.varcovs.pkl",
+        "pop_labels":  ["CO", "FR"],
+        "out_name":    "neutral_ppc_ld_split_migration_growth_both.png",
+    },
     "drosophila_three_epoch": {
         "config":      "config_files/experiment_config_drosophila_three_epoch.json",
         "sim_dir":     "experiments_neutral/drosophila_three_epoch/simulations_ld_ppc",
@@ -94,7 +101,7 @@ def main():
     parser.add_argument(
         "--model",
         choices=list(MODEL_CONFIGS.keys()),
-        default="split_migration_growth",
+        default="split_migration_growth_both",
         help="Which demographic model to run the PPC for.",
     )
     args = parser.parse_args()

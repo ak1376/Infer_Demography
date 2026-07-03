@@ -9,7 +9,7 @@
     "FR": 9
   },
   "seed": 42,
-  "num_optimizations": 5,
+  "num_optimizations": 20,
   "top_k": 1,
   "num_draws": 100,
   "priors": {
@@ -80,16 +80,11 @@
       2.0
     ]
   },
+  "momentsld_use_scaled_units": false,
+  "moments_best_fit_path": "experiments/split_migration_growth_both/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
-    "N_ANC": 845990.8823287553,
-    "N_CO0": 426493.0500825415,
-    "N_CO1": 8459908.823287554,
-    "N_FR0": 49560.19481386005,
-    "N_FR1": 1351353.9538597974,
-    "T": 304055.0143539537,
-    "m_CO_FR": 1.182045836294718e-06,
-    "m_FR_CO": 6.257419200534825e-12
   },
+
   "parameter_order": [
     "N_ANC",
     "N_CO0",
@@ -106,7 +101,7 @@
     "dfe_id": "Gamma_H17",
     "coverage_percent": [
       1,
-      95
+      30
     ],
     "slim_scaling": 10.0
   },
@@ -116,7 +111,7 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [10, 15, 20],
