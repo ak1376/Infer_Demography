@@ -24,7 +24,7 @@ from tqdm import tqdm
 from src.demes_models import split_migration_growth_both_model
 
 MAX_WORKERS = 25
-NUM_CHUNKS = 50
+NUM_CHUNKS = 250
 num_boot_reps = 200
 
 # The real, haploid, AA-polarized VCF (NOT the diploid-recoded copy used for
@@ -33,6 +33,11 @@ num_boot_reps = 200
 real_vcf = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz"
 popfile = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/popfile.txt"
 unfolded_sfs_path = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl"
+
+# Best-fit results from the real-data moments runs (H0 = simple: CO constant,
+# only FR grows; H1 = complex/"both": both CO and FR grow).
+simple_fit_path = "/sietch_colab/akapoor/Infer_Demography/experiments/split_migration_growth/real_data_analysis/inferences/moments/best_fit.pkl"
+complex_fit_path = "/sietch_colab/akapoor/Infer_Demography/experiments/split_migration_growth_both/real_data_analysis/inferences/moments/best_fit.pkl"
 
 
 def _get_vcf_bounds(vcf_path):
@@ -44,36 +49,6 @@ def _get_vcf_bounds(vcf_path):
     ).strip())
     return first, last
 
-
-# Non-overlapping chunk boundaries covering the full VCF span. `interval` in
-# moments.Parsing.parse_vcf is 1-indexed and half-open, so consecutive
-# (start, end) pairs here exactly tile the chromosome with no overlap.
-first_pos, last_pos = _get_vcf_bounds(real_vcf)
-chunk_bounds = np.linspace(first_pos, last_pos + 1, NUM_CHUNKS + 1).astype(int)
-chunks = [(chunk_bounds[i], chunk_bounds[i + 1]) for i in range(NUM_CHUNKS)]
-
-indices = np.arange(NUM_CHUNKS)
-
-
-def _parse_chunk(interval):
-    # Each chunk is an independent, non-overlapping stretch of the genome --
-    # embarrassingly parallel, so farm it out across processes.
-    return moments.Parsing.parse_vcf(
-        real_vcf, pop_file=popfile, use_AA=True, ploidy=1, interval=interval
-    )
-
-
-# Compute the (unfolded) SFS for each chunk once up front -- each is a
-# moments.Spectrum, polarized using the VCF's AA (ancestral allele) field.
-with ProcessPoolExecutor(max_workers=min(NUM_CHUNKS, MAX_WORKERS)) as pool:
-    chunk_spectra = list(tqdm(pool.map(_parse_chunk, chunks), total=NUM_CHUNKS))
-
-
-# ---- Per-window summary statistics: pi, Tajima's D, FST ----
-# Reuses the same non-overlapping `chunks` windows as the SFS bootstrap
-# above. Pi, Tajima's D, and Hudson's FST are all invariant to allele
-# polarization, so (unlike the SFS parsing) we don't need the AA field here
-# -- just per-sample REF/ALT calls.
 
 def _parse_popfile(popfile_path):
     sample_to_pop = {}
@@ -107,13 +82,51 @@ def _get_vcf_sample_indices(vcf_path, popfile_path):
     return pop_names, sample_indices
 
 
+pop_names, sample_indices = _get_vcf_sample_indices(real_vcf, popfile)
+sample_sizes = [len(sample_indices[pop]) for pop in pop_names]
+
+# Non-overlapping chunk boundaries covering the full VCF span. `interval` in
+# moments.Parsing.parse_vcf is 1-indexed and half-open, so consecutive
+# (start, end) pairs here exactly tile the chromosome with no overlap.
+first_pos, last_pos = _get_vcf_bounds(real_vcf)
+chunk_bounds = np.linspace(first_pos, last_pos + 1, NUM_CHUNKS + 1).astype(int)
+chunks = [(chunk_bounds[i], chunk_bounds[i + 1]) for i in range(NUM_CHUNKS)]
+
+indices = np.arange(NUM_CHUNKS)
+
+
+def _parse_chunk(interval):
+    # Each chunk is an independent, non-overlapping stretch of the genome --
+    # embarrassingly parallel, so farm it out across processes.
+    try:
+        return moments.Parsing.parse_vcf(
+            real_vcf, pop_file=popfile, use_AA=True, ploidy=1, interval=interval
+        )
+    except ValueError:
+        # No SNPs fall in this interval (e.g. a heterochromatic/repetitive
+        # gap in variant calling, more likely to occur as chunks get
+        # smaller) -- contributes an all-zero SFS instead of crashing.
+        return moments.Spectrum(np.zeros([n + 1 for n in sample_sizes]))
+
+
+# Compute the (unfolded) SFS for each chunk once up front -- each is a
+# moments.Spectrum, polarized using the VCF's AA (ancestral allele) field.
+with ProcessPoolExecutor(max_workers=min(NUM_CHUNKS, MAX_WORKERS)) as pool:
+    chunk_spectra = list(tqdm(pool.map(_parse_chunk, chunks), total=NUM_CHUNKS))
+
+
+# ---- Per-window summary statistics: pi, Tajima's D, FST ----
+# Reuses the same non-overlapping `chunks` windows as the SFS bootstrap
+# above. Pi, Tajima's D, and Hudson's FST are all invariant to allele
+# polarization, so (unlike the SFS parsing) we don't need the AA field here
+# -- just per-sample REF/ALT calls.
+
 def _get_vcf_chrom(vcf_path):
     return subprocess.check_output(
         f"bcftools query -f '%CHROM\n' '{vcf_path}' | head -n 1", shell=True
     ).decode().strip()
 
 
-pop_names, sample_indices = _get_vcf_sample_indices(real_vcf, popfile)
 vcf_chrom = _get_vcf_chrom(real_vcf)
 
 
@@ -143,7 +156,7 @@ def _compute_window_stats(interval):
 
     ac_arrays = {}
     for pop in pop_names:
-        ac_pop = np.array(ac[pop], dtype=np.int32).reshape(n_sites, 2)
+        ac_pop = np.array(ac[pop], dtype=np.int32)
         ac_arrays[pop] = ac_pop
         if n_sites:
             alt = ac_pop[:, 1]
@@ -252,21 +265,26 @@ nested_indices = [param_names.index("N_CO0")]
 # p0 = best fit of the null model (split_migration_growth: CO constant,
 # only FR grows), written out in the 8-param order the complex model
 # expects, with N_CO0 == N_CO1 == the null model's single N_CO. This is
-# the real H0-consistent point (best of 5 real-data moments runs,
-# LL_simple = 4156401.14).
-N_CO_null = 1677893.9802064863
+# the real H0-consistent point.
+with open(simple_fit_path, "rb") as f:
+    simple_fit = pickle.load(f)
+with open(complex_fit_path, "rb") as f:
+    complex_fit = pickle.load(f)
+
+simple_params = simple_fit["best_params"][0]
+ll_simple = simple_fit["best_ll"][0]
+ll_complex = complex_fit["best_ll"][0]
+
 p0 = [
-    825796.7496742705,   # N_ANC
-    N_CO_null,            # N_CO0 (== N_CO1 under H0)
-    N_CO_null,            # N_CO1
-    53567.50124137373,   # N_FR0
-    1128269.3617131782,  # N_FR1
-    324304.70546652074,  # T
-    1.2109517267952953e-06,  # m_CO_FR
-    7.011688490175164e-08,   # m_FR_CO
+    simple_params["N_ANC"],
+    simple_params["N_CO"],  # N_CO0 (== N_CO1 under H0)
+    simple_params["N_CO"],  # N_CO1
+    simple_params["N_FR0"],
+    simple_params["N_FR1"],
+    simple_params["T"],
+    simple_params["m_CO_FR"],
+    simple_params["m_FR_CO"],
 ]
-ll_simple = 4156401.13821914   # split_migration_growth, best of 5 real-data moments runs
-ll_complex = 4157149.36897579  # split_migration_growth_both, run_8, best of 20 real-data moments runs
 
 # The real, non-windowed, whole-chromosome empirical SFS -- already cached
 # by compute_unfolded_sfs.py from the same haploid VCF used above.
