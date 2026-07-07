@@ -596,7 +596,6 @@ def simulate_one_window_replicate(
       - seed_stride: default 10000 matches your old script
 
     Writes:
-      - window_<idx>.trees
       - window_<idx>.vcf.gz
       - samples.txt
       - flat_map.txt
@@ -704,9 +703,9 @@ def simulate_one_window_replicate(
     # Write outputs
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # .trees
-    ts_file = out_dir / f"window_{rep_index}.trees"
-    ts.dump(ts_file)
+    # NOTE: the tree sequence is intentionally NOT dumped to disk. Nothing
+    # downstream consumes window_<idx>.trees (LD stats read only the VCF), so
+    # writing it was pure I/O + storage waste.
 
     # .vcf.gz
     raw_vcf = out_dir / f"window_{rep_index}.vcf"
@@ -729,5 +728,5 @@ def simulate_one_window_replicate(
         json.dumps(window_metadata, indent=2)
     )
 
-    print(f"✓ replicate {rep_index:04d} → {ts_file.name} + .vcf.gz + metadata")
+    print(f"✓ replicate {rep_index:04d} → window_{rep_index}.vcf.gz + metadata")
     return out_dir

@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration_growth_both.json"
+EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -598,8 +598,7 @@ rule simulate_window:
         metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
-        vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"),
-        trees  = temp(f"{LD_ROOT}/windows/window_{{win}}.trees")
+        vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
     params:
         base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
@@ -668,6 +667,7 @@ rule prune_window:
             --vcf            "{params.windows_dir}/window_{wildcards.win}.vcf.gz" \
             --out-dir        "{params.pruning_dir}" \
             --keep-fractions "{params.keep_frac}"   \
+            --no-unpruned                           \
             --workers        1
         """
 
@@ -743,6 +743,46 @@ rule optimize_momentsld:
         ]
         if params.pruning_dir:
             cmd += ["--fallback-ld-dir", params.pruning_dir]
+        env = {**os.environ, "PYTHONPATH": workflow.basedir}
+        subprocess.run(cmd, check=True, env=env)
+
+##############################################################################
+# RULE optimize_momentsld_mixed – optimise MomentsLD from PRUNED stats        #
+# Used when pruning is configured (pruned-only). Reads the pruned per-window  #
+# LD stats under pruning/{frac_tag}/LD_stats/ as the sole input and writes    #
+# best_fit under the same directory. Output path matches MomentsLD.sh's       #
+# pruning/{frac_tag}/best_fit.pkl target.                                     #
+##############################################################################
+rule optimize_momentsld_mixed:
+    input:
+        pruned_pkls = lambda w: expand(
+            f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
+            sid=[w.sid],
+            frac_tag=[w.frac_tag],
+            win=WINDOWS,
+        ),
+        cfg = EXP_CFG,
+    output:
+        mv   = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl",
+        boot = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl"),
+        pdf  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/empirical_vs_theoretical_comparison.pdf",
+        best = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
+    params:
+        sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
+        cfg = EXP_CFG,
+    threads: 1
+    run:
+        import subprocess
+        # output_root drives everything: LD_inference reads output_root/LD_stats/*.pkl
+        # (the pruned stats) and writes means/varcovs/bootstrap/pdf/best_fit there.
+        # No --fallback-ld-dir: in pruned-only mode there are no unpruned stats.
+        cmd = [
+            "python", "snakemake_scripts/LD_inference.py",
+            "--run-dir",     params.sim_dir,
+            "--output-root", params.output_root,
+            "--config-file", params.cfg,
+        ]
         env = {**os.environ, "PYTHONPATH": workflow.basedir}
         subprocess.run(cmd, check=True, env=env)
 
@@ -2095,5 +2135,6 @@ rule raw_features_xgboost:
 # Wildcard Constraints                                                      #
 ##############################################################################
 wildcard_constraints:
-    opt    = "|".join(str(i) for i in range(NUM_OPTIMS)),
-    engine = "moments|dadi"
+    opt      = "|".join(str(i) for i in range(NUM_OPTIMS)),
+    engine   = "moments|dadi",
+    frac_tag = r"thin\d+"
