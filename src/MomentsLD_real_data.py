@@ -303,10 +303,22 @@ def main() -> None:
 
     args = ap.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-    )
+    # Log to both the console and a per-run text file so the iteration-to-
+    # iteration optimisation progress is preserved for inspection. The file
+    # always receives every INFO line (including each objective evaluation);
+    # the console still honours --verbose.
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    log_path = args.outdir / "optimization_log.txt"
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    _file_h = logging.FileHandler(log_path, mode="w")
+    _file_h.setFormatter(_fmt)
+    _console_h = logging.StreamHandler()
+    _console_h.setLevel(logging.INFO if args.verbose else logging.WARNING)
+    _console_h.setFormatter(_fmt)
+    _root = logging.getLogger()
+    _root.setLevel(logging.INFO)
+    _root.handlers[:] = [_file_h, _console_h]
+    logging.info("Optimisation log -> %s", log_path)
 
     cfg = load_json(args.config)
     if args.opt_seed is not None:
@@ -390,14 +402,17 @@ def main() -> None:
         )
         return composite_gaussian_ll(emp_means, emp_covars, theory_arrays)
 
+    _eval = {"n": 0}
+
     def objective(x: np.ndarray, grad: np.ndarray) -> float:
         ll = float(loglik(x))
-        if args.verbose:
-            vec = 10 ** np.asarray(x)
-            p_dict = _build_param_dict(param_names, vec)
-            p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref) if use_scaled_units else p_dict
-            show = ", ".join(f"{k}={p_abs[k]:.3g}" for k in param_names)
-            print(f"LL = {ll:.6f} | {show} | (N_ref={N_ref:.3g})")
+        _eval["n"] += 1
+        vec = 10 ** np.asarray(x)
+        p_dict = _build_param_dict(param_names, vec)
+        p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref) if use_scaled_units else p_dict
+        show = ", ".join(f"{k}={p_abs[k]:.3g}" for k in param_names)
+        logging.info("eval %4d | LL = %.6f | %s | (N_ref=%.3g)",
+                     _eval["n"], ll, show, N_ref)
         return ll
 
     opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))

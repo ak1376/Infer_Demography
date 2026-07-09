@@ -91,6 +91,30 @@ REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis/runs"
 REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences"
 REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
 
+# Number of top replicates the real moments/dadi aggregation keeps.
+# Must match the rep count the trained model was built with (moments_*_rep_0..N-1).
+# Defaults to keeping every optimization so re-running yields all rep_* slots.
+REAL_TOP_K    = int(CFG.get("real_top_k", NUM_REAL_OPTIMS))
+
+# ── Real-data prediction (push real fits through a trained model) ───────────
+REAL_PRED_ROOT     = f"experiments/{MODEL}/real_data_analysis/prediction"
+# Which trained-model directory to use as the source of models + feature template.
+REAL_MODELING_DIR  = CFG.get(
+    "real_predict_modeling_dir",
+    f"experiments/{MODEL}/modeling_wo_FIM_wo_SFSresids",
+)
+REAL_TRAIN_FEATURES = f"{REAL_MODELING_DIR}/datasets/features_df.pkl"
+
+# model_key wildcard -> trained *_mdl_obj.pkl path
+REAL_MODEL_OBJS = {
+    "random_forest":    f"{REAL_MODELING_DIR}/random_forest/random_forest_mdl_obj.pkl",
+    "xgboost":          f"{REAL_MODELING_DIR}/xgboost/xgb_mdl_obj.pkl",
+    "linear_standard":  f"{REAL_MODELING_DIR}/linear_standard/linear_mdl_obj_standard.pkl",
+    "linear_ridge":     f"{REAL_MODELING_DIR}/linear_ridge/linear_mdl_obj_ridge.pkl",
+    "linear_lasso":     f"{REAL_MODELING_DIR}/linear_lasso/linear_mdl_obj_lasso.pkl",
+    "linear_elasticnet":f"{REAL_MODELING_DIR}/linear_elasticnet/linear_mdl_obj_elasticnet.pkl",
+}
+
 # LD r-bins
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 
@@ -1494,7 +1518,7 @@ rule aggregate_opts_moments_real:
             thetas.extend(_as_list(d.get("theta_hat", np.nan)))
             nancs.extend(_as_list(d.get("N_ANC_implied_from_theta", np.nan)))
 
-        keep = np.argsort(lls)[::-1][:TOP_K]
+        keep = np.argsort(lls)[::-1][:REAL_TOP_K]
 
         best = {
             "mode": "moments",
@@ -1538,7 +1562,7 @@ rule aggregate_opts_dadi_real:
             thetas.extend(_as_list(d.get("theta_hat", np.nan)))
             nancs.extend(_as_list(d.get("N_ANC_implied_from_theta", np.nan)))
 
-        keep = np.argsort(lls)[::-1][:TOP_K]
+        keep = np.argsort(lls)[::-1][:REAL_TOP_K]
 
         best = {
             "mode": "dadi",
@@ -1679,7 +1703,11 @@ rule aggregate_ld_windows_real:
 rule infer_momentsld_real:
     input:
         mv       = f"{REAL_LD_ROOT}/means.varcovs.pkl",
-        sfs_best = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
+        # Seed only: LD inference uses the moments best-fit as an optimization
+        # start point. Marked ancient() so regenerating the moments fit (e.g.
+        # changing REAL_TOP_K) does not needlessly re-trigger LD inference —
+        # the best (rep_0) moments params are unchanged.
+        sfs_best = ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl"),
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/MomentsLD/best_fit.pkl"),
     params:
@@ -1912,7 +1940,77 @@ rule combine_results_real:
 
         pickle.dump(summary, open(output.combo, "wb"))
         print(f"✓ combined REAL → {output.combo}")
-        
+
+##############################################################################
+# REAL DATA: build_real_prediction_dataset                                   #
+# Assemble the real dadi / moments / MomentsLD fits into a single feature     #
+# row formatted exactly like the training features_df, then z-score normalize #
+# by the priors so it can be pushed through a trained model.                  #
+#                                                                             #
+#   snakemake build_real_prediction_dataset                                   #
+##############################################################################
+rule build_real_prediction_dataset:
+    input:
+        cfg            = EXP_CFG,
+        moments        = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
+        dadi           = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
+        ld             = f"{REAL_LD_ROOT}/best_fit.pkl",
+        train_features = REAL_TRAIN_FEATURES,
+    output:
+        feats = f"{REAL_PRED_ROOT}/real_features_df.pkl",
+        raw   = f"{REAL_PRED_ROOT}/real_features_raw_df.pkl",
+        meta  = f"{REAL_PRED_ROOT}/real_dataset_meta.json",
+    params:
+        real_inf_dir = REAL_INF_ROOT,
+        out_dir      = REAL_PRED_ROOT,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/build_real_prediction_dataset.py \
+            --config         "{input.cfg}" \
+            --real-inf-dir   "{params.real_inf_dir}" \
+            --train-features "{input.train_features}" \
+            --out-dir        "{params.out_dir}"
+
+        test -f "{output.feats}" && test -f "{output.raw}" && test -f "{output.meta}"
+        """
+
+##############################################################################
+# REAL DATA: predict_real_data – push real features through a trained model  #
+# {model_key} ∈ random_forest | xgboost | linear_standard | linear_ridge |    #
+#              linear_lasso | linear_elasticnet                               #
+#                                                                             #
+#   snakemake experiments/<MODEL>/real_data_analysis/prediction/predictions_random_forest.json
+##############################################################################
+rule predict_real_data:
+    input:
+        feats          = f"{REAL_PRED_ROOT}/real_features_df.pkl",
+        model          = lambda w: REAL_MODEL_OBJS[w.model_key],
+        train_features = REAL_TRAIN_FEATURES,
+        cfg            = EXP_CFG,
+    output:
+        json = f"{REAL_PRED_ROOT}/predictions_{{model_key}}.json",
+        csv  = f"{REAL_PRED_ROOT}/predictions_{{model_key}}.csv",
+    params:
+        out_prefix = lambda w: f"{REAL_PRED_ROOT}/predictions_{w.model_key}",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/predict_real_data.py \
+            --model-obj      "{input.model}" \
+            --real-features  "{input.feats}" \
+            --train-features "{input.train_features}" \
+            --config         "{input.cfg}" \
+            --out-prefix     "{params.out_prefix}" \
+            --model-key      "{wildcards.model_key}"
+
+        test -f "{output.json}" && test -f "{output.csv}"
+        """
+
 ##############################################################################
 # RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble         #
 # Not in rule all. Run explicitly, e.g.:                                    #
@@ -2135,6 +2233,7 @@ rule raw_features_xgboost:
 # Wildcard Constraints                                                      #
 ##############################################################################
 wildcard_constraints:
-    opt      = "|".join(str(i) for i in range(NUM_OPTIMS)),
-    engine   = "moments|dadi",
-    frac_tag = r"thin\d+"
+    opt       = "|".join(str(i) for i in range(NUM_OPTIMS)),
+    engine    = "moments|dadi",
+    frac_tag  = r"thin\d+",
+    model_key = "|".join(REAL_MODEL_OBJS.keys()),
