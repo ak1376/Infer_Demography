@@ -117,6 +117,27 @@ def bin_mean_r2(diff, r2, bins):
     return centers, mean_r2
 
 
+def window_size_for_target(centers, mean_r2, target):
+    """Smallest distance (bp) at which the LD-decay curve first drops to <= target.
+
+    Walks the (centers, mean_r2) curve from short to long distance and returns the
+    first crossing, linearly interpolated in log-distance between the two bracketing
+    bins. NaN bins (empty) are skipped. Returns np.nan if the curve never reaches
+    the target within the sampled distance range.
+    """
+    valid = ~np.isnan(mean_r2)
+    c = centers[valid]
+    r = mean_r2[valid]
+    for k in range(1, len(c)):
+        if r[k] <= target:
+            if r[k - 1] <= target or r[k - 1] == r[k]:
+                return c[k]
+            frac = (r[k - 1] - target) / (r[k - 1] - r[k])
+            log_c = np.log(c[k - 1]) + frac * (np.log(c[k]) - np.log(c[k - 1]))
+            return float(np.exp(log_c))
+    return np.nan
+
+
 if __name__ == "__main__":
 
     # Step 1: Load the data.
@@ -140,7 +161,7 @@ if __name__ == "__main__":
     seed = 295
     rng = np.random.default_rng(seed)   # create a reproducible random number generator
     n_sites = len(pos)
-    n_pairs = 1_000_000                    # however many pairs you want to sample
+    n_pairs = 300_000                    # however many pairs you want to sample
     anchors = rng.integers(0, n_sites, size=n_pairs)
     print(f'Length of Anchors: {len(anchors)}')
 
@@ -198,80 +219,72 @@ if __name__ == "__main__":
     print(f'Mean r2 CO: {mean_r2_CO}')
     print(f'Mean r2 FR: {mean_r2_FR}')
 
-    # We have the bin centers, which are distances in base pairs. But in our actual data we can never exactly get the same dist value for a pair that's at the bin center. So we need to interpolate.
-
-    # Step 6: look up r^2 at each candidate window size by interpolating the (centers, mean_r2) curve
-    r2_at_windows_CO = np.interp(candidate_window_sizes, centers, mean_r2_CO)
-    r2_at_windows_FR = np.interp(candidate_window_sizes, centers, mean_r2_FR)
-
-    print(f'r2 at candidate windows (CO): {r2_at_windows_CO}')
-    print(f'r2 at candidate windows (FR): {r2_at_windows_FR}')
-
     # Step 5: fixed background floor = mean r2 for bins beyond the LARGEST candidate
-    # window (largest_window_size). Any candidate window is <= largest_window_size,
-    # so this distance range is guaranteed background for every candidate in the sweep.
+    # window (largest_window_size). At these distances LD has flattened out, so this
+    # is the residual "independent" correlation level for each population.
     floor_CO = np.nanmean(mean_r2_CO[centers > largest_window_size])
     floor_FR = np.nanmean(mean_r2_FR[centers > largest_window_size])
 
     print(f'Floor CO: {floor_CO}')
     print(f'Floor FR: {floor_FR}')
 
-    # Step 7: ratio = r^2 at each candidate window size / fixed floor.
-    # ratio ~= 1 -> that window size looks LD-independent; ratio >> 1 -> still correlated.
-    ratio_CO = r2_at_windows_CO / floor_CO
-    ratio_FR = r2_at_windows_FR / floor_FR
+    # Step 6: read candidate window sizes straight off the decay curve. For a set of
+    # "closeness to floor" thresholds, find the distance where r^2 has decayed to
+    # <= threshold * floor. That distance IS the window size (SNPs a window apart are
+    # then within `threshold` of background). A larger threshold -> curve crosses
+    # sooner -> smaller (less conservative) window.
+    ratio_thresholds = [1.05, 1.1, 1.2, 1.5, 2.0]
 
-    print(f'Ratio CO: {ratio_CO}')
-    print(f'Ratio FR: {ratio_FR}')
+    print("\nCandidate window sizes (bp), read off the LD decay curve:")
+    print(f"{'closeness':>10} {'CO (bp)':>16} {'FR (bp)':>16} {'safe-for-both':>16}")
+    candidate_bp = {}
+    for t in ratio_thresholds:
+        w_CO = window_size_for_target(centers, mean_r2_CO, t * floor_CO)
+        w_FR = window_size_for_target(centers, mean_r2_FR, t * floor_FR)
+        # Safe for both populations = the LARGER window (whichever pop decays slower
+        # needs more distance to reach background).
+        w_both = np.nanmax([w_CO, w_FR])
+        candidate_bp[t] = (w_CO, w_FR, w_both)
+        print(f"{t:>10.2f} {w_CO:>16,.0f} {w_FR:>16,.0f} {w_both:>16,.0f}")
 
-    # Step 8: combine across populations. For each population, take the largest
-    # num_windows (smallest window) whose ratio still passes the threshold, then
-    # be conservative and take the min across populations so the chosen window
-    # size is safe for both.
-    ratio_threshold = 1.1
+    # Step 7: convert each safe-for-both window size to a number of windows.
+    print("\nAs number of non-overlapping windows (num_windows = chr_length / window_size):")
+    for t in ratio_thresholds:
+        w_both = candidate_bp[t][2]
+        if np.isfinite(w_both) and w_both > 0:
+            print(f"  closeness {t:.2f}: window ~{w_both:,.0f} bp -> ~{chr_length / w_both:,.0f} windows")
+        else:
+            print(f"  closeness {t:.2f}: curve never reached this level within sampled range")
 
-    passing_CO = candidate_windows[ratio_CO <= ratio_threshold]
-    passing_FR = candidate_windows[ratio_FR <= ratio_threshold]
+    # Plot: single LD decay curve, with each population's floor and the safe-for-both
+    # candidate window sizes marked as vertical lines.
+    fig, ax_curve = plt.subplots(figsize=(8, 5))
 
-    recommended_CO = int(passing_CO.max()) if len(passing_CO) else None
-    recommended_FR = int(passing_FR.max()) if len(passing_FR) else None
-
-    print(f'Recommended num_windows (CO): {recommended_CO}')
-    print(f'Recommended num_windows (FR): {recommended_FR}')
-
-    candidates = [v for v in (recommended_CO, recommended_FR) if v is not None]
-    if candidates:
-        print(f'Conservative recommendation (safe for all populations): num_windows = {min(candidates)}')
-    else:
-        print('No candidate num_windows passed the ratio threshold for all populations.')
-
-    # Plots
-    fig, (ax_curve, ax_ratio) = plt.subplots(1, 2, figsize=(14, 5))
-
-    # Plot 1: LD decay curve (bins on the x-axis, one line per population)
     ax_curve.plot(centers, mean_r2_CO, marker="o", ms=3, label="CO", color="tab:blue")
-    ax_curve.axhline(floor_CO, color="tab:blue", ls=":", alpha=0.4)
+    ax_curve.axhline(floor_CO, color="tab:blue", ls=":", alpha=0.5)
     ax_curve.plot(centers, mean_r2_FR, marker="o", ms=3, label="FR", color="tab:orange")
-    ax_curve.axhline(floor_FR, color="tab:orange", ls=":", alpha=0.4)
-    ax_curve.axvline(largest_window_size, color="black", ls="--",
-                      label=f"largest window ({largest_window_size:,.0f} bp)")
-    ax_curve.set_xscale("log")
-    ax_curve.set_xlabel("Distance (bp)")
-    ax_curve.set_ylabel(r"mean $r^2$")
-    ax_curve.set_title("LD decay curve")
-    ax_curve.legend(fontsize=8)
+    ax_curve.axhline(floor_FR, color="tab:orange", ls=":", alpha=0.5)
 
-    # Plot 2: ratio vs candidate num_windows (candidate windows on the x-axis)
-    ax_ratio.plot(candidate_windows, ratio_CO, marker="o", ms=4, label="CO", color="tab:blue")
-    ax_ratio.plot(candidate_windows, ratio_FR, marker="o", ms=4, label="FR", color="tab:orange")
-    ax_ratio.axhline(1.0, color="gray", ls="-", lw=1, alpha=0.6)
-    ax_ratio.axhline(ratio_threshold, color="gray", ls="--", lw=1, alpha=0.6,
-                      label=f"threshold={ratio_threshold}")
-    ax_ratio.set_xscale("log")
-    ax_ratio.set_xlabel("num_windows")
-    ax_ratio.set_ylabel(r"$r^2$(window_size) / fixed floor")
-    ax_ratio.set_title("Excess-correlation ratio vs. candidate window count")
-    ax_ratio.legend(fontsize=8)
+    cmap = plt.get_cmap("Greens")
+    for i, t in enumerate(ratio_thresholds):
+        w_both = candidate_bp[t][2]
+        if np.isfinite(w_both):
+            ax_curve.axvline(w_both, color=cmap(0.4 + 0.5 * i / len(ratio_thresholds)),
+                             ls="--", lw=1, label=f"{t:.2f}x floor -> {w_both:,.0f} bp")
+
+    # Mark specific block counts as window sizes (window = chr_length / n_blocks).
+    # 50 blocks = large/very independent but few replicates; ~283 blocks = smallest
+    # window that is still ~independent (1.05x floor, safe for both populations).
+    for n_blocks_mark, color in [(50, "crimson"), (283, "black")]:
+        w = chr_length / n_blocks_mark
+        ax_curve.axvline(w, color=color, ls="-", lw=2, alpha=0.8,
+                         label=f"{n_blocks_mark} blocks = {w:,.0f} bp")
+
+    ax_curve.set_xscale("log")
+    ax_curve.set_xlabel("Distance (bp) = window size")
+    ax_curve.set_ylabel(r"mean $r^2$")
+    ax_curve.set_title("LD decay curve with candidate window sizes")
+    ax_curve.legend(fontsize=8)
 
     fig.tight_layout()
     out_path = "/sietch_colab/akapoor/Infer_Demography/figures/bootstrap_window_size.png"
