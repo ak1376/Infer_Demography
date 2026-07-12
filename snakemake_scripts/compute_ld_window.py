@@ -42,6 +42,12 @@ def parse_args():
         "--config-file", required=True, type=Path, help="experiment_config_*.json"
     )
     p.add_argument("--r-bins", required=True, help="comma-separated recomb-bin edges")
+    p.add_argument(
+        "--rec-map-file",
+        default=None,
+        type=Path,
+        help="recombination map to use (default: <sim-dir>/windows/flat_map.txt)",
+    )
     return p.parse_args()
 
 
@@ -56,7 +62,11 @@ def main():
 
     vcf_gz = sim_dir / "windows" / f"window_{idx}.vcf.gz"
     samples_t = sim_dir / "windows" / "samples.txt"
-    rec_map_t = sim_dir / "windows" / "flat_map.txt"
+    rec_map_t = (
+        args.rec_map_file.resolve()
+        if args.rec_map_file is not None
+        else sim_dir / "windows" / "flat_map.txt"
+    )
     out_dir = sim_dir / "LD_stats"
     out_pkl = out_dir / f"LD_stats_window_{idx}.pkl"
 

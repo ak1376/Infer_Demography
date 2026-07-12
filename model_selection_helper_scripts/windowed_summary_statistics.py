@@ -43,7 +43,7 @@ import matplotlib.pyplot as plt
 import allel
 
 ROOT = Path("/sietch_colab/akapoor/Infer_Demography")
-REAL_VCF = str(ROOT / "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz")
+REAL_VCF = str(ROOT / "real_data_analysis/data/drosophila/Chr2L/polarized.vcf.gz")
 POPFILE = str(ROOT / "real_data_analysis/data/drosophila/popfile.txt")
 OUT_DIR = ROOT / "figures"
 

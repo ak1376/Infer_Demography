@@ -21,7 +21,7 @@ We will do this in the following steps:
     8. Combine across populations. We would be doing the above for CO and FR. But I want to have a window size that produces approx independent windows 
 """
 
-real_vcf = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz"
+real_vcf = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L/polarized.vcf.gz"
 popfile = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/popfile.txt"
 
 import subprocess

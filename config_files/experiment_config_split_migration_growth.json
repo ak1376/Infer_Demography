@@ -1,5 +1,5 @@
 {
-  "genome_length": 24000000,
+  "genome_length": 96606862,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
   "demographic_model": "split_migration_growth",
@@ -9,7 +9,7 @@
     "FR": 9
   },
   "seed": 42,
-  "num_optimizations": 5,
+  "num_optimizations": 100,
   "top_k": 1,
   "num_draws": 100,
   "priors": {
@@ -100,7 +100,7 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": false,
+  "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [10, 15, 20],
   "dadi_maxeval": 300,

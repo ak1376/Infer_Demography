@@ -44,12 +44,27 @@ USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 USE_GS = bool(CFG.get("gram_schmidt", False))
 
 # Make sure these match files that actually exist in your repo
-RAW_HAPLOID_VCF  = "drosophila_data/data/Chr2L.vcf.gz"
-REAL_VCF         = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf.gz"   # diploid-recoded polarized VCF; same sites as SFS
-POLARIZED_VCF    = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz"   # haploid + AA annotation; used for SFS
-UNFOLDED_SFS     = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl"
-REAL_POPFILE     = "real_data_analysis/data/drosophila/popfile.txt"
-ANCESTRAL_FASTA  = "/sietch_colab/data_share/drosophila_melanogaster/dpgp_ancestor/chr2L.q30.fa"
+DROSO_DIR        = "real_data_analysis/data/drosophila"
+AUTOSOMES        = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]          # X excluded (different ploidy/Ne)
+ANCESTRAL_DIR    = "/sietch_colab/data_share/drosophila_melanogaster/dpgp_ancestor"
+
+# Data now lives in per-chromosome subdirs: {DROSO_DIR}/{chrom}/{polarized,polarized.diploidGT,unfolded.sfs}...
+RAW_HAPLOID_VCF  = "drosophila_data/data/Chr2L.vcf.gz"                    # legacy Chr2L alias
+REAL_POPFILE     = f"{DROSO_DIR}/popfile.txt"
+REAL_VCF         = f"{DROSO_DIR}/Chr2L/polarized.diploidGT.vcf.gz"        # diploid polarized (Chr2L); used by MomentsLD-real
+POLARIZED_VCF    = f"{DROSO_DIR}/Chr2L/polarized.vcf.gz"                  # haploid + AA (Chr2L); legacy alias
+UNFOLDED_SFS     = f"{DROSO_DIR}/Chr2L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr2L); legacy alias
+COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl"     # summed autosomal SFS; used by SFS inference
+ANCESTRAL_FASTA  = f"{ANCESTRAL_DIR}/chr2L.q30.fa"                        # legacy Chr2L alias
+
+# Per-chromosome path helpers (by-chromosome layout)
+def polarized_vcf(chrom):          return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
+def polarized_diploid_vcf(chrom):  return f"{DROSO_DIR}/{chrom}/polarized.diploidGT.vcf.gz"
+def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded.sfs.pkl"
+def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr', 'chr', 1)}.q30.fa"
+
+wildcard_constraints:
+    chrom = r"Chr(2L|2R|3L|3R)",
 
 
 def _resid_vector_fname():
@@ -87,6 +102,12 @@ LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 
 # Real-data LD mirrors LD_ROOT but without sid
 REAL_LD_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD"
+# Per-autosome LD decay analysis (independent of the Chr2L inference pipeline above)
+REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_by_chrom"
+# Same, but with the real Comeron (R5/dm3) recombination map and 1 Mb windows.
+REAL_LD_GENMAP     = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_genmap"
+GENMAP_WINDOW_SIZE = 1_000_000
+COMERON_XLSX       = f"{DROSO_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"
 REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis/runs"
 REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences"
 REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
@@ -1333,11 +1354,11 @@ rule recode_haploid_to_diploid_Chr2L:
         vcf="drosophila_data/data/Chr2L.vcf.gz",
         tbi="drosophila_data/data/Chr2L.vcf.gz.tbi",
     output:
-        vcf="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz",
-        tbi="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf.gz.tbi",
+        vcf="real_data_analysis/data/drosophila/Chr2L/diploidGT.vcf.gz",
+        tbi="real_data_analysis/data/drosophila/Chr2L/diploidGT.vcf.gz.tbi",
     params:
         script=f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
-        tmp_vcf="real_data_analysis/data/drosophila/Chr2L.diploidGT.vcf",  # Changed to match output dir
+        tmp_vcf="real_data_analysis/data/drosophila/Chr2L/diploidGT.vcf",  # Changed to match output dir
     threads: 1
     shell:
         r"""
@@ -1352,48 +1373,25 @@ rule recode_haploid_to_diploid_Chr2L:
         """
 
 ##############################################################################
-# RULE recode_polarized_to_diploid
-# Recode the AA-annotated haploid VCF to diploid GTs so that MomentsLD can
-# use exactly the same sites as the SFS analysis.
-##############################################################################
-rule recode_polarized_to_diploid:
-    input:
-        vcf = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz",
-        tbi = "real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz.tbi",
-    output:
-        vcf = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf.gz",
-        tbi = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf.gz.tbi",
-    params:
-        script  = f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
-        tmp_vcf = "real_data_analysis/data/drosophila/Chr2L.polarized.diploidGT.vcf",
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "$(dirname "{params.tmp_vcf}")"
-        python "{params.script}" "{input.vcf}" "{params.tmp_vcf}"
-        bgzip -f "{params.tmp_vcf}"
-        tabix -f -p vcf "{output.vcf}"
-        """
-
-##############################################################################
-# RULE annotate_ancestral_allele
+# RULE annotate_ancestral_allele  (per-chromosome, autosomes)
 # Polarize the raw haploid VCF using the DPGP ML-ancestor FASTA.
+# FASTA naming differs from the VCF: "Chr2L" -> "chr2L.q30.fa".
 # Adds an AA= INFO field; sites where the ancestral base is N or matches
 # neither allele are dropped.  Output is bgzipped + tabix-indexed.
 ##############################################################################
 rule annotate_ancestral_allele:
     input:
-        vcf   = RAW_HAPLOID_VCF,
-        tbi   = RAW_HAPLOID_VCF + ".tbi",
-        fasta = ANCESTRAL_FASTA,
+        vcf   = "drosophila_data/data/{chrom}.vcf.gz",
+        tbi   = "drosophila_data/data/{chrom}.vcf.gz.tbi",
+        fasta = lambda wc: ancestral_fasta(wc.chrom),
     output:
-        vcf = POLARIZED_VCF,
-        tbi = POLARIZED_VCF + ".tbi",
+        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
+        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
     threads: 1
     shell:
         r"""
         set -euo pipefail
+        mkdir -p "$(dirname "{output.vcf}")"
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/annotate_ancestral_allele.py \
           --input-vcf       "{input.vcf}" \
@@ -1401,19 +1399,44 @@ rule annotate_ancestral_allele:
           --output-vcf      "{output.vcf}"
         """
 
+##############################################################################
+# RULE recode_polarized_to_diploid  (per-chromosome, autosomes)
+# Recode the AA-annotated haploid VCF to diploid GTs so that MomentsLD can
+# use exactly the same sites as the SFS analysis.
+##############################################################################
+rule recode_polarized_to_diploid:
+    input:
+        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
+        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
+    output:
+        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT.vcf.gz",
+        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT.vcf.gz.tbi",
+    params:
+        script = f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname "{output.vcf}")"
+        out="{output.vcf}"
+        tmp_vcf="${{out%.gz}}"                 # uncompressed temp (strip .gz)
+        python "{params.script}" "{input.vcf}" "$tmp_vcf"
+        bgzip -f "$tmp_vcf"
+        tabix -f -p vcf "{output.vcf}"
+        """
 
 ##############################################################################
-# RULE compute_unfolded_sfs
+# RULE compute_unfolded_sfs  (per-chromosome, autosomes)
 # Build the 2D unfolded SFS directly from the polarized haploid VCF.
 # Each sample contributes 1 chromosome (no diploid recoding needed).
 ##############################################################################
 rule compute_unfolded_sfs:
     input:
-        vcf     = POLARIZED_VCF,
-        tbi     = POLARIZED_VCF + ".tbi",
+        vcf     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
+        tbi     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
         popfile = REAL_POPFILE,
     output:
-        sfs = UNFOLDED_SFS,
+        sfs = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
     threads: 1
     shell:
         r"""
@@ -1425,13 +1448,46 @@ rule compute_unfolded_sfs:
           --output-sfs "{output.sfs}"
         """
 
+##############################################################################
+# RULE combine_autosomal_sfs
+# Sum the per-chromosome unfolded SFSs for the four autosomes into one
+# genome-wide (autosomal) spectrum (entry-by-entry; fixed-site corners masked).
+##############################################################################
+rule combine_autosomal_sfs:
+    input:
+        per_chrom = expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl", chrom=AUTOSOMES),
+    output:
+        sfs = COMBINED_SFS,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname "{output.sfs}")"
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/combine_sfs.py \
+          --in-sfs {input.per_chrom} \
+          --output-sfs "{output.sfs}"
+        """
+
+##############################################################################
+# Convenience targets (autosomes)
+##############################################################################
+rule all_polarized_diploid:
+    input:
+        expand(f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT.vcf.gz", chrom=AUTOSOMES),
+
+rule all_unfolded_sfs:
+    input:
+        expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl", chrom=AUTOSOMES),
+        COMBINED_SFS,
+
 
 ##############################################################################
 # REAL DATA – NLopt Poisson SFS optimisation (moments)
 ##############################################################################
 rule infer_moments_real:
     input:
-        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
+        sfs = COMBINED_SFS,
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl")
     params:
@@ -1464,7 +1520,7 @@ rule infer_moments_real:
 ##############################################################################
 rule infer_dadi_real:
     input:
-        sfs = "real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl",
+        sfs = COMBINED_SFS,
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl")
     params:
@@ -1628,6 +1684,222 @@ rule compute_ld_real:
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
             --r-bins "{params.r_bins}"
+        """
+
+##############################################################################
+# PER-AUTOSOME LD DECAY ANALYSIS
+# Same window/LD machinery as the rules above, but parametrised by {chrom} and
+# written under REAL_LD_BYCHROM/{chrom}/ so each autosome is analysed
+# independently. Feeds a cross-autosome decay-curve comparison (no inference).
+##############################################################################
+rule split_real_vcf_window_chrom:
+    input:
+        vcf     = lambda wc: polarized_diploid_vcf(wc.chrom),
+        popfile = REAL_POPFILE,
+    output:
+        vcf_gz = f"{REAL_LD_BYCHROM}/{{chrom}}/windows/window_{{i}}.vcf.gz"
+    params:
+        script      = "snakemake_scripts/split_vcf_windows.py",
+        window_size = WINDOW_SIZE,
+        num_windows = NUM_WINDOWS,
+        out_dir     = f"{REAL_LD_BYCHROM}/{{chrom}}/windows",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.out_dir}"
+
+        python "{params.script}" \
+            --input-vcf "{input.vcf}" \
+            --popfile "{input.popfile}" \
+            --out-dir "{params.out_dir}" \
+            --window-size "{params.window_size}" \
+            --num-windows "{params.num_windows}" \
+            --window-index "{wildcards.i}"
+        """
+
+rule compute_ld_real_chrom:
+    input:
+        vcf_gz = f"{REAL_LD_BYCHROM}/{{chrom}}/windows/window_{{i}}.vcf.gz"
+    output:
+        pkl = f"{REAL_LD_BYCHROM}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
+    resources:
+        gpu = 1 if USE_GPU_LD else 0
+    params:
+        script  = "snakemake_scripts/compute_ld_window.py",
+        config  = EXP_CFG,
+        sim_dir = f"{REAL_LD_BYCHROM}/{{chrom}}",
+        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats"
+
+        python "{params.script}" \
+            --sim-dir "{params.sim_dir}" \
+            --window-index "{wildcards.i}" \
+            --config-file "{params.config}" \
+            --r-bins "{params.r_bins}"
+        """
+
+rule aggregate_ld_chrom:
+    """Aggregate per-window LD stats for one autosome into means/varcovs."""
+    input:
+        pkls = lambda w: expand(
+            f"{REAL_LD_BYCHROM}/{w.chrom}/LD_stats/LD_stats_window_{{i}}.pkl",
+            i=WINDOWS
+        ),
+    output:
+        mv = f"{REAL_LD_BYCHROM}/{{chrom}}/means.varcovs.pkl",
+    params:
+        output_root = f"{REAL_LD_BYCHROM}/{{chrom}}",
+        cfg         = EXP_CFG,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/LD_inference.py" \
+            --output-root "{params.output_root}" \
+            --config-file "{params.cfg}" \
+            --skip-optimize
+        test -f "{output.mv}"
+        """
+
+rule compare_ld_decay_autosomes:
+    """Overlay LD decay curves across autosomes, one panel per LD statistic."""
+    input:
+        mv = expand(f"{REAL_LD_BYCHROM}/{{chrom}}/means.varcovs.pkl", chrom=AUTOSOMES),
+    output:
+        pdf = f"{REAL_LD_BYCHROM}/ld_decay_across_autosomes.pdf",
+    params:
+        script = "snakemake_scripts/compare_ld_decay_autosomes.py",
+        labels = " ".join(AUTOSOMES),
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --means {input.mv} \
+            --labels {params.labels} \
+            --out-pdf "{output.pdf}"
+        """
+
+##############################################################################
+# PER-AUTOSOME LD DECAY WITH THE REAL COMERON (R5/dm3) RECOMBINATION MAP
+# Same as the by_chrom rules above, but (1) windows are 1 Mb (faster) and
+# (2) LD stats are binned by genetic distance from the Comeron map instead of a
+# flat rate. Lets you check whether the cross-autosome curves collapse once the
+# recombination landscape is accounted for.
+##############################################################################
+rule build_genetic_map_real:
+    input:
+        xlsx = COMERON_XLSX,
+    output:
+        gmap = f"{REAL_LD_GENMAP}/{{chrom}}/genetic_map.txt",
+    params:
+        script = "snakemake_scripts/build_genetic_map.py",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --xlsx  "{input.xlsx}" \
+            --chrom "{wildcards.chrom}" \
+            --out   "{output.gmap}"
+        """
+
+rule split_real_vcf_window_genmap:
+    input:
+        vcf     = lambda wc: polarized_diploid_vcf(wc.chrom),
+        popfile = REAL_POPFILE,
+    output:
+        vcf_gz = f"{REAL_LD_GENMAP}/{{chrom}}/windows/window_{{i}}.vcf.gz"
+    params:
+        script      = "snakemake_scripts/split_vcf_windows.py",
+        window_size = GENMAP_WINDOW_SIZE,
+        num_windows = NUM_WINDOWS,
+        out_dir     = f"{REAL_LD_GENMAP}/{{chrom}}/windows",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.out_dir}"
+
+        python "{params.script}" \
+            --input-vcf "{input.vcf}" \
+            --popfile "{input.popfile}" \
+            --out-dir "{params.out_dir}" \
+            --window-size "{params.window_size}" \
+            --num-windows "{params.num_windows}" \
+            --window-index "{wildcards.i}"
+        """
+
+rule compute_ld_real_genmap:
+    input:
+        vcf_gz = f"{REAL_LD_GENMAP}/{{chrom}}/windows/window_{{i}}.vcf.gz",
+        gmap   = f"{REAL_LD_GENMAP}/{{chrom}}/genetic_map.txt",
+    output:
+        pkl = f"{REAL_LD_GENMAP}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
+    resources:
+        gpu = 1 if USE_GPU_LD else 0
+    params:
+        script  = "snakemake_scripts/compute_ld_window.py",
+        config  = EXP_CFG,
+        sim_dir = f"{REAL_LD_GENMAP}/{{chrom}}",
+        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats"
+
+        python "{params.script}" \
+            --sim-dir "{params.sim_dir}" \
+            --window-index "{wildcards.i}" \
+            --config-file "{params.config}" \
+            --r-bins "{params.r_bins}" \
+            --rec-map-file "{input.gmap}"
+        """
+
+rule aggregate_ld_genmap:
+    """Aggregate the Comeron-mapped per-window LD stats for one autosome."""
+    input:
+        pkls = lambda w: expand(
+            f"{REAL_LD_GENMAP}/{w.chrom}/LD_stats/LD_stats_window_{{i}}.pkl",
+            i=WINDOWS
+        ),
+    output:
+        mv = f"{REAL_LD_GENMAP}/{{chrom}}/means.varcovs.pkl",
+    params:
+        output_root = f"{REAL_LD_GENMAP}/{{chrom}}",
+        cfg         = EXP_CFG,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/LD_inference.py" \
+            --output-root "{params.output_root}" \
+            --config-file "{params.cfg}" \
+            --skip-optimize
+        test -f "{output.mv}"
+        """
+
+rule compare_ld_decay_genmap:
+    """Overlay Comeron-mapped LD decay curves across autosomes."""
+    input:
+        mv = expand(f"{REAL_LD_GENMAP}/{{chrom}}/means.varcovs.pkl", chrom=AUTOSOMES),
+    output:
+        pdf = f"{REAL_LD_GENMAP}/ld_decay_across_autosomes.pdf",
+    params:
+        script = "snakemake_scripts/compare_ld_decay_autosomes.py",
+        labels = " ".join(AUTOSOMES),
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --means {input.mv} \
+            --labels {params.labels} \
+            --out-pdf "{output.pdf}"
         """
 
 ##############################################################################

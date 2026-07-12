@@ -38,7 +38,7 @@ BLOCK_COUNTS = [20, 30, 40, 50, 75, 100, 150, 200, 283]
 NUM_BOOT_REPS = 1000
 RNG_SEED = 0
 
-real_vcf = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz"
+real_vcf = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L/polarized.vcf.gz"
 popfile = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/popfile.txt"
 unfolded_sfs_path = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl"
 simple_fit_path = "/sietch_colab/akapoor/Infer_Demography/experiments/split_migration_growth/real_data_analysis/inferences/moments/best_fit.pkl"
