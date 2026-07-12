@@ -73,7 +73,13 @@ def _theta_hat_poisson_mle(sfs: dadi.Spectrum, base_sfs: np.ndarray) -> float:
 def _mask_safe_poisson_ll(sfs: dadi.Spectrum, exp_sfs: np.ndarray, eps: float) -> float:
     obs = np.asarray(sfs)
     exp = np.asarray(exp_sfs)
-    ll = obs * np.log(exp + eps) - exp
+    # Floor the expected SFS to a tiny positive value before the log. dadi's
+    # Richardson extrapolation routinely yields small NEGATIVE entries, and once
+    # scaled by a large profiled theta these dwarf a fixed additive eps, turning
+    # log(exp + eps) into NaN. Flooring protects against negatives and exact zeros
+    # regardless of theta's magnitude.
+    exp_floor = np.maximum(exp, eps)
+    ll = obs * np.log(exp_floor) - exp
     mask = getattr(sfs, "mask", None)
     if mask is None:
         return float(ll.sum())
@@ -237,6 +243,8 @@ def fit_model_realdata_scaled(
 
     # loglik in scaled space with theta profiled
     last_eval: Dict[str, Any] = {"log10_params": None, "ll": None}
+    # best finite point seen, so we can recover if nlopt aborts (e.g. RoundoffLimited)
+    best_seen: Dict[str, Any] = {"ll": -np.inf, "log10_params": None}
 
     def loglikelihood(log10_params: np.ndarray) -> float:
         last_eval["log10_params"] = np.array(log10_params, copy=True)
@@ -258,6 +266,11 @@ def fit_model_realdata_scaled(
                 return BAD_LL
 
             last_eval["ll"] = float(ll)
+            if float(ll) > best_seen["ll"]:
+                best_seen["ll"] = float(ll)
+                best_seen["log10_params"] = np.clip(
+                    np.array(log10_params, copy=True), np.log10(lb), np.log10(ub)
+                )
             return float(ll)
         except Exception as e:
             if verbose:
@@ -327,13 +340,28 @@ def fit_model_realdata_scaled(
 
         return "\n".join(lines) + "\n"
 
+    # nlopt.RoundoffLimited does NOT subclass nlopt.runtime_error, so it must be
+    # caught explicitly or it escapes uncaught. It signals that roundoff halted the
+    # algorithm; the best point found so far is generally still usable.
+    _NLOPT_ABORT = (nlopt.runtime_error, nlopt.RoundoffLimited)
+
+    def _recover_or(x_default: np.ndarray) -> np.ndarray:
+        """Prefer the best finite point seen; fall back to x_default."""
+        if best_seen["log10_params"] is not None:
+            print(
+                f"[DADI REAL DEBUG] recovering best seen point (ll={best_seen['ll']:.6g})"
+            )
+            return np.asarray(best_seen["log10_params"], float)
+        return np.asarray(x_default, float)
+
     try:
         xhat = opt.optimize(x0)
-    except nlopt.runtime_error:
+    except _NLOPT_ABORT as e:
         print(
-            "[DADI REAL DEBUG] LD_LBFGS runtime_error; capturing debug state and falling back to LN_COBYLA"
+            f"[DADI REAL DEBUG] primary optimizer aborted ({type(e).__name__}); "
+            "capturing debug state and falling back to LN_COBYLA"
         )
-        debug_txt = _build_debug_txt("lbfgs_runtime_error")
+        debug_txt = _build_debug_txt(f"primary_{type(e).__name__}")
 
         x_start = last_eval.get("log10_params", None)
         if x_start is None:
@@ -348,12 +376,13 @@ def fit_model_realdata_scaled(
 
         try:
             xhat = opt_fb.optimize(np.asarray(x_start, float))
-        except nlopt.runtime_error:
+        except _NLOPT_ABORT as e2:
             print(
-                "[DADI REAL DEBUG] LN_COBYLA runtime_error too; capturing debug state and re-raising"
+                f"[DADI REAL DEBUG] LN_COBYLA also aborted ({type(e2).__name__}); "
+                "recovering best evaluated point instead of crashing"
             )
-            debug_txt = _build_debug_txt("cobyla_runtime_error")
-            raise
+            debug_txt = _build_debug_txt(f"cobyla_{type(e2).__name__}")
+            xhat = _recover_or(x_start)
 
     ll_hat = float(loglikelihood(xhat))
 
