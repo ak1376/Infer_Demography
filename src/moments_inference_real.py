@@ -235,10 +235,14 @@ def fit_model_realdata_scaled(
     theta_hat = float(_theta_hat_poisson_mle(sfs, np.asarray(base_hat)))
 
     mu = float(experiment_config["mutation_rate"])
-    L = float(experiment_config["genome_length"])
+    # Sequence length for the theta -> implied-N_ANC conversion only (does NOT
+    # affect the optimisation or the log-likelihood). Prefer a dedicated
+    # real-data key so "genome_length" can stay simulation-only; fall back to
+    # genome_length when it is absent (backward compatible).
+    L = float(experiment_config.get("real_genome_length", experiment_config["genome_length"]))
     muL = mu * L
     if muL <= 0:
-        raise ValueError("mutation_rate * genome_length must be > 0 for implied N_ANC.")
+        raise ValueError("mutation_rate * (real_)genome_length must be > 0 for implied N_ANC.")
     N_anc_implied = float(theta_hat) / float(4.0 * muL)
 
     # convert scaled params at optimum to ABSOLUTE using implied N_ANC

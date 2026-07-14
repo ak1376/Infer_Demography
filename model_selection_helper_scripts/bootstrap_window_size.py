@@ -21,8 +21,16 @@ We will do this in the following steps:
     8. Combine across populations. We would be doing the above for CO and FR. But I want to have a window size that produces approx independent windows 
 """
 
-real_vcf = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/Chr2L/polarized.vcf.gz"
-popfile = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila/popfile.txt"
+# Autosomes to analyse. Keep this in sync with AUTOSOMES in the Snakefile
+# (Chr3R is currently dropped because of the In(3R)Payne inversion signal).
+DROSO_DIR = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila"
+AUTOSOMES = ["Chr2L", "Chr3L"]
+popfile = f"{DROSO_DIR}/popfile.txt"
+
+
+def polarized_vcf(chrom):
+    """Per-chromosome polarized (haploid + AA) VCF, mirroring the Snakefile helper."""
+    return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
 
 import subprocess
 import numpy as np
@@ -138,158 +146,154 @@ def window_size_for_target(centers, mean_r2, target):
     return np.nan
 
 
-if __name__ == "__main__":
+def analyze_chrom(chrom, popfile_path, n_pairs=300_000, n_bins=100, seed=295):
+    """Run steps 1-5 for a single autosome.
 
-    # Step 1: Load the data.
-    pos, geno, pop_names = load_positions_and_genotypes(real_vcf, popfile)
-    print(f"Loaded {len(pos):,} sites, populations: {pop_names}")
+    Returns a dict with the LD-decay curve (centers, mean_r2 per pop), the
+    per-population background floor, the arm length, and the largest candidate
+    window (the distance beyond which the floor is averaged). Bins/max_value are
+    arm-specific (they scale with arm length), so window sizes are read off each
+    arm's own curve and reported back in bp.
+    """
+    # Step 1: load positions + genotypes for this arm.
+    pos, geno, pop_names = load_positions_and_genotypes(polarized_vcf(chrom), popfile_path)
+    print(f"[{chrom}] loaded {len(pos):,} sites, populations: {pop_names}")
     for pop in pop_names:
-        print(f"  {pop}: {geno[pop].shape[1]} samples")
-    
+        print(f"    {pop}: {geno[pop].shape[1]} samples")
+
     chr_length = int(pos[-1] - pos[0])
 
-    # Step 2: define the number of windows and calculate the window sizes
+    # Step 2: candidate window counts -> window sizes (bp) for this arm.
     candidate_windows = np.unique(np.round(np.geomspace(10, 1000, 50)).astype(int))
     candidate_window_sizes = chr_length / candidate_windows
 
-    # Step 3: Determine the largest window size
+    # Step 3: largest candidate window; sample pairs out to 3x that distance so we
+    # can see the curve flatten into its floor.
     largest_window_size = np.max(candidate_window_sizes)
+    max_value = 3 * largest_window_size
 
-    max_value = 3*largest_window_size
-
-    # Step 4: Randomly sample a set number of SNP pairs 
-    seed = 295
-    rng = np.random.default_rng(seed)   # create a reproducible random number generator
+    # Step 4: sample SNP pairs uniformly in log-distance from 1 bp to max_value.
+    rng = np.random.default_rng(seed)
     n_sites = len(pos)
-    n_pairs = 300_000                    # however many pairs you want to sample
     anchors = rng.integers(0, n_sites, size=n_pairs)
-    print(f'Length of Anchors: {len(anchors)}')
-
-    # Now what we do is we assign a distance to each anchor SNP. SNP B that is that distance away from SNP A will be a pair. 
-    # Doing this in log space because that will allow us to uniformly pick distances across multiple scales of magnitude
     target_dist = np.exp(rng.uniform(np.log(1.0), np.log(max_value), size=n_pairs))
-    # print(f'Target Dist: {target_dist}')
     target_dist_absolute = pos[anchors] + target_dist
-
-    # Now find the partners 
-    partners = np.searchsorted(pos, target_dist_absolute)
-    partners = np.clip(partners, 0, n_sites - 1)
-
-    # Edge case where the partner is the SNP itself
+    partners = np.clip(np.searchsorted(pos, target_dist_absolute), 0, n_sites - 1)
     valid = partners != anchors
     anchors, partners = anchors[valid], partners[valid]
-
-    # print(f'Length of anchors after filter: {len(anchors)}')
-
-    # print(f'Anchors: {anchors}')
-    # print(f'Partners: {partners}')
-
     diff = np.abs(pos[anchors] - pos[partners])
-    # print(f'Max Dist: {np.max(diff)}')
-    # print(f'Min Dist: {np.min(diff)}')
-    # print(f'Mean Dist: {np.mean(diff)}')
 
-    # Now compute the R2 value for each pair and for each population (CO vs FR)
-    r2_CO = r_squared(geno["CO"], anchors, partners)
-    r2_FR = r_squared(geno["FR"], anchors, partners)
-
-    print(f'R2_CO: {r2_CO}')
-    print(f'R2_FR: {r2_FR}')
-
-    # print(f'CO NaN count: {np.sum(np.isnan(r2_CO))} / {len(r2_CO)} ({100*np.mean(np.isnan(r2_CO)):.1f}%)')
-    # print(f'FR NaN count: {np.sum(np.isnan(r2_FR))} / {len(r2_FR)} ({100*np.mean(np.isnan(r2_FR)):.1f}%)')
-
-    # short = diff < np.median(diff)
-    # far = diff >= np.median(diff)
-
-    # print(f'CO NaN rate, short pairs: {100*np.mean(np.isnan(r2_CO[short])):.1f}%')
-    # print(f'CO NaN rate, far pairs:   {100*np.mean(np.isnan(r2_CO[far])):.1f}%')
-    # print(f'FR NaN rate, short pairs: {100*np.mean(np.isnan(r2_FR[short])):.1f}%')
-    # print(f'FR NaN rate, far pairs:   {100*np.mean(np.isnan(r2_FR[far])):.1f}%')
-
-    # Now let's bin these pairs. We will find the SNP pairs that fall within each bin and then average the R2 value
-    n_bins = 100
+    # Step 4.1/4.2: r^2 per pair per population, then bin-average.
+    r2 = {pop: r_squared(geno[pop], anchors, partners) for pop in pop_names}
     bins = np.logspace(0, np.log10(max_value), n_bins + 1)
-    # print(bins)
+    centers = None
+    mean_r2 = {}
+    for pop in pop_names:
+        centers, mean_r2[pop] = bin_mean_r2(diff, r2[pop], bins)
 
-    centers, mean_r2_CO = bin_mean_r2(diff, r2_CO, bins)
-    _, mean_r2_FR = bin_mean_r2(diff, r2_FR, bins)
+    # Step 5: per-population background floor = mean r^2 beyond the largest window.
+    floor = {pop: np.nanmean(mean_r2[pop][centers > largest_window_size]) for pop in pop_names}
+    for pop in pop_names:
+        print(f"    floor[{pop}] = {floor[pop]:.4g}")
 
-    print(f'Bin centers: {centers}')
-    print(f'Mean r2 CO: {mean_r2_CO}')
-    print(f'Mean r2 FR: {mean_r2_FR}')
+    return {
+        "chrom": chrom,
+        "chr_length": chr_length,
+        "pop_names": pop_names,
+        "centers": centers,
+        "mean_r2": mean_r2,
+        "floor": floor,
+        "largest_window_size": largest_window_size,
+    }
 
-    # Step 5: fixed background floor = mean r2 for bins beyond the LARGEST candidate
-    # window (largest_window_size). At these distances LD has flattened out, so this
-    # is the residual "independent" correlation level for each population.
-    floor_CO = np.nanmean(mean_r2_CO[centers > largest_window_size])
-    floor_FR = np.nanmean(mean_r2_FR[centers > largest_window_size])
 
-    print(f'Floor CO: {floor_CO}')
-    print(f'Floor FR: {floor_FR}')
+if __name__ == "__main__":
 
-    # Step 6: read candidate window sizes straight off the decay curve. For a set of
-    # "closeness to floor" thresholds, find the distance where r^2 has decayed to
-    # <= threshold * floor. That distance IS the window size (SNPs a window apart are
-    # then within `threshold` of background). A larger threshold -> curve crosses
-    # sooner -> smaller (less conservative) window.
     ratio_thresholds = [1.05, 1.1, 1.2, 1.5, 2.0]
 
-    print("\nCandidate window sizes (bp), read off the LD decay curve:")
-    print(f"{'closeness':>10} {'CO (bp)':>16} {'FR (bp)':>16} {'safe-for-both':>16}")
-    candidate_bp = {}
-    for t in ratio_thresholds:
-        w_CO = window_size_for_target(centers, mean_r2_CO, t * floor_CO)
-        w_FR = window_size_for_target(centers, mean_r2_FR, t * floor_FR)
-        # Safe for both populations = the LARGER window (whichever pop decays slower
-        # needs more distance to reach background).
-        w_both = np.nanmax([w_CO, w_FR])
-        candidate_bp[t] = (w_CO, w_FR, w_both)
-        print(f"{t:>10.2f} {w_CO:>16,.0f} {w_FR:>16,.0f} {w_both:>16,.0f}")
+    # Steps 1-5 for every autosome.
+    results = {chrom: analyze_chrom(chrom, popfile) for chrom in AUTOSOMES}
+    pop_names = results[AUTOSOMES[0]]["pop_names"]
 
-    # Step 7: convert each safe-for-both window size to a number of windows.
-    print("\nAs number of non-overlapping windows (num_windows = chr_length / window_size):")
+    # Step 6: window size per (arm, population, threshold), read off each arm's curve.
+    #   window_bp[chrom][pop][t] = distance where mean r^2 first drops to <= t * floor.
+    window_bp = {c: {pop: {} for pop in pop_names} for c in AUTOSOMES}
+    for c in AUTOSOMES:
+        res = results[c]
+        for pop in pop_names:
+            for t in ratio_thresholds:
+                window_bp[c][pop][t] = window_size_for_target(
+                    res["centers"], res["mean_r2"][pop], t * res["floor"][pop]
+                )
+
+    # ---- Table: window size (bp) per (arm, pop) and the cross-arm-cross-pop max ----
+    col_keys = [(c, pop) for c in AUTOSOMES for pop in pop_names]
+    header = f"{'closeness':>10}" + "".join(f"{c+'_'+pop:>14}" for c, pop in col_keys) + f"{'GENOME MAX':>14}"
+    print("\nWindow size (bp) needed to reach each 'closeness x floor' level:")
+    print(header)
+    genome_bp = {}
     for t in ratio_thresholds:
-        w_both = candidate_bp[t][2]
-        if np.isfinite(w_both) and w_both > 0:
-            print(f"  closeness {t:.2f}: window ~{w_both:,.0f} bp -> ~{chr_length / w_both:,.0f} windows")
+        vals = [window_bp[c][pop][t] for c, pop in col_keys]
+        gmax = np.nanmax(vals)          # binding constraint = slowest-decaying (arm, pop)
+        genome_bp[t] = gmax
+        row = f"{t:>10.2f}" + "".join(f"{v:>14,.0f}" for v in vals) + f"{gmax:>14,.0f}"
+        print(row)
+
+    # Identify which (arm, pop) sets the genome-wide block size at each threshold.
+    print("\nBinding (slowest-decaying) arm/pop at each closeness level:")
+    for t in ratio_thresholds:
+        vals = {(c, pop): window_bp[c][pop][t] for c, pop in col_keys}
+        finite = {k: v for k, v in vals.items() if np.isfinite(v)}
+        if finite:
+            k = max(finite, key=finite.get)
+            print(f"  closeness {t:.2f}: block ~{finite[k]:,.0f} bp  (set by {k[0]} {k[1]})")
         else:
             print(f"  closeness {t:.2f}: curve never reached this level within sampled range")
 
-    # Plot: single LD decay curve, with each population's floor and the safe-for-both
-    # candidate window sizes marked as vertical lines.
-    fig, ax_curve = plt.subplots(figsize=(8, 5))
+    # Step 7: convert the GENOME-WIDE block size to non-overlapping window counts PER
+    # ARM (each arm has its own length), and sum for the total number of bootstrap
+    # blocks (the number of resampling units the Godambe variance estimate relies on).
+    print("\nGenome-wide block size -> number of independent blocks (resampling units):")
+    for t in ratio_thresholds:
+        gbp = genome_bp[t]
+        if not (np.isfinite(gbp) and gbp > 0):
+            print(f"  closeness {t:.2f}: not reached within sampled range")
+            continue
+        per_arm = {c: int(results[c]["chr_length"] // gbp) for c in AUTOSOMES}
+        total = sum(per_arm.values())
+        per_arm_str = ", ".join(f"{c}:{per_arm[c]}" for c in AUTOSOMES)
+        print(f"  closeness {t:.2f}: block ~{gbp:,.0f} bp -> blocks/arm [{per_arm_str}] -> TOTAL {total}")
 
-    ax_curve.plot(centers, mean_r2_CO, marker="o", ms=3, label="CO", color="tab:blue")
-    ax_curve.axhline(floor_CO, color="tab:blue", ls=":", alpha=0.5)
-    ax_curve.plot(centers, mean_r2_FR, marker="o", ms=3, label="FR", color="tab:orange")
-    ax_curve.axhline(floor_FR, color="tab:orange", ls=":", alpha=0.5)
+    # ---- Overlay plot: one panel per population, one decay curve per arm ----
+    arm_colors = plt.cm.tab10(np.linspace(0, 1, max(len(AUTOSOMES), 1)))
+    fig, axes = plt.subplots(1, len(pop_names), figsize=(7 * len(pop_names), 5), squeeze=False)
+    axes = axes.flatten()
 
-    cmap = plt.get_cmap("Greens")
-    for i, t in enumerate(ratio_thresholds):
-        w_both = candidate_bp[t][2]
-        if np.isfinite(w_both):
-            ax_curve.axvline(w_both, color=cmap(0.4 + 0.5 * i / len(ratio_thresholds)),
-                             ls="--", lw=1, label=f"{t:.2f}x floor -> {w_both:,.0f} bp")
+    # Highlight one operating point on the plot (1.1x floor is a reasonable default).
+    highlight_t = 1.1
 
-    # Mark specific block counts as window sizes (window = chr_length / n_blocks).
-    # 50 blocks = large/very independent but few replicates; ~283 blocks = smallest
-    # window that is still ~independent (1.05x floor, safe for both populations).
-    for n_blocks_mark, color in [(50, "crimson"), (283, "black")]:
-        w = chr_length / n_blocks_mark
-        ax_curve.axvline(w, color=color, ls="-", lw=2, alpha=0.8,
-                         label=f"{n_blocks_mark} blocks = {w:,.0f} bp")
+    for ax, pop in zip(axes, pop_names):
+        for ci, c in enumerate(AUTOSOMES):
+            res = results[c]
+            ax.plot(res["centers"], res["mean_r2"][pop], marker="o", ms=3, lw=1.2,
+                    color=arm_colors[ci], label=c)
+            ax.axhline(res["floor"][pop], color=arm_colors[ci], ls=":", alpha=0.5)
+        gbp = genome_bp.get(highlight_t, np.nan)
+        if np.isfinite(gbp):
+            ax.axvline(gbp, color="black", ls="--", lw=2,
+                       label=f"genome block @ {highlight_t:.2f}x floor\n= {gbp:,.0f} bp")
+        ax.set_xscale("log")
+        ax.set_xlabel("Distance (bp) = candidate block size")
+        ax.set_ylabel(r"mean $r^2$")
+        ax.set_title(f"LD decay — {pop}")
+        ax.grid(True, which="both", ls=":", alpha=0.4)
+        ax.legend(fontsize=8)
 
-    ax_curve.set_xscale("log")
-    ax_curve.set_xlabel("Distance (bp) = window size")
-    ax_curve.set_ylabel(r"mean $r^2$")
-    ax_curve.set_title("LD decay curve with candidate window sizes")
-    ax_curve.legend(fontsize=8)
-
+    fig.suptitle("Per-autosome LD decay and cross-arm block size", fontsize=13)
     fig.tight_layout()
     out_path = "/sietch_colab/akapoor/Infer_Demography/figures/bootstrap_window_size.png"
     fig.savefig(out_path, dpi=150)
-    print(f'Wrote {out_path}')
+    print(f'\nWrote {out_path}')
 
 
 
