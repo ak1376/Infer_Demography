@@ -23,7 +23,10 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_split_migration_growth.json"
+# Experiment config. Defaults to split_migration_growth, but can be overridden
+# on the CLI to run a different model without editing this file, e.g.:
+#   snakemake --config exp_cfg=config_files/experiment_config_split_migration_growth_both.json <target>
+EXP_CFG = config.get("exp_cfg", "config_files/experiment_config_bottleneck.json")
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -45,7 +48,7 @@ USE_GS = bool(CFG.get("gram_schmidt", False))
 
 # Make sure these match files that actually exist in your repo
 DROSO_DIR        = "real_data_analysis/data/drosophila"
-AUTOSOMES        = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]          # X excluded (different ploidy/Ne)
+AUTOSOMES        = ["Chr2L", "Chr3L"]                            # Chr3R dropped (In(3R)Payne); Chr2R dropped (anomalous FR diversity / long-range score correlation); X excluded
 ANCESTRAL_DIR    = "/sietch_colab/data_share/drosophila_melanogaster/dpgp_ancestor"
 
 # Data now lives in per-chromosome subdirs: {DROSO_DIR}/{chrom}/{polarized,polarized.diploidGT,unfolded.sfs}...
@@ -65,6 +68,8 @@ def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr'
 
 wildcard_constraints:
     chrom = r"Chr(2L|2R|3L|3R)",
+    variant = r"(w|wo)_FIM_(w|wo)_SFSresids",
+    reg = r"standard|ridge|lasso|elasticnet",
 
 
 def _resid_vector_fname():
@@ -86,6 +91,23 @@ def _normalize_residual_engines(val):
     return ["moments","dadi"]
 
 RESIDUAL_ENGINES = _normalize_residual_engines(CFG.get("residual_engines", "both"))
+
+# ── Modeling feature-set variants ───────────────────────────────────────────
+# Each variant is a distinct feature set produced from the SAME all_inferences.pkl,
+# differing only in whether FIM elements / SFS-residual elements are included as
+# features. The {variant} wildcard routes datasets + trained models into
+#   experiments/<model>/modeling_<variant>/
+# so all four can be built in one run with no manual renaming.
+MODELING_VARIANTS = [
+    "w_FIM_w_SFSresids",
+    "w_FIM_wo_SFSresids",
+    "wo_FIM_w_SFSresids",
+    "wo_FIM_wo_SFSresids",
+]
+
+def _variant_flags(variant):
+    """(use_fim_features, use_residuals) for a variant name like 'w_FIM_wo_SFSresids'."""
+    return (variant.startswith("w_FIM_"), variant.endswith("_w_SFSresids"))
 
 # Regressors
 REG_TYPES = config["linear"]["types"]  # e.g., ["standard","ridge","lasso","elasticnet"]
@@ -840,6 +862,7 @@ rule compute_fim:
         sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
     output:
         fim  = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy"),
+        summ = f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.summary.json",
     params:
         script = "snakemake_scripts/compute_fim.py",
         cfg    = EXP_CFG
@@ -852,7 +875,8 @@ rule compute_fim:
             --fit-pkl {input.fit} \
             --sfs {input.sfs} \
             --config {params.cfg} \
-            --fim-npy {output.fim}
+            --fim-npy {output.fim} \
+            --summary-json {output.summ}
         """
 
 
@@ -1053,49 +1077,53 @@ rule combine_features:
         cfg  = EXP_CFG
     output:
         # full post-filtering data
-        features_df   = f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-        targets_df    = f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
+        features_df   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/features_df.pkl",
+        targets_df    = f"experiments/{MODEL}/modeling_{{variant}}/datasets/targets_df.pkl",
 
         # raw splits (temp: modeling rules use normalized_* variants)
-        train_X       = temp(f"experiments/{MODEL}/modeling/datasets/train_features.pkl"),
-        train_y       = temp(f"experiments/{MODEL}/modeling/datasets/train_targets.pkl"),
-        tune_X        = temp(f"experiments/{MODEL}/modeling/datasets/tune_features.pkl"),
-        tune_y        = temp(f"experiments/{MODEL}/modeling/datasets/tune_targets.pkl"),
-        val_X         = temp(f"experiments/{MODEL}/modeling/datasets/val_features.pkl"),
-        val_y         = temp(f"experiments/{MODEL}/modeling/datasets/val_targets.pkl"),
+        train_X       = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/train_features.pkl"),
+        train_y       = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/train_targets.pkl"),
+        tune_X        = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/tune_features.pkl"),
+        tune_y        = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/tune_targets.pkl"),
+        val_X         = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/val_features.pkl"),
+        val_y         = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/val_targets.pkl"),
 
         # normalized splits
-        ntrain_X      = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        ntrain_y      = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        ntune_X       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        ntune_y       = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
-        nval_X        = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
-        nval_y        = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
+        ntrain_X      = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
+        ntrain_y      = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
+        ntune_X       = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
+        ntune_y       = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
+        nval_X        = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
+        nval_y        = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
 
         # split indices + plots/metrics
-        split_idx     = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
-        scatter_png   = f"experiments/{MODEL}/modeling/datasets/features_scatterplot.png",
-        mse_val_png   = f"experiments/{MODEL}/modeling/datasets/mse_bars_val_normalized.png",
-        mse_train_png = f"experiments/{MODEL}/modeling/datasets/mse_bars_train_normalized.png",
-        metrics_all   = f"experiments/{MODEL}/modeling/datasets/metrics_all.json",
-        metrics_dadi  = f"experiments/{MODEL}/modeling/datasets/metrics_dadi.json",
-        metrics_moments = f"experiments/{MODEL}/modeling/datasets/metrics_moments.json",
-        metrics_momentsLD = f"experiments/{MODEL}/modeling/datasets/metrics_momentsLD.json",
-        outliers_tsv  = f"experiments/{MODEL}/modeling/datasets/outliers_removed.tsv",
-        outliers_txt  = f"experiments/{MODEL}/modeling/datasets/outliers_preview.txt"
+        split_idx     = f"experiments/{MODEL}/modeling_{{variant}}/datasets/split_indices.json",
+        scatter_png   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/features_scatterplot.png",
+        mse_val_png   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/mse_bars_val_normalized.png",
+        mse_train_png = f"experiments/{MODEL}/modeling_{{variant}}/datasets/mse_bars_train_normalized.png",
+        metrics_all   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_all.json",
+        metrics_dadi  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_dadi.json",
+        metrics_moments = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_moments.json",
+        metrics_momentsLD = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_momentsLD.json",
+        outliers_tsv  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_removed.tsv",
+        outliers_txt  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_preview.txt"
     params:
         script = "snakemake_scripts/feature_extraction.py",
-        outdir = f"experiments/{MODEL}/modeling"
+        outdir = f"experiments/{MODEL}/modeling_{{variant}}",
+        fim_flag   = lambda w: "true" if _variant_flags(w.variant)[0] else "false",
+        resid_flag = lambda w: "true" if _variant_flags(w.variant)[1] else "false",
     threads: 1
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
         python "{params.script}" \
             --experiment-config "{input.cfg}" \
-            --out-dir "{params.outdir}"
+            --out-dir "{params.outdir}" \
+            --use-fim-features {params.fim_flag} \
+            --use-residuals {params.resid_flag}
 
         echo "=== AFTER feature_extraction, listing outputs ==="
-        ls -lah "experiments/{MODEL}/modeling/datasets" || true
+        ls -lah "{params.outdir}/datasets" || true
 
         echo "=== Expected files ==="
         for f in \
@@ -1155,32 +1183,33 @@ rule make_color_scheme:
 ##############################################################################
 rule linear_regression:
     input:
-        X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
+        X_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
+        y_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
 
         # ✅ add tune
-        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
+        X_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
+        y_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
 
-        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         mdlcfg  = "config_files/model_config.yaml"
     output:
-        obj   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
-        errjs = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
-        mdl   = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
-        plot  = f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_results_{{reg}}.png"
+        obj   = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+        errjs = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_model_error_{{reg}}.json",
+        mdl   = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
+        plot  = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_results_{{reg}}.png"
     params:
-        script   = "snakemake_scripts/linear_evaluation.py",
-        expcfg   = EXP_CFG,
+        script    = "snakemake_scripts/linear_evaluation.py",
+        expcfg    = EXP_CFG,
+        model_dir = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}",
         alpha    = lambda w: config["linear"].get(w.reg, {}).get("alpha", 0.0),
         l1_ratio = lambda w: config["linear"].get(w.reg, {}).get("l1_ratio", 0.5),
         gridflag = lambda w: "--do_grid_search" if config["linear"].get(w.reg, {}).get("grid_search", False) else ""
     threads: 2
     benchmark:
-        f"benchmarks/linear_regression_{{reg}}.tsv"
+        f"benchmarks/linear_regression_{{variant}}_{{reg}}.tsv"
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
@@ -1196,6 +1225,7 @@ rule linear_regression:
             --color_shades_file      "{input.shades}" \
             --main_colors_file       "{input.colors}" \
             --regression_type "{wildcards.reg}" \
+            --model_directory "{params.model_dir}" \
             --alpha {params.alpha} \
             --l1_ratio {params.l1_ratio} \
             {params.gridflag}
@@ -1208,25 +1238,25 @@ rule linear_regression:
 ##############################################################################
 rule random_forest:
     input:
-        X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
+        X_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
+        y_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
+        X_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
+        y_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         expcfg  = EXP_CFG,
         mdlcfg  = "config_files/model_config.yaml"
     output:
-        obj   = f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-        errjs = f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-        mdl   = f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-        plot  = f"experiments/{MODEL}/modeling/random_forest/random_forest_results.png",
-        fi    = f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png"
+        obj   = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_mdl_obj.pkl",
+        errjs = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_model_error.json",
+        mdl   = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_model.pkl",
+        plot  = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_results.png",
+        fi    = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_feature_importances.png"
     params:
         script    = "snakemake_scripts/random_forest.py",
-        model_dir = f"experiments/{MODEL}/modeling/random_forest",
+        model_dir = f"experiments/{MODEL}/modeling_{{variant}}/random_forest",
         opt_flags = lambda w: " ".join([
             "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
             f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
@@ -1248,7 +1278,7 @@ rule random_forest:
 
     threads: 8
     benchmark:
-        "benchmarks/random_forest.tsv"
+        f"benchmarks/random_forest_{{variant}}.tsv"
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
@@ -1278,25 +1308,25 @@ rule random_forest:
 ##############################################################################
 rule xgboost:
     input:
-        X_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_features.pkl",
-        y_train = f"experiments/{MODEL}/modeling/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling/datasets/normalized_tune_targets.pkl",
-        X_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling/datasets/normalized_val_targets.pkl",
+        X_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
+        y_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
+        X_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
+        y_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
+        X_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
+        y_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
         shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
         colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
         expcfg  = EXP_CFG,
         mdlcfg  = "config_files/model_config.yaml"
     output:
-        obj   = f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-        errjs = f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-        mdl   = f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-        plot  = f"experiments/{MODEL}/modeling/xgboost/xgb_results.png",
-        fi    = f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png"
+        obj   = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_mdl_obj.pkl",
+        errjs = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_model_error.json",
+        mdl   = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_model.pkl",
+        plot  = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_results.png",
+        fi    = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_feature_importances.png"
     params:
         script    = "snakemake_scripts/xgboost_evaluation.py",
-        model_dir = f"experiments/{MODEL}/modeling/xgboost",
+        model_dir = f"experiments/{MODEL}/modeling_{{variant}}/xgboost",
         opt_flags = lambda w: " ".join([
             "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
             f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
@@ -1320,7 +1350,7 @@ rule xgboost:
         ]).strip()
     threads: 4
     benchmark:
-        "benchmarks/xgboost.tsv"
+        f"benchmarks/xgboost_{{variant}}.tsv"
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
@@ -1344,6 +1374,26 @@ rule xgboost:
         test -f "{output.plot}"  && \
         test -f "{output.fi}"
         """
+
+##############################################################################
+# RULE modeling_all – build every FIM×residuals modeling variant in one run  #
+# Usage:  snakemake -j <N> modeling_all                                       #
+##############################################################################
+rule modeling_all:
+    input:
+        expand(
+            f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+            variant=MODELING_VARIANTS, reg=REG_TYPES,
+        ),
+        expand(
+            f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_mdl_obj.pkl",
+            variant=MODELING_VARIANTS,
+        ),
+        expand(
+            f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_mdl_obj.pkl",
+            variant=MODELING_VARIANTS,
+        ),
+
 
 rule recode_haploid_to_diploid_Chr2L:
     """

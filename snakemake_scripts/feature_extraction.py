@@ -22,7 +22,18 @@ def _parse_args():
     ap.add_argument("--tol-abs", type=float, default=0.0)
     ap.add_argument("--zmax", type=float, default=6.0)
     ap.add_argument("--preview-rows", type=int, default=-1)
+    # Optional overrides for the two feature-set toggles. When omitted, the
+    # values from --experiment-config are used. Accept true/false so callers
+    # (e.g. the Snakemake variant wildcard) can force a specific feature set.
+    ap.add_argument("--use-fim-features", choices=["true", "false"], default=None)
+    ap.add_argument("--use-residuals", choices=["true", "false"], default=None)
     return ap.parse_args()
+
+
+def _bool_or_none(val):
+    if val is None:
+        return None
+    return val == "true"
 
 
 def main() -> None:
@@ -42,6 +53,8 @@ def main() -> None:
         tol_abs=args.tol_abs,
         zmax=args.zmax,
         preview_rows=args.preview_rows,
+        use_fim_features_override=_bool_or_none(args.use_fim_features),
+        use_residuals_override=_bool_or_none(args.use_residuals),
     )
 
     print(f"✓ wrote datasets, plots, and metrics to: {datasets_dir}")

@@ -711,7 +711,9 @@ def build_feature_target_tables(
                 payload = res_block.get(eng)
                 if not isinstance(payload, dict):
                     continue
-                flat = payload.get("flat")
+                # combine_results stores the flat residual vector under "vector"
+                # (fall back to "flat" for any legacy pickles).
+                flat = payload.get("vector", payload.get("flat"))
                 if flat is None:
                     continue
                 for k, v in enumerate(flat):
@@ -873,6 +875,8 @@ def build_modeling_datasets(
     tol_abs: float = 0.0,
     zmax: float = 6.0,
     preview_rows: int = -1,
+    use_fim_features_override: bool | None = None,
+    use_residuals_override: bool | None = None,
 ) -> Path:
     """
     End-to-end dataset build:
@@ -897,6 +901,10 @@ def build_modeling_datasets(
 
     use_fim_features = bool(cfg_raw.get("use_fim_features", False))
     use_residuals = bool(cfg_raw.get("use_residuals", False))
+    if use_fim_features_override is not None:
+        use_fim_features = bool(use_fim_features_override)
+    if use_residuals_override is not None:
+        use_residuals = bool(use_residuals_override)
     residual_engines = norm_resid_engines(cfg_raw.get("residual_engines", "moments"))
 
     priors = cfg_raw["priors"]
