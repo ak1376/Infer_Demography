@@ -59,6 +59,16 @@ def _param_order_from_cfg(cfg: dict) -> list[str]:
     return list(cfg["priors"].keys())
 
 
+def _fit_param_keys(fit_blob: dict) -> set:
+    """Names of the parameters actually present in a fit blob (dict or list form)."""
+    bp = fit_blob.get("best_params") if isinstance(fit_blob, dict) else None
+    if isinstance(bp, dict):
+        return set(bp.keys())
+    if isinstance(bp, list) and bp and isinstance(bp[0], dict):
+        return set(bp[0].keys())
+    return set()
+
+
 def _best_params_from_fit_any(fit_blob: dict, param_order: list[str]) -> np.ndarray:
     """
     Support both formats:
@@ -152,6 +162,14 @@ def main():
             return orig_model(pdict)
 
     param_order = _param_order_from_cfg(cfg)
+    # Restrict to parameters actually present in the fit. Config priors may list
+    # non-inferred targets (e.g. bgs_target_coverage_frac) that the demographic
+    # fit does not contain; the FIM is only over inferred parameters.
+    fit_keys = _fit_param_keys(fit_blob)
+    dropped = [p for p in param_order if p not in fit_keys]
+    param_order = [p for p in param_order if p in fit_keys]
+    if dropped:
+        print(f"[INFO] excluding non-inferred params from FIM: {dropped}")
     theta = _best_params_from_fit_any(fit_blob, param_order)
 
     # dadi pts

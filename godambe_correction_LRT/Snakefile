@@ -1,0 +1,288 @@
+# godambe_correction_LRT/Snakefile
+#
+# Per-arm Moments-LD + Godambe-J block-size sweep for the real Drosophila arms.
+# Maximally parallelized: every LHS optimization and every window is its own job.
+# Run from the repo ROOT:
+#     snakemake -s godambe_correction_LRT/Snakefile --cores N --resources gpu=G <target>
+#
+# 4 steps per arm:
+#   1. genetic_map                                       (Comeron xlsx -> cM map)
+#   2. OVERLAPPING windows -> fit SIMPLE model -> p0
+#        fit is 100 LHS starts, EACH ITS OWN JOB (fit_one_start) -> collect_best_fit
+#   3. NON-OVERLAPPING windows (per block size), embed p0 in the complex model
+#        tiling is a checkpoint; each window's LD stats is its own job
+#   4. J vs block size -> per-arm plot
+
+import os
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Paths (relative to repo root)
+# ---------------------------------------------------------------------------
+DROSO         = "real_data_analysis/data/drosophila"
+COMERON_XLSX  = f"{DROSO}/recombination_maps/Comeron_100kb_R5_R6.xlsx"
+POPFILE       = f"{DROSO}/popfile.txt"
+def arm_vcf(arm):
+    return f"{DROSO}/{arm}/polarized.diploidGT.vcf.gz"
+
+OUT           = "godambe_correction_LRT/real_arms"
+GODAMBE_SCR   = "godambe_correction_LRT/scripts"
+SNAKE_SCR     = "snakemake_scripts"
+LD_CONFIG     = "godambe_correction_LRT/ld/ld_config.json"   # num_samples + use_gpu_ld
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+ARMS = ["Chr2L", "Chr2R", "Chr3L", "Chr3R", "ChrX"]
+
+# Per-arm NON-overlapping block sizes (bp) for the J sweep. Chr2L extended down
+# to 20 kb (~ the containment floor for these r_bins) to look for a small-block
+# plateau. Other arms start at 50 kb.
+_SWEEP = [20_000, 30_000, 40_000, 50_000, 100_000, 200_000, 500_000]
+BLOCKSIZES = {arm: list(_SWEEP) for arm in ARMS}
+
+R_BINS = "0,1e-6,2e-6,5e-6,1e-5,2e-5"            # trimmed r_bins
+
+# Keep only the high-recombination bulk of each arm (bp), eyeballed + verified
+# on recombination_maps.png (shaded green). Drops the low-recomb centromere/
+# telomere ends. Adjust any boundary from that plot.
+KEEP_REGION = {
+    "Chr2L": (1_000_000, 17_000_000),
+    "Chr2R": (5_000_000, 21_000_000),
+    "Chr3L": (1_000_000, 18_000_000),
+    "Chr3R": (6_000_000, 27_000_000),
+    "ChrX":  (3_000_000, 22_000_000),
+}
+
+OVERLAP_WINDOW  = 1_000_000                       # step 2 overlapping windows
+OVERLAP_NWIN    = 100
+OVERLAP_WINDOWS = range(OVERLAP_NWIN)
+
+N_OPT       = 100                                 # LHS starts for the fit
+OPT_INDICES = range(N_OPT)
+
+ACTIVE_ARMS = ARMS                                # all five arms
+
+wildcard_constraints:
+    arm       = r"Chr[0-9A-Za-z]+",
+    opt       = r"\d+",
+    i         = r"\d+",
+    blocksize = r"\d+",
+
+
+def blocksizes_for(arm):
+    return BLOCKSIZES[arm]
+
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+rule all:
+    input:
+        expand(f"{OUT}/{{arm}}/J_vs_blocklength.png", arm=ACTIVE_ARMS),
+
+
+# ===========================================================================
+# STEP 1 -- genetic map
+# ===========================================================================
+rule genetic_map:
+    input:
+        xlsx = COMERON_XLSX,
+    output:
+        gmap = f"{OUT}/{{arm}}/genetic_map.txt",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{SNAKE_SCR}/build_genetic_map.py" \
+            --xlsx "{input.xlsx}" --chrom "{wildcards.arm}" --out "{output.gmap}"
+        """
+
+# masked arm VCF: only the high-recomb bulk (KEEP_REGION interval)
+rule mask_vcf:
+    input:
+        vcf = lambda wc: arm_vcf(wc.arm),
+    output:
+        vcf = f"{OUT}/{{arm}}/masked.vcf.gz",
+    params:
+        region = lambda wc: f"{wc.arm}:{KEEP_REGION[wc.arm][0]}-{KEEP_REGION[wc.arm][1]}",
+    shell:
+        r"""
+        set -euo pipefail
+        bcftools view -r "{params.region}" -O z -o "{output.vcf}" "{input.vcf}"
+        bcftools index -t "{output.vcf}"
+        """
+
+
+# ===========================================================================
+# STEP 2 -- OVERLAPPING windows -> LD stats -> aggregate -> SIMPLE fit (p0)
+# ===========================================================================
+rule overlap_window:
+    input:
+        vcf     = f"{OUT}/{{arm}}/masked.vcf.gz",
+        popfile = POPFILE,
+    output:
+        vcf_gz = f"{OUT}/{{arm}}/overlap/windows/window_{{i}}.vcf.gz",
+    params:
+        out_dir = f"{OUT}/{{arm}}/overlap/windows",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.out_dir}"
+        python "{SNAKE_SCR}/split_vcf_windows.py" \
+            --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --out-dir "{params.out_dir}" \
+            --window-size {OVERLAP_WINDOW} --num-windows {OVERLAP_NWIN} \
+            --window-index {wildcards.i}
+        """
+
+rule overlap_ld_stats:
+    input:
+        vcf_gz = f"{OUT}/{{arm}}/overlap/windows/window_{{i}}.vcf.gz",
+        gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+    output:
+        pkl = f"{OUT}/{{arm}}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
+    resources:
+        gpu = 1
+    params:
+        sim_dir = f"{OUT}/{{arm}}/overlap",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats"
+        python "{GODAMBE_SCR}/ld_stats_safe.py" \
+            --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+            --config-file "{LD_CONFIG}" --r-bins "{R_BINS}" \
+            --rec-map-file "{input.gmap}"
+        """
+
+# aggregate overlapping windows -> means.varcovs.pkl  (bootstrap_ld.py IS this)
+rule aggregate_overlap:
+    input:
+        pkls = expand(f"{OUT}/{{{{arm}}}}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
+                      i=OVERLAP_WINDOWS),
+    output:
+        mv = f"{OUT}/{{arm}}/overlap/means.varcovs.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/bootstrap_ld.py" \
+            --ld-stats-dir "{OUT}/{wildcards.arm}/overlap/LD_stats" \
+            --out-dir "{OUT}/{wildcards.arm}/overlap"
+        """
+
+# 100 LHS starts, EACH ITS OWN JOB
+rule fit_one_start:
+    input:
+        mv = f"{OUT}/{{arm}}/overlap/means.varcovs.pkl",
+    output:
+        start = f"{OUT}/{{arm}}/fit_simple/start_{{opt}}.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/fit_one_start_ld.py" \
+            --mv "{input.mv}" --opt-index {wildcards.opt} --n-opt {N_OPT} \
+            --out "{output.start}"
+        """
+
+# collect best start -> p0
+rule collect_best_fit:
+    input:
+        starts = expand(f"{OUT}/{{{{arm}}}}/fit_simple/start_{{opt}}.pkl", opt=OPT_INDICES),
+    output:
+        fit = f"{OUT}/{{arm}}/fit_simple/best_fit.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/collect_best_fit.py" \
+            --starts {input.starts} --out "{output.fit}"
+        """
+
+
+# ===========================================================================
+# STEP 3 + 4 -- NON-OVERLAPPING sweep (per block size), maximally parallel
+# ===========================================================================
+
+# 3a. tile the arm into non-overlapping blocks of size {blocksize}.
+#     CHECKPOINT: the number of windows is only known at runtime (span // S).
+checkpoint tile_nonoverlap:
+    input:
+        vcf     = f"{OUT}/{{arm}}/masked.vcf.gz",
+        popfile = POPFILE,
+    output:
+        windir = directory(f"{OUT}/{{arm}}/sweep/bs{{blocksize}}/windows"),
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{output.windir}"
+        # `bcftools query | head` trips SIGPIPE under pipefail; disable it here.
+        set +o pipefail
+        first=$(bcftools query -f '%POS\n' "{input.vcf}" | head -n1)
+        last=$(bcftools query -f '%POS\n' "{input.vcf}" | tail -n1)
+        set -o pipefail
+        span=$((last - first + 1))
+        n=$((span / {wildcards.blocksize}))
+        if [ "$n" -lt 1 ]; then n=1; fi
+        python "{SNAKE_SCR}/split_vcf_windows.py" \
+            --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --out-dir "{output.windir}" \
+            --window-size {wildcards.blocksize} --num-windows "$n"
+        """
+
+# 3b. LD stats per non-overlapping tile (one job per window)
+rule nonoverlap_ld_stats:
+    input:
+        vcf_gz = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}/windows/window_{{i}}.vcf.gz",
+        gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+    output:
+        pkl = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}/LD_stats/LD_stats_window_{{i}}.pkl",
+    resources:
+        gpu = 1
+    params:
+        sim_dir = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats"
+        python "{GODAMBE_SCR}/ld_stats_safe.py" \
+            --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+            --config-file "{LD_CONFIG}" --r-bins "{R_BINS}" \
+            --rec-map-file "{input.gmap}"
+        """
+
+# gather the per-window LD stats after the tiling checkpoint resolves
+def gather_ld_pkls(wildcards):
+    ck = checkpoints.tile_nonoverlap.get(arm=wildcards.arm, blocksize=wildcards.blocksize)
+    windir = ck.output.windir
+    idxs = glob_wildcards(os.path.join(windir, "window_{i}.vcf.gz")).i
+    pattern = OUT + "/{arm}/sweep/bs{blocksize}/LD_stats/LD_stats_window_{i}.pkl"
+    return expand(pattern, arm=wildcards.arm, blocksize=wildcards.blocksize, i=idxs)
+
+# 3c+4a. aggregate the tiles + compute J at p0
+rule j_at_blocksize:
+    input:
+        pkls = gather_ld_pkls,
+        fit  = f"{OUT}/{{arm}}/fit_simple/best_fit.pkl",
+    output:
+        j = f"{OUT}/{{arm}}/sweep/J_bs{{blocksize}}.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/aggregate_and_J_ld.py" \
+            --ld-stats-dir "{OUT}/{wildcards.arm}/sweep/bs{wildcards.blocksize}/LD_stats" \
+            --null-fit "{input.fit}" --blocksize {wildcards.blocksize} \
+            --r-bins "{R_BINS}" --out "{output.j}"
+        """
+
+# 4b. per-arm J-vs-blocklength plot
+rule sweep_plot:
+    input:
+        js = lambda wc: expand(
+            f"{OUT}/{wc.arm}/sweep/J_bs{{bs}}.pkl", bs=blocksizes_for(wc.arm)),
+    output:
+        png = f"{OUT}/{{arm}}/J_vs_blocklength.png",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/plot_arm_sweep.py" \
+            --js {input.js} --out "{output.png}" --arm "{wildcards.arm}"
+        """

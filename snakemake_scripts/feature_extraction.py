@@ -27,6 +27,11 @@ def _parse_args():
     # (e.g. the Snakemake variant wildcard) can force a specific feature set.
     ap.add_argument("--use-fim-features", choices=["true", "false"], default=None)
     ap.add_argument("--use-residuals", choices=["true", "false"], default=None)
+    # Optional sim-id subsetting. --exclude-sims / --only-sims each point to a
+    # text file of integer sim ids (one per line). Used e.g. to quarantine a
+    # subset of sims into a separate dataset without touching the main build.
+    ap.add_argument("--exclude-sims", type=Path, default=None)
+    ap.add_argument("--only-sims", type=Path, default=None)
     return ap.parse_args()
 
 
@@ -34,6 +39,17 @@ def _bool_or_none(val):
     if val is None:
         return None
     return val == "true"
+
+
+def _read_id_file(path):
+    if path is None:
+        return None
+    ids = set()
+    for line in Path(path).read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            ids.add(int(line))
+    return ids
 
 
 def main() -> None:
@@ -55,6 +71,8 @@ def main() -> None:
         preview_rows=args.preview_rows,
         use_fim_features_override=_bool_or_none(args.use_fim_features),
         use_residuals_override=_bool_or_none(args.use_residuals),
+        exclude_sims=_read_id_file(args.exclude_sims),
+        only_sims=_read_id_file(args.only_sims),
     )
 
     print(f"✓ wrote datasets, plots, and metrics to: {datasets_dir}")

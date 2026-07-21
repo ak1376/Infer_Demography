@@ -656,12 +656,18 @@ def build_feature_target_tables(
     *,
     sim_basedir: Path,
     infer_basedir: Path,
+    exclude_sims: set | None = None,
+    only_sims: set | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     feature_rows: List[Dict[str, float]] = []
     target_rows: List[Dict[str, float]] = []
     index: List[int] = []
 
     for sid in range(cfg.n_sims):
+        if only_sims is not None and sid not in only_sims:
+            continue
+        if exclude_sims is not None and sid in exclude_sims:
+            continue
         inf_pickle = infer_basedir / f"sim_{sid}/all_inferences.pkl"
         truth_pickle = sim_basedir / f"{sid}/sampled_params.pkl"
         if not truth_pickle.exists():
@@ -877,6 +883,8 @@ def build_modeling_datasets(
     preview_rows: int = -1,
     use_fim_features_override: bool | None = None,
     use_residuals_override: bool | None = None,
+    exclude_sims: set | None = None,
+    only_sims: set | None = None,
 ) -> Path:
     """
     End-to-end dataset build:
@@ -929,6 +937,8 @@ def build_modeling_datasets(
         cfg,
         sim_basedir=sim_basedir,
         infer_basedir=infer_basedir,
+        exclude_sims=exclude_sims,
+        only_sims=only_sims,
     )
     if len(feat_df) == 0:
         raise RuntimeError(
