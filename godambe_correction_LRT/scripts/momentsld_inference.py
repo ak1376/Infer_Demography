@@ -48,6 +48,10 @@ from src.MomentsLD_inference import (
     create_comparison_plot,
     run_momentsld_inference,
 )
+from src.demes_models import (
+    split_migration_growth_model,
+    split_migration_growth_both_model,
+)
 
 GC = ROOT / "godambe_correction_LRT"
 
@@ -56,14 +60,18 @@ R_BINS = np.array([0, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5])
 
 NUM_SAMPLES = {"CO": 10, "FR": 9}
 
-# Absolute-unit bounds, copied from refit_models_lhs.py.
+# Absolute-unit bounds. Size upper bound widened 10^6.5 -> 10^7.5 (31.6M) after
+# N_ANC and N_CO0 railed at 10^6.5 on Chr2L: gives a decade of headroom so we can
+# tell "bound was too tight" (params move interior) from "genuinely unidentifiable"
+# (params rail at the new bound too). 10^7.5 is a diagnostic ceiling, not a
+# biological claim -- Drosophila Ne is ~1-4M.
 BOUNDS = {
-    "N_ANC":   [3162, 3162278],
-    "N_CO":    [3162, 3162278],
-    "N_CO0":   [3162, 3162278],
-    "N_CO1":   [3162, 3162278],
-    "N_FR0":   [3162, 3162278],
-    "N_FR1":   [3162, 3162278],
+    "N_ANC":   [3162, 31622776],
+    "N_CO":    [3162, 31622776],
+    "N_CO0":   [3162, 31622776],
+    "N_CO1":   [3162, 31622776],
+    "N_FR0":   [3162, 31622776],
+    "N_FR1":   [3162, 31622776],
     "T":       [1000, 1000000],
     "m_CO_FR": [1e-08, 0.001],
     "m_FR_CO": [1e-08, 0.001],
@@ -76,13 +84,59 @@ TRUTH = {
 }
 
 MODELS = {
-    "split_migration_growth":       # NULL: CO constant
+    "split_migration_growth":       # NULL: CO constant (free N_CO)
         ["N_ANC", "N_CO", "N_FR0", "N_FR1", "T", "m_CO_FR", "m_FR_CO"],
-    "split_migration_growth_both":  # ALT:  CO grows
+    "split_migration_growth_both":  # ALT:  CO grows (free N_CO0 AND N_CO1)
         ["N_ANC", "N_CO0", "N_CO1", "N_FR0", "N_FR1", "T", "m_CO_FR", "m_FR_CO"],
 }
 NULL = "split_migration_growth"
 ALT  = "split_migration_growth_both"
+
+# ---------------------------------------------------------------------------
+# Reparameterized, IDENTIFIABLE CO-growth test (Option A).
+#
+# The original ALT frees N_CO0 (CO size just after the split) as its own
+# parameter. But N_CO0 sits at ~the same time as N_ANC (the pre-split trunk),
+# on the SAME lineage (CO is the trunk), so LD cannot separate them -> the two
+# are redundant -> the Godambe H matrix is singular (cond(H) ~ 1e25, negative
+# adjust). Fix: TIE N_CO0 = N_ANC, so CO continues at the ancestral size through
+# the split and then grows/declines to N_CO1. N_ANC stays FREE and becomes the
+# SOLE deep-time size (so it is now well identified).
+#
+#   CO_CONST (null): CO constant at N_ANC (N_CO = N_ANC)      -- 6 free params
+#   CO_GROW  (alt) : CO -> N_CO1, starting from N_ANC         -- 7 free params
+#   df = 1 (freeing N_CO1 from N_ANC).
+#
+# We optimize the SIZE N_CO1 (not a rate G_CO, whose null value 0 blows up
+# finite differences via exp(-eps*T) at large T); report G_CO = ln(N_CO1/N_ANC)/T
+# as a derived quantity.
+CO_CONST = "co_const_at_anc"
+CO_GROW  = "co_grow_from_anc"
+MODELS[CO_CONST] = ["N_ANC", "N_FR0", "N_FR1", "T", "m_CO_FR", "m_FR_CO"]
+MODELS[CO_GROW]  = ["N_ANC", "N_CO1", "N_FR0", "N_FR1", "T", "m_CO_FR", "m_FR_CO"]
+
+
+def co_const_at_anc_model(sampled, cfg=None):
+    """NULL: CO constant at the ancestral size (no post-split CO change)."""
+    d = dict(sampled)
+    d["N_CO"] = d["N_ANC"]
+    return split_migration_growth_model(d, cfg)
+
+
+def co_grow_from_anc_model(sampled, cfg=None):
+    """ALT: CO grows/declines exponentially from N_ANC to N_CO1."""
+    d = dict(sampled)
+    d["N_CO0"] = d["N_ANC"]          # tie the deep-time CO size to the ancestral size
+    return split_migration_growth_both_model(d, cfg)
+
+
+# single source of truth: model name -> demes-graph builder
+MODEL_FUNCS = {
+    NULL:     split_migration_growth_model,
+    ALT:      split_migration_growth_both_model,
+    CO_CONST: co_const_at_anc_model,
+    CO_GROW:  co_grow_from_anc_model,
+}
 
 
 def make_config(model_name, generate_profiles, verbose):

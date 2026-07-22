@@ -61,10 +61,21 @@ OVERLAP_WINDOWS = range(OVERLAP_NWIN)
 N_OPT       = 100                                 # LHS starts for the fit
 OPT_INDICES = range(N_OPT)
 
+# The same fit rules serve both models, selected by the {fit} wildcard:
+#   fit_simple/  -> null  (split_migration_growth,      CO constant, p0 for J)
+#   fit_complex/ -> alt   (split_migration_growth_both, CO grows)
+FIT_MODEL = {
+    "simple":  "split_migration_growth",         # original null (free N_CO)
+    "complex": "split_migration_growth_both",     # original alt  (free N_CO0 & N_CO1 -- unidentifiable)
+    "coconst": "co_const_at_anc",                 # Option-A null (CO constant at N_ANC)
+    "cogrow":  "co_grow_from_anc",                # Option-A alt  (CO grows N_ANC -> N_CO1)
+}
+
 ACTIVE_ARMS = ARMS                                # all five arms
 
 wildcard_constraints:
     arm       = r"Chr[0-9A-Za-z]+",
+    fit       = r"simple|complex|coconst|cogrow",
     opt       = r"\d+",
     i         = r"\d+",
     blocksize = r"\d+",
@@ -170,26 +181,29 @@ rule aggregate_overlap:
             --out-dir "{OUT}/{wildcards.arm}/overlap"
         """
 
-# 100 LHS starts, EACH ITS OWN JOB
+# 100 LHS starts, EACH ITS OWN JOB. {fit} selects the model (simple=null,
+# complex=alt); the same rule fits either, writing to fit_{fit}/.
 rule fit_one_start:
     input:
         mv = f"{OUT}/{{arm}}/overlap/means.varcovs.pkl",
     output:
-        start = f"{OUT}/{{arm}}/fit_simple/start_{{opt}}.pkl",
+        start = f"{OUT}/{{arm}}/fit_{{fit}}/start_{{opt}}.pkl",
+    params:
+        model = lambda wc: FIT_MODEL[wc.fit],
     shell:
         r"""
         set -euo pipefail
         python "{GODAMBE_SCR}/fit_one_start_ld.py" \
             --mv "{input.mv}" --opt-index {wildcards.opt} --n-opt {N_OPT} \
-            --out "{output.start}"
+            --model {params.model} --out "{output.start}"
         """
 
-# collect best start -> p0
+# collect best start -> that model's MLE (null p0, or the alt fit)
 rule collect_best_fit:
     input:
-        starts = expand(f"{OUT}/{{{{arm}}}}/fit_simple/start_{{opt}}.pkl", opt=OPT_INDICES),
+        starts = expand(f"{OUT}/{{{{arm}}}}/fit_{{{{fit}}}}/start_{{opt}}.pkl", opt=OPT_INDICES),
     output:
-        fit = f"{OUT}/{{arm}}/fit_simple/best_fit.pkl",
+        fit = f"{OUT}/{{arm}}/fit_{{fit}}/best_fit.pkl",
     shell:
         r"""
         set -euo pipefail

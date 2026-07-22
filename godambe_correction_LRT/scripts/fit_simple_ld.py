@@ -42,21 +42,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.inference_utils import lhs_start_log10
 from src.MomentsLD_inference import optimize_parameters
-from src.demes_models import (
-    split_migration_growth_model,
-    split_migration_growth_both_model,
+from momentsld_inference import (
+    BOUNDS, NUM_SAMPLES, MODELS, MODEL_FUNCS, R_BINS,
+    NULL, ALT, CO_CONST, CO_GROW,
 )
-from momentsld_inference import BOUNDS, NUM_SAMPLES, NULL, ALT, MODELS, R_BINS
 
 logging.getLogger().setLevel(logging.WARNING)
 
 SEED = 42                                        # stable LHS grid seed
 
-MODEL_FUNCS = {
-    NULL: split_migration_growth_model,          # CO constant  (7 params)
-    ALT:  split_migration_growth_both_model,     # CO grows     (8 params)
+# short aliases for the CLI --model argument
+_ALIASES = {
+    "null": NULL, "alt": ALT,                    # original (unidentifiable) pair
+    "co_const": CO_CONST, "co_grow": CO_GROW,    # reparameterized (Option A) pair
 }
-_ALIASES = {"null": NULL, "alt": ALT}
 
 
 def resolve_model(name):
