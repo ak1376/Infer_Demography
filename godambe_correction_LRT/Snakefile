@@ -67,15 +67,25 @@ OPT_INDICES = range(N_OPT)
 FIT_MODEL = {
     "simple":  "split_migration_growth",         # original null (free N_CO)
     "complex": "split_migration_growth_both",     # original alt  (free N_CO0 & N_CO1 -- unidentifiable)
-    "coconst": "co_const_at_anc",                 # Option-A null (CO constant at N_ANC)
-    "cogrow":  "co_grow_from_anc",                # Option-A alt  (CO grows N_ANC -> N_CO1)
 }
+
+# Per-arm SFS (moments) identifiability check -- mirrors the LD-side Godambe
+# conditioning diagnostic (run_lrt.py cond(H)), but for the theta-profiled
+# scaled-ratio real-data moments fit (src.moments_inference_real). Reuses the
+# same fitting engine as the root Snakefile's rule infer_moments_real; this is
+# NOT a duplicate demographic-model definition, just a per-arm entry point +
+# the FIM/railing diagnostic that doesn't exist yet for the real-data branch.
+SFS_CFG = {
+    "simple":  "config_files/experiment_config_split_migration_growth.json",
+    "complex": "config_files/experiment_config_split_migration_growth_both.json",
+}
+SFS_N_STARTS = 6
 
 ACTIVE_ARMS = ARMS                                # all five arms
 
 wildcard_constraints:
     arm       = r"Chr[0-9A-Za-z]+",
-    fit       = r"simple|complex|coconst|cogrow",
+    fit       = r"simple|complex",
     opt       = r"\d+",
     i         = r"\d+",
     blocksize = r"\d+",
@@ -300,3 +310,152 @@ rule sweep_plot:
         python "{GODAMBE_SCR}/plot_arm_sweep.py" \
             --js {input.js} --out "{output.png}" --arm "{wildcards.arm}"
         """
+
+
+# ===========================================================================
+# SFS (moments) identifiability check -- NOT in `rule all`, run explicitly:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores 1 \
+#       godambe_correction_LRT/real_arms/Chr2L/sfs_fit_complex/fim_summary.json
+# or `snakemake -s godambe_correction_LRT/Snakefile --cores N sfs_fim_all`
+# ===========================================================================
+
+SFS_OPT_INDICES = range(SFS_N_STARTS)
+
+# each optimizer start is its own job (mirrors fit_one_start_ld.py on the LD side)
+rule sfs_fit_one_start:
+    input:
+        sfs = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+    output:
+        start = f"{OUT}/{{arm}}/sfs_fit_{{fit}}/starts/start_{{opt}}.pkl",
+    params:
+        cfg      = lambda wc: SFS_CFG[wc.fit],
+        model    = lambda wc: FIT_MODEL[wc.fit],
+        n_starts = SFS_N_STARTS,
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/sfs_fit_one_start.py" \
+            --arm "{wildcards.arm}" --model {params.model} \
+            --sfs "{input.sfs}" --config "{params.cfg}" \
+            --opt-index {wildcards.opt} --n-starts {params.n_starts} \
+            --out "{output.start}"
+        """
+
+# collect all starts -> best MLE -> slice profiles + FIM/cond(H) diagnostic
+rule sfs_collect_fim:
+    input:
+        starts = expand(f"{OUT}/{{{{arm}}}}/sfs_fit_{{{{fit}}}}/starts/start_{{opt}}.pkl",
+                         opt=SFS_OPT_INDICES),
+        sfs = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+    output:
+        fit = f"{OUT}/{{arm}}/sfs_fit_{{fit}}/best_fit.pkl",
+        summ = f"{OUT}/{{arm}}/sfs_fit_{{fit}}/fim_summary.json",
+    params:
+        cfg     = lambda wc: SFS_CFG[wc.fit],
+        model   = lambda wc: FIT_MODEL[wc.fit],
+        out_dir = f"{OUT}/{{arm}}/sfs_fit_{{fit}}",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/sfs_collect_and_fim.py" \
+            --arm "{wildcards.arm}" --model {params.model} \
+            --sfs "{input.sfs}" --config "{params.cfg}" \
+            --starts {input.starts} --out-dir "{params.out_dir}"
+        """
+
+# ChrX excluded: no unfolded.sfs.pkl under real_data_analysis/data/drosophila/ChrX/ yet.
+SFS_ARMS = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]
+
+rule sfs_fim_all:
+    input:
+        expand(f"{OUT}/{{arm}}/sfs_fit_{{fit}}/fim_summary.json",
+               arm=SFS_ARMS, fit=["simple", "complex"]),
+
+
+# ===========================================================================
+# Same SFS identifiability check, but on the KEEP_REGION-masked (high-recomb
+# bulk) SFS instead of the whole chromosome arm -- to test whether railing
+# seen on the whole-arm fit (e.g. N_CO1, m_CO_FR on Chr2L) is background-
+# selection contamination from the low-recombination regions the whole-arm
+# SFS includes and the LD side's masking already excludes.
+#
+# compute_unfolded_sfs.py needs a HAPLOID-GT VCF with an AA field
+# (real_data_analysis/data/drosophila/{arm}/polarized.vcf.gz), NOT the
+# diploid-recoded masked.vcf.gz already used on the LD side -- so this masks
+# the haploid VCF separately rather than reusing that file.
+# ===========================================================================
+
+rule mask_polarized_vcf:
+    input:
+        vcf = f"{DROSO}/{{arm}}/polarized.vcf.gz",
+        tbi = f"{DROSO}/{{arm}}/polarized.vcf.gz.tbi",
+    output:
+        vcf = f"{OUT}/{{arm}}/masked.polarized.vcf.gz",
+        tbi = f"{OUT}/{{arm}}/masked.polarized.vcf.gz.tbi",
+    params:
+        region = lambda wc: f"{wc.arm}:{KEEP_REGION[wc.arm][0]}-{KEEP_REGION[wc.arm][1]}",
+    shell:
+        r"""
+        set -euo pipefail
+        bcftools view -r "{params.region}" -O z -o "{output.vcf}" "{input.vcf}"
+        bcftools index -t "{output.vcf}"
+        """
+
+rule masked_unfolded_sfs:
+    input:
+        vcf     = f"{OUT}/{{arm}}/masked.polarized.vcf.gz",
+        popfile = POPFILE,
+    output:
+        sfs = f"{OUT}/{{arm}}/masked.unfolded.sfs.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{SNAKE_SCR}/compute_unfolded_sfs.py" \
+            --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --output-sfs "{output.sfs}"
+        """
+
+rule sfs_fit_one_start_masked:
+    input:
+        sfs = f"{OUT}/{{arm}}/masked.unfolded.sfs.pkl",
+    output:
+        start = f"{OUT}/{{arm}}/sfs_fit_{{fit}}_masked/starts/start_{{opt}}.pkl",
+    params:
+        cfg      = lambda wc: SFS_CFG[wc.fit],
+        model    = lambda wc: FIT_MODEL[wc.fit],
+        n_starts = SFS_N_STARTS,
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/sfs_fit_one_start.py" \
+            --arm "{wildcards.arm}" --model {params.model} \
+            --sfs "{input.sfs}" --config "{params.cfg}" \
+            --opt-index {wildcards.opt} --n-starts {params.n_starts} \
+            --out "{output.start}"
+        """
+
+rule sfs_collect_fim_masked:
+    input:
+        starts = expand(f"{OUT}/{{{{arm}}}}/sfs_fit_{{{{fit}}}}_masked/starts/start_{{opt}}.pkl",
+                         opt=SFS_OPT_INDICES),
+        sfs = f"{OUT}/{{arm}}/masked.unfolded.sfs.pkl",
+    output:
+        fit = f"{OUT}/{{arm}}/sfs_fit_{{fit}}_masked/best_fit.pkl",
+        summ = f"{OUT}/{{arm}}/sfs_fit_{{fit}}_masked/fim_summary.json",
+    params:
+        cfg     = lambda wc: SFS_CFG[wc.fit],
+        model   = lambda wc: FIT_MODEL[wc.fit],
+        out_dir = f"{OUT}/{{arm}}/sfs_fit_{{fit}}_masked",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/sfs_collect_and_fim.py" \
+            --arm "{wildcards.arm}" --model {params.model} \
+            --sfs "{input.sfs}" --config "{params.cfg}" \
+            --starts {input.starts} --out-dir "{params.out_dir}"
+        """
+
+rule sfs_fim_all_masked:
+    input:
+        expand(f"{OUT}/{{arm}}/sfs_fit_{{fit}}_masked/fim_summary.json",
+               arm=SFS_ARMS, fit=["simple", "complex"]),
