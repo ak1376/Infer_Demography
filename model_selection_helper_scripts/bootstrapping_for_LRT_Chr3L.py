@@ -1,0 +1,489 @@
+# bootstrapping_for_LRT_Chr3L.py
+#
+# Single-arm variant of bootstrapping_for_LRT.py: same Godambe-adjusted LRT for
+# CO growth, but run on Chr3L alone instead of the pooled Chr2L+Chr3L SFS, using
+# the per-arm fits from godambe_correction_LRT/real_arms/Chr3L/sfs_fit_{simple,
+# complex}/best_fit.pkl. All bootstrap/LRT logic is unchanged from the original.
+
+"""
+Godambe-adjusted likelihood-ratio test: does CO have exponential growth?
+
+H0 (simple model): CO constant post-split, only FR grows.
+H1 (complex/"both" model): both CO and FR grow.
+
+Composite-likelihood LRT statistics are inflated by linkage, so we correct the
+raw statistic with the Godambe factor adjust = H / J:
+  * H is the observed information for the tested parameter (empirical SFS only).
+  * J is the variance of the score under block-bootstrap resampling, which is
+    what carries the linkage information.
+D_adj = adjust * D ~ chi^2_1 under H0.
+
+Single-chromosome block bootstrap
+----------------------------------
+The demographic fits here use Chr3L's OWN SFS (not pooled with any other arm),
+so the bootstrap resamples blocks tiling Chr3L only. Chr3L is tiled into
+non-overlapping blocks of a fixed physical size (BLOCK_SIZES_KB); a bootstrap
+replicate draws (with replacement) as many blocks as there are and sums their
+per-block SFS.
+
+Block-size sensitivity: BLOCK_SIZES_KB defines several candidate block sizes (in
+kb) to test. The ~100 kb value comes from bootstrap_window_size.py, which found
+that ~90-100 kb is the smallest block that is still ~independent on the slowest-
+decaying arm/population (Chr2R-FR). Larger blocks are safer for LD independence
+but give fewer bootstrap units; smaller blocks give more units but may violate
+independence. We report the Godambe-adjusted LRT across that LD-justified range.
+"""
+
+import gzip
+import os
+import pickle
+import subprocess
+from concurrent.futures import ProcessPoolExecutor
+
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import moments
+from tqdm import tqdm
+from src.demes_models import split_migration_growth_both_model
+
+MAX_WORKERS = 8
+# Candidate block sizes in kb. ~100 kb is the LD-justified recommendation from
+# bootstrap_window_size.py (set by the slow-decaying Chr2R-FR curve).
+BLOCK_SIZES_KB = [50, 75, 100, 150, 200, 300, 500]
+NUM_BOOT_REPS = 1000
+RNG_SEED = 0
+
+DROSO_DIR = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila"
+GODAMBE_ARM_DIR = "/sietch_colab/akapoor/Infer_Demography/godambe_correction_LRT/real_arms"
+AUTOSOMES = ["Chr3L"]
+popfile = f"{DROSO_DIR}/popfile.txt"
+
+
+def polarized_vcf(chrom):
+    """Per-chromosome polarized (haploid + AA) VCF, mirroring the Snakefile helper."""
+    return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
+
+
+# data_sfs is Chr3L's own SFS -- the fits below were run on this, not a
+# multi-arm combined spectrum.
+combined_sfs_path = f"{DROSO_DIR}/Chr3L/unfolded.sfs.pkl"
+simple_fit_path = f"{GODAMBE_ARM_DIR}/Chr3L/sfs_fit_simple/best_fit.pkl"
+complex_fit_path = f"{GODAMBE_ARM_DIR}/Chr3L/sfs_fit_complex/best_fit.pkl"
+out_dir = "/sietch_colab/akapoor/Infer_Demography/figures/godambe_Chr3L"
+summary_csv_path = os.path.join(out_dir, "godambe_block_sensitivity.csv")
+sensitivity_plot_path = os.path.join(out_dir, "godambe_block_sensitivity.png")
+hist_template = os.path.join(out_dir, "J_bootstrap_hist_{block_kb}kb.png")
+
+# Cache directory for per-block SFS (keyed by block size + arm set).
+cache_dir = f"{DROSO_DIR}/chunk_spectra_multiarm"
+
+
+# ---- Complex model in the growth_CO parameterization -----------------------
+# The null "no CO growth" (N_CO0 == N_CO1) isn't a single coordinate of the
+# (N_CO0, N_CO1) vector, so we swap N_CO0 for growth_CO = log(N_CO0 / N_CO1):
+# growth_CO == 0  <=>  N_CO0 == N_CO1, i.e. the null is exactly growth_CO = 0.
+param_names = [
+    "N_ANC",
+    "growth_CO",  # log(N_CO0 / N_CO1); == 0 under H0
+    "N_CO1",
+    "N_FR0",
+    "N_FR1",
+    "T",
+    "m_CO_FR",
+    "m_FR_CO",
+]
+growth_idx = param_names.index("growth_CO")
+
+
+def split_migration_growth_both_sfs(p, ns):
+    """Expected SFS for the complex model, converting growth_CO back to
+    N_CO0 = N_CO1 * exp(growth_CO) for the demes graph."""
+    sampled = dict(zip(param_names, p))
+    growth_CO = sampled.pop("growth_CO")
+    sampled["N_CO0"] = sampled["N_CO1"] * np.exp(growth_CO)
+    graph = split_migration_growth_both_model(sampled)
+    return moments.Spectrum.from_demes(graph, sampled_demes=["CO", "FR"], sample_sizes=ns)
+
+
+# ---- Null point p0 and fixed theta -----------------------------------------
+with open(simple_fit_path, "rb") as f:
+    simple_fit = pickle.load(f)
+simple_params = simple_fit["best_params"][0]
+
+# H0-consistent point in the 8-param growth_CO order (growth_CO = 0).
+p0 = [
+    simple_params["N_ANC"],
+    0.0,                     # growth_CO
+    simple_params["N_CO"],   # N_CO1
+    simple_params["N_FR0"],
+    simple_params["N_FR1"],
+    simple_params["T"],
+    simple_params["m_CO_FR"],
+    simple_params["m_FR_CO"],
+]
+
+with open(combined_sfs_path, "rb") as f:
+    data_sfs = pickle.load(f)
+
+# multinom theta: fix theta at the optimal scaling for p0, then hold it fixed.
+model = split_migration_growth_both_sfs(p0, data_sfs.sample_sizes)
+theta_opt = moments.Inference.optimal_sfs_scaling(model, data_sfs)
+p0_theta = np.array(list(p0) + [theta_opt], dtype=float)
+
+
+# ---- H: observed information for growth_CO (empirical SFS only) -------------
+def _ll_growth(growth_vec, data):
+    full = p0_theta.copy()
+    full[growth_idx] = growth_vec[0]
+    fs = full[-1] * split_migration_growth_both_sfs(full[:-1], data.sample_sizes)
+    return moments.Inference.ll(fs, data)
+
+
+H = -moments.Godambe.get_hess(_ll_growth, [p0_theta[growth_idx]], eps=0.01, args=[data_sfs])
+H_growth = float(H[0, 0])
+print("H (growth_CO):", H_growth)
+
+
+# ---- Per-block SFS (block bootstrap units) ---------------------------------
+def _get_vcf_bounds(vcf_path):
+    first = int(subprocess.check_output(
+        f"bcftools query -f '%POS\n' '{vcf_path}' | head -n 1", shell=True).strip())
+    last = int(subprocess.check_output(
+        f"bcftools query -f '%POS\n' '{vcf_path}' | tail -n 1", shell=True).strip())
+    return first, last
+
+
+def _parse_popfile(popfile_path):
+    sample_to_pop, pop_order = {}, []
+    with open(popfile_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            sample, pop = parts[0], parts[1]
+            sample_to_pop[sample] = pop
+            if pop not in pop_order:
+                pop_order.append(pop)
+    return pop_order, sample_to_pop
+
+
+def _get_vcf_sample_indices(vcf_path, popfile_path):
+    pop_names, sample_to_pop = _parse_popfile(popfile_path)
+    sample_indices = {pop: [] for pop in pop_names}
+    opener = gzip.open if vcf_path.endswith(".gz") else open
+    with opener(vcf_path, "rt") as f:
+        for line in f:
+            if line.startswith("#CHROM"):
+                for i, s in enumerate(line.rstrip("\n").split("\t")[9:]):
+                    pop = sample_to_pop.get(s)
+                    if pop is not None:
+                        sample_indices[pop].append(i)
+                break
+    return pop_names, sample_indices
+
+
+pop_names, sample_indices = _get_vcf_sample_indices(polarized_vcf(AUTOSOMES[0]), popfile)
+sample_sizes = [len(sample_indices[pop]) for pop in pop_names]
+# Physical extent of each arm (used to tile it into fixed-size blocks).
+arm_bounds = {c: _get_vcf_bounds(polarized_vcf(c)) for c in AUTOSOMES}
+for c in AUTOSOMES:
+    lo, hi = arm_bounds[c]
+    print(f"  {c}: {lo:,}..{hi:,}  ({(hi - lo + 1) / 1e6:.2f} Mb)")
+
+
+def _parse_chunk(job):
+    """Parse one (vcf_path, interval) block into an unfolded SFS.
+
+    `interval` in parse_vcf is 1-indexed and half-open, so consecutive
+    (start, end) pairs tile an arm with no overlap.
+    """
+    vcf_path, interval = job
+    try:
+        return moments.Parsing.parse_vcf(
+            vcf_path, pop_file=popfile, use_AA=True, ploidy=1, interval=interval)
+    except ValueError:
+        # No SNPs in this interval -> all-zero SFS instead of crashing.
+        return moments.Spectrum(np.zeros([n + 1 for n in sample_sizes]))
+
+
+def _block_jobs(block_bp):
+    """List of (vcf_path, (start, end)) blocks tiling every autosome at ~block_bp.
+
+    Each arm gets floor(arm_len / block_bp) blocks, so the realised block size is
+    >= block_bp (guarantees the LD-independence target is met, never undershot).
+    """
+    jobs = []
+    for c in AUTOSOMES:
+        first, last = arm_bounds[c]
+        arm_len = last - first + 1
+        n = max(1, int(arm_len // block_bp))
+        bounds = np.linspace(first, last + 1, n + 1).astype(int)
+        jobs.extend((polarized_vcf(c), (int(bounds[i]), int(bounds[i + 1]))) for i in range(n))
+    return jobs
+
+
+def get_chunk_spectra(block_bp):
+    """Per-block unfolded SFS for fixed-size blocks tiling ALL autosomes, pooled
+    into one list. Cached to disk (keyed by block size) so re-runs skip parsing."""
+    os.makedirs(cache_dir, exist_ok=True)
+    arms_tag = "-".join(AUTOSOMES)
+    cache = os.path.join(cache_dir, f"chunk_spectra_{arms_tag}_{int(block_bp)}bp.pkl")
+    if os.path.exists(cache):
+        with open(cache, "rb") as f:
+            return pickle.load(f)
+
+    jobs = _block_jobs(block_bp)
+    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        chunk_spectra = list(tqdm(pool.map(_parse_chunk, jobs), total=len(jobs),
+                                  desc=f"parse {len(jobs)} blocks @ {block_bp/1e3:.0f} kb"))
+    with open(cache, "wb") as f:
+        pickle.dump(chunk_spectra, f)
+    return chunk_spectra
+
+
+# ---- J: score variance under block-bootstrap resampling --------------------
+# For a single nested parameter, bootstrap b contributes J_b = U_b**2, where U_b
+# is the score (gradient of the composite ll w.r.t. growth_CO at growth_CO = 0)
+# on bootstrap b's SFS. J = mean_b(J_b). theta is held at theta_opt throughout,
+# and the two null-point model spectra don't depend on the bootstrap, so build
+# them once. This reproduces moments' finite-difference score, so J matches
+# LRT_adjust's internal J.
+score_eps = 0.01
+ns = list(data_sfs.sample_sizes)
+m0 = theta_opt * split_migration_growth_both_sfs(p0_theta[:-1], ns)   # growth_CO = 0
+p_eps = p0_theta[:-1].copy()
+p_eps[growth_idx] = score_eps
+mp = theta_opt * split_migration_growth_both_sfs(p_eps, ns)           # growth_CO = +eps
+
+
+def bootstrap_J(block_bp, rng):
+    """Per-bootstrap J_b: resample the pooled cross-arm blocks with replacement
+    (n_blocks draws), sum to one bootstrap SFS, and square its growth_CO score."""
+    chunk_spectra = get_chunk_spectra(block_bp)
+    n_blocks = len(chunk_spectra)
+    idx = np.arange(n_blocks)
+    J_boot = np.empty(NUM_BOOT_REPS)
+    for b in range(NUM_BOOT_REPS):
+        sampled = rng.choice(idx, size=n_blocks, replace=True)
+        boot = moments.Spectrum(sum(chunk_spectra[i] for i in sampled))
+        score_b = (moments.Inference.ll(mp, boot) - moments.Inference.ll(m0, boot)) / score_eps
+        J_boot[b] = score_b ** 2
+    return J_boot
+
+
+def check_chunk_reconstruction(block_bp):
+    """Sanity check: the non-overlapping blocks (across all arms) should sum to
+    the empirical combined SFS used in the likelihood. If this fails badly, the
+    bootstrap data are not matched to data_sfs (e.g. parse_vcf vs. how the
+    combined SFS was built), and the correction is not trustworthy."""
+    chunk_spectra = get_chunk_spectra(block_bp)
+    chunk_sum = moments.Spectrum(sum(chunk_spectra))
+
+    snp_diff = float(chunk_sum.S() - data_sfs.S())
+    max_abs_diff = float(np.max(np.abs(chunk_sum - data_sfs)))
+    sample_sizes_match = list(chunk_sum.sample_sizes) == list(data_sfs.sample_sizes)
+
+    return {
+        "chunk_sum_snps": float(chunk_sum.S()),
+        "data_sfs_snps": float(data_sfs.S()),
+        "snp_diff": snp_diff,
+        "max_abs_sfs_diff": max_abs_diff,
+        "sample_sizes_match": sample_sizes_match,
+    }
+
+
+def summarize_block_size(block_kb, seed):
+    """Run the Godambe correction for one block size and return one row for the
+    sensitivity table, plus the vector of per-bootstrap J values."""
+    block_bp = int(block_kb * 1e3)
+    rng = np.random.default_rng(seed)
+    J_boot = bootstrap_J(block_bp, rng)
+    mean_J = float(J_boot.mean())
+    sd_J = float(J_boot.std(ddof=1))
+
+    n_blocks = len(get_chunk_spectra(block_bp))
+
+    adjust = H_growth / mean_J
+    D_adj = adjust * D
+    p_adj = float(moments.Godambe.sum_chi2_ppf(D_adj, weights=(0, 1)))
+
+    recon = check_chunk_reconstruction(block_bp)
+
+    row = {
+        "block_kb": float(block_kb),
+        "block_bp": float(block_bp),
+        "n_blocks": int(n_blocks),
+        "H": float(H_growth),
+        "mean_J": mean_J,
+        "sd_J_boot": sd_J,
+        "adjust_H_over_J": float(adjust),
+        "raw_D": float(D),
+        "D_adj": float(D_adj),
+        "p_raw": float(p_raw),
+        "p_adj": p_adj,
+        **recon,
+    }
+    return row, J_boot
+
+
+# ---- Godambe-adjusted LRT across candidate block sizes ---------------------
+# D = 2*(ll_complex - ll_simple), block-size independent. Only J, H/J, D_adj,
+# and p_adj change with block size.
+#
+# IMPORTANT — log-likelihood convention. The stored best_ll from
+# moments_dadi_inference_real.py is a cross-entropy-style quantity that differs
+# from moments.Inference.ll (the full Poisson ll) by a constant that depends
+# only on the data. That constant cancels in the difference, so D is identical
+# either way — but H and J are computed with moments.Inference.ll, so we
+# compute D with moments.Inference.ll too, keeping D, H, and J in ONE
+# consistent convention.
+with open(complex_fit_path, "rb") as f:
+    complex_fit = pickle.load(f)
+
+
+def _ll_moments(fit_params, growth_CO):
+    """moments.Inference.ll of the (theta-profiled) complex-model SFS at a fit's
+    absolute params and a given growth_CO, evaluated on data_sfs."""
+    full = [
+        fit_params["N_ANC"], growth_CO, fit_params["N_CO1"],
+        fit_params["N_FR0"], fit_params["N_FR1"], fit_params["T"],
+        fit_params["m_CO_FR"], fit_params["m_FR_CO"],
+    ]
+    fsm = split_migration_growth_both_sfs(full, ns)
+    return moments.Inference.ll(moments.Inference.optimal_sfs_scaling(fsm, data_sfs) * fsm, data_sfs)
+
+
+# Simple MLE embeds as growth_CO = 0 with N_CO1 = the simple model's single N_CO.
+_sp = simple_fit["best_params"][0]
+ll_simple = _ll_moments(
+    {"N_ANC": _sp["N_ANC"], "N_CO1": _sp["N_CO"], "N_FR0": _sp["N_FR0"],
+     "N_FR1": _sp["N_FR1"], "T": _sp["T"], "m_CO_FR": _sp["m_CO_FR"], "m_FR_CO": _sp["m_FR_CO"]},
+    0.0,
+)
+# Complex MLE: growth_CO = log(N_CO0 / N_CO1).
+_cp = complex_fit["best_params"][0]
+ll_complex = _ll_moments(_cp, float(np.log(_cp["N_CO0"] / _cp["N_CO1"])))
+
+D = 2.0 * (ll_complex - ll_simple)
+p_raw = float(moments.Godambe.sum_chi2_ppf(D, weights=(0, 1)))
+
+# Consistency guard: D from the stored best_ll should match D computed here. It
+# will differ ONLY if the two fits were run on different data (their constant
+# offsets would then no longer cancel) — the real "mismatched SFS" signal.
+D_stored = 2.0 * (float(complex_fit["best_ll"][0]) - float(simple_fit["best_ll"][0]))
+print(f"\nConsistency check (fits on the same SFS?):")
+print(f"  D (moments.Inference.ll) = {D:.6g}")
+print(f"  D (stored best_ll)       = {D_stored:.6g}")
+if abs(D - D_stored) > 1e-3 * max(1.0, abs(D)):
+    print("  *** WARNING: D differs between conventions — the two fits were "
+          "likely run on DIFFERENT SFS. Re-fit both models on the current "
+          "Chr3L SFS. ***")
+
+os.makedirs(out_dir, exist_ok=True)
+
+results = []
+J_by_block = {}
+print(f"\nRaw LRT: D = {D:.6g}; unadjusted p = {p_raw:.6g}")
+print(f"H (growth_CO): {H_growth:.6g}\n")
+
+for block_kb in BLOCK_SIZES_KB:
+    # Use a different, reproducible seed for each block size. This avoids
+    # accidentally reusing the same bootstrap-index stream for all block sizes.
+    seed = RNG_SEED + int(block_kb)
+    row, J_boot = summarize_block_size(block_kb, seed)
+    results.append(row)
+    J_by_block[block_kb] = J_boot
+
+    print(
+        f"{block_kb:>5.0f} kb  "
+        f"n_blocks={row['n_blocks']:>5d}  "
+        f"mean_J={row['mean_J']:>12.3g}  "
+        f"H/J={row['adjust_H_over_J']:>10.5g}  "
+        f"D_adj={row['D_adj']:>10.5g}  "
+        f"p_adj={row['p_adj']:>10.5g}  "
+        f"SFS maxdiff={row['max_abs_sfs_diff']:.3g}"
+    )
+
+# Write CSV summary without requiring pandas.
+fieldnames = list(results[0].keys())
+with open(summary_csv_path, "w") as f:
+    f.write(",".join(fieldnames) + "\n")
+    for row in results:
+        f.write(",".join(str(row[k]) for k in fieldnames) + "\n")
+print(f"\nwrote {summary_csv_path}")
+
+
+# ---- Figure 1: sensitivity of adjusted p-value across block sizes ----------
+block_kb_arr = np.array([r["block_kb"] for r in results])
+n_blocks_arr = np.array([r["n_blocks"] for r in results])
+p_adj_vals = np.array([r["p_adj"] for r in results])
+adjust_vals = np.array([r["adjust_H_over_J"] for r in results])
+D_adj_vals = np.array([r["D_adj"] for r in results])
+mean_J_vals = np.array([r["mean_J"] for r in results])
+
+fig, ax1 = plt.subplots(figsize=(8, 4.8))
+ax1.plot(block_kb_arr, p_adj_vals, marker="o")
+ax1.axhline(0.05, ls="--", lw=1, label="p = 0.05")
+ax1.set_xlabel("Block size (kb)")
+ax1.set_ylabel("Godambe-adjusted p-value")
+ax1.set_title("Block-size sensitivity of Godambe-adjusted LRT (Chr3L)")
+ax1.set_xticks(block_kb_arr)
+for x, y, nb in zip(block_kb_arr, p_adj_vals, n_blocks_arr):
+    ax1.annotate(f"{nb} blocks", (x, y), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8)
+ax1.legend(fontsize=8)
+fig.tight_layout()
+fig.savefig(sensitivity_plot_path, dpi=150)
+print(f"wrote {sensitivity_plot_path}")
+
+
+# ---- Figure 2: mean J and H/J across block sizes ---------------------------
+# This helps diagnose WHY p-values change: usually because J changes.
+J_plot_path = os.path.join(out_dir, "godambe_J_and_adjust_by_block_size.png")
+fig, ax = plt.subplots(figsize=(8, 4.8))
+ax.plot(block_kb_arr, mean_J_vals, marker="o", label="mean J")
+ax.set_xlabel("Block size (kb)")
+ax.set_ylabel("mean J")
+ax.set_title("Score-variance estimate J across block sizes (Chr3L)")
+ax.set_xticks(block_kb_arr)
+ax.legend(fontsize=8)
+fig.tight_layout()
+fig.savefig(J_plot_path, dpi=150)
+print(f"wrote {J_plot_path}")
+
+adjust_plot_path = os.path.join(out_dir, "godambe_adjust_by_block_size.png")
+fig, ax = plt.subplots(figsize=(8, 4.8))
+ax.plot(block_kb_arr, adjust_vals, marker="o", label="H/J")
+ax.set_xlabel("Block size (kb)")
+ax.set_ylabel("Adjustment factor H/J")
+ax.set_title("Godambe adjustment factor across block sizes (Chr3L)")
+ax.set_xticks(block_kb_arr)
+ax.legend(fontsize=8)
+fig.tight_layout()
+fig.savefig(adjust_plot_path, dpi=150)
+print(f"wrote {adjust_plot_path}")
+
+
+# ---- Optional: per-block-size J histograms ---------------------------------
+for block_kb in BLOCK_SIZES_KB:
+    J_boot = J_by_block[block_kb]
+    row = next(r for r in results if r["block_kb"] == block_kb)
+    hist_path = hist_template.format(block_kb=int(block_kb))
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.hist(J_boot, bins=30, alpha=0.85, edgecolor="white")
+    ax.axvline(row["mean_J"], lw=1.8, ls="--", label=f"mean J = {row['mean_J']:,.0f}")
+    ax.axvline(H_growth, lw=2.0, label=f"H = {H_growth:,.0f}")
+    ax.set_xlabel(r"per-bootstrap $J_b = (\partial_{\mathrm{growth\_CO}}\,\ell)^2$")
+    ax.set_ylabel("count")
+    ax.set_title(
+        f"{block_kb:.0f} kb ({row['n_blocks']} blocks)   "
+        f"H/J = {row['adjust_H_over_J']:.4g}   p = {row['p_adj']:.3g}"
+    )
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(hist_path, dpi=150)
+    plt.close(fig)
+
+print("wrote per-block-size J histograms")
