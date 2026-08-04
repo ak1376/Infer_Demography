@@ -23,10 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-# Experiment config. Defaults to split_migration_growth, but can be overridden
-# on the CLI to run a different model without editing this file, e.g.:
-#   snakemake --config exp_cfg=config_files/experiment_config_split_migration_growth_both.json <target>
-EXP_CFG = config.get("exp_cfg", "config_files/experiment_config_bottleneck.json")
+EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
