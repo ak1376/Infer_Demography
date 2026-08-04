@@ -33,7 +33,7 @@ LD_CONFIG     = "godambe_correction_LRT/ld/ld_config.json"   # num_samples + use
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-ARMS = ["Chr2L", "Chr2R", "Chr3L", "Chr3R", "ChrX"]
+ARMS = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]
 
 # Per-arm NON-overlapping block sizes (bp) for the J sweep. Chr2L extended down
 # to 20 kb (~ the containment floor for these r_bins) to look for a small-block
@@ -43,13 +43,19 @@ BLOCKSIZES = {arm: list(_SWEEP) for arm in ARMS}
 
 R_BINS = "0,1e-6,2e-6,5e-6,1e-5,2e-5"            # trimmed r_bins
 
-# Keep only the high-recombination bulk of each arm (bp), eyeballed + verified
-# on recombination_maps.png (shaded green). Drops the low-recomb centromere/
-# telomere ends. Adjust any boundary from that plot.
+# Keep only the high-recombination bulk of each arm (bp). Chr3L's range comes
+# from `rule validated_blocks` (compute_validated_blocks.py): per-population
+# (CO/FR) LD-decay analysis, validated by directly checking that real adjacent
+# blocks are near background r^2 -- see godambe_correction_LRT/real_arms/Chr3L/
+# validated_blocks_report.json. Nearly the whole arm, minus a ~1.06Mb tail at
+# the end that never decays to background at all (likely centromere-proximal).
+# The other arms are still the older eyeballed boundaries from
+# recombination_maps.png (shaded green); they should get the same
+# validated_blocks treatment eventually.
 KEEP_REGION = {
     "Chr2L": (1_000_000, 17_000_000),
     "Chr2R": (5_000_000, 21_000_000),
-    "Chr3L": (1_000_000, 18_000_000),
+    "Chr3L": (66_532, 23_466_532),
     "Chr3R": (6_000_000, 27_000_000),
     "ChrX":  (3_000_000, 22_000_000),
 }
@@ -79,7 +85,7 @@ SFS_CFG = {
     "simple":  "config_files/experiment_config_split_migration_growth.json",
     "complex": "config_files/experiment_config_split_migration_growth_both.json",
 }
-SFS_N_STARTS = 6
+SFS_N_STARTS = 10
 
 ACTIVE_ARMS = ARMS                                # all five arms
 
@@ -131,6 +137,139 @@ rule mask_vcf:
         set -euo pipefail
         bcftools view -r "{params.region}" -O z -o "{output.vcf}" "{input.vcf}"
         bcftools index -t "{output.vcf}"
+        """
+
+
+# ===========================================================================
+# LD DECAY vs. PHYSICAL DISTANCE -- diagnostic for choosing a bootstrap block
+# size (r^2 vs. bp, per population, on the masked/KEEP_REGION VCF so the
+# recombination rate underlying the curve is reasonably homogeneous). Not
+# part of `rule all`; request the arm you want explicitly, e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N \
+#       godambe_correction_LRT/real_arms/Chr3L/ld_decay.png
+# ===========================================================================
+rule ld_decay_physical:
+    input:
+        vcf     = f"{OUT}/{{arm}}/masked.polarized.vcf.gz",
+        popfile = POPFILE,
+    output:
+        png = f"{OUT}/{{arm}}/ld_decay.png",
+        csv = f"{OUT}/{{arm}}/ld_decay_block_sizes.csv",
+    params:
+        script = f"{GODAMBE_SCR}/ld_decay_by_distance.py",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --label "{wildcards.arm}" \
+            --out-png "{output.png}" --out-csv "{output.csv}"
+        """
+
+
+# ===========================================================================
+# VALIDATED BOOTSTRAP BLOCK SIZE -- per-population (CO/FR) LD-decay analysis
+# that also determines the arm's usable range and directly validates the
+# chosen block size against real adjacent-block correlations, rather than
+# just reading a decay curve off a plot (see compute_validated_blocks.py).
+# Runs on the RAW, UNMASKED arm VCF -- its whole job is to discover the
+# usable/unusable boundary itself, so it can't be pre-restricted by
+# KEEP_REGION. Not part of `rule all`; request the arm you want explicitly:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N \
+#       godambe_correction_LRT/real_arms/Chr3L/validated_blocks.bed
+# ===========================================================================
+rule validated_blocks:
+    input:
+        vcf     = lambda wc: arm_vcf(wc.arm),
+        popfile = POPFILE,
+    output:
+        bed       = f"{OUT}/{{arm}}/validated_blocks.bed",
+        report    = f"{OUT}/{{arm}}/validated_blocks_report.json",
+        histogram = f"{OUT}/{{arm}}/validated_blocks_histogram.png",
+    resources:
+        gpu = 1
+    params:
+        script = f"{GODAMBE_SCR}/compute_validated_blocks.py",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --vcf "{input.vcf}" --popfile "{input.popfile}" --arm "{wildcards.arm}" \
+            --out-bed "{output.bed}" --out-report "{output.report}" \
+            --out-histogram "{output.histogram}"
+        """
+
+
+# Tile the masked/haploid VCF into non-overlapping blocks of a given physical
+# size (bp), for block-bootstrap resampling (mirrors `checkpoint
+# tile_nonoverlap` below, which does the same thing for the diploid
+# masked.vcf.gz used by the moments.LD/J side; this one uses the haploid
+# masked.polarized.vcf.gz used by the LD-decay/SFS side instead).
+# CHECKPOINT: the number of blocks is only known at runtime (span // blocksize).
+# Request a size explicitly, e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N \
+#       godambe_correction_LRT/real_arms/Chr3L/blocks/bs20000/windows
+checkpoint tile_polarized_blocks:
+    input:
+        vcf     = f"{OUT}/{{arm}}/masked.polarized.vcf.gz",
+        popfile = POPFILE,
+    output:
+        windir = directory(f"{OUT}/{{arm}}/blocks/bs{{blocksize}}/windows"),
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{output.windir}"
+        # `bcftools query | head` trips SIGPIPE under pipefail; disable it here.
+        set +o pipefail
+        first=$(bcftools query -f '%POS\n' "{input.vcf}" | head -n1)
+        last=$(bcftools query -f '%POS\n' "{input.vcf}" | tail -n1)
+        set -o pipefail
+        span=$((last - first + 1))
+        n=$((span / {wildcards.blocksize}))
+        if [ "$n" -lt 1 ]; then n=1; fi
+        python "{SNAKE_SCR}/split_vcf_windows.py" \
+            --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --out-dir "{output.windir}" \
+            --window-size {wildcards.blocksize} --num-windows "$n"
+        """
+
+# gather the block VCFs after the tiling checkpoint resolves (mirrors
+# gather_ld_pkls below, for the moments.LD/J side's own checkpoint)
+def gather_block_vcfs(wildcards):
+    ck = checkpoints.tile_polarized_blocks.get(arm=wildcards.arm, blocksize=wildcards.blocksize)
+    windir = ck.output.windir
+    idxs = glob_wildcards(os.path.join(windir, "window_{i}.vcf.gz")).i
+    pattern = OUT + "/{arm}/blocks/bs{blocksize}/windows/window_{i}.vcf.gz"
+    return expand(pattern, arm=wildcards.arm, blocksize=wildcards.blocksize, i=idxs)
+
+# Raw Godambe H and J for the CO-growth test, at one arm + block size, using
+# moments.Godambe's own internals (see compute_H_J.py) rather than a
+# hand-rolled score/J loop. Not part of `rule all`; request explicitly, e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N \
+#       godambe_correction_LRT/real_arms/Chr3L/blocks/bs20000/H_J.json
+rule compute_H_J:
+    input:
+        block_vcfs  = gather_block_vcfs,
+        sfs         = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+        simple_fit  = f"{OUT}/{{arm}}/sfs_fit_simple/best_fit.pkl",
+        complex_fit = f"{OUT}/{{arm}}/sfs_fit_complex/best_fit.pkl",
+        popfile     = POPFILE,
+    output:
+        json = f"{OUT}/{{arm}}/blocks/bs{{blocksize}}/H_J.json",
+    params:
+        script = f"{GODAMBE_SCR}/compute_H_J.py",
+        windir = f"{OUT}/{{arm}}/blocks/bs{{blocksize}}/windows",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --arm "{wildcards.arm}" \
+            --block-vcf-dir "{params.windir}" \
+            --popfile "{input.popfile}" \
+            --sfs "{input.sfs}" \
+            --simple-fit "{input.simple_fit}" \
+            --complex-fit "{input.complex_fit}" \
+            --out-json "{output.json}"
         """
 
 
@@ -190,6 +329,88 @@ rule aggregate_overlap:
             --ld-stats-dir "{OUT}/{wildcards.arm}/overlap/LD_stats" \
             --out-dir "{OUT}/{wildcards.arm}/overlap"
         """
+
+# ===========================================================================
+# LD DECAY CHECK -- OVERLAPPING windows on the UNMASKED arm VCF (mirrors the
+# masked overlap_window/overlap_ld_stats/aggregate_overlap rules above, but
+# sourced from the full arm VCF instead of masked.vcf.gz), plus a masked-vs-
+# unmasked comparison plot for one arm. Not part of `rule all`; request the
+# arm you want explicitly, e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N \
+#       godambe_correction_LRT/real_arms/Chr3L/ld_decay_masked_vs_unmasked.pdf
+# ===========================================================================
+rule overlap_window_unmasked:
+    input:
+        vcf     = lambda wc: arm_vcf(wc.arm),
+        popfile = POPFILE,
+    output:
+        vcf_gz = f"{OUT}/{{arm}}/overlap_unmasked/windows/window_{{i}}.vcf.gz",
+    params:
+        out_dir = f"{OUT}/{{arm}}/overlap_unmasked/windows",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.out_dir}"
+        python "{SNAKE_SCR}/split_vcf_windows.py" \
+            --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --out-dir "{params.out_dir}" \
+            --window-size {OVERLAP_WINDOW} --num-windows {OVERLAP_NWIN} \
+            --window-index {wildcards.i}
+        """
+
+rule overlap_ld_stats_unmasked:
+    input:
+        vcf_gz = f"{OUT}/{{arm}}/overlap_unmasked/windows/window_{{i}}.vcf.gz",
+        gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+    output:
+        pkl = f"{OUT}/{{arm}}/overlap_unmasked/LD_stats/LD_stats_window_{{i}}.pkl",
+    resources:
+        gpu = 1
+    params:
+        sim_dir = f"{OUT}/{{arm}}/overlap_unmasked",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats"
+        python "{GODAMBE_SCR}/ld_stats_safe.py" \
+            --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+            --config-file "{LD_CONFIG}" --r-bins "{R_BINS}" \
+            --rec-map-file "{input.gmap}"
+        """
+
+rule aggregate_overlap_unmasked:
+    input:
+        pkls = expand(f"{OUT}/{{{{arm}}}}/overlap_unmasked/LD_stats/LD_stats_window_{{i}}.pkl",
+                      i=OVERLAP_WINDOWS),
+    output:
+        mv = f"{OUT}/{{arm}}/overlap_unmasked/means.varcovs.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/bootstrap_ld.py" \
+            --ld-stats-dir "{OUT}/{wildcards.arm}/overlap_unmasked/LD_stats" \
+            --out-dir "{OUT}/{wildcards.arm}/overlap_unmasked"
+        """
+
+rule ld_decay_masked_vs_unmasked:
+    """Overlay masked vs. unmasked LD decay curves for one arm (reuses the
+    generic multi-curve overlay script from the root Snakefile)."""
+    input:
+        masked   = f"{OUT}/{{arm}}/overlap/means.varcovs.pkl",
+        unmasked = f"{OUT}/{{arm}}/overlap_unmasked/means.varcovs.pkl",
+    output:
+        pdf = f"{OUT}/{{arm}}/ld_decay_masked_vs_unmasked.pdf",
+    params:
+        script = "snakemake_scripts/compare_ld_decay_autosomes.py",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --means "{input.unmasked}" "{input.masked}" \
+            --labels unmasked masked \
+            --out-pdf "{output.pdf}"
+        """
+
 
 # 100 LHS starts, EACH ITS OWN JOB. {fit} selects the model (simple=null,
 # complex=alt); the same rule fits either, writing to fit_{fit}/.

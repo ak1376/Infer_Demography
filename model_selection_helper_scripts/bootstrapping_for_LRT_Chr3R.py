@@ -1,8 +1,8 @@
-# bootstrapping_for_LRT_Chr3L.py
+# bootstrapping_for_LRT_Chr3R.py
 #
 # Single-arm variant of bootstrapping_for_LRT.py: same Godambe-adjusted LRT for
-# CO growth, but run on Chr3L alone instead of the pooled Chr2L+Chr3L SFS, using
-# the per-arm fits from godambe_correction_LRT/real_arms/Chr3L/sfs_fit_{simple,
+# CO growth, but run on Chr3R alone instead of the pooled Chr2L+Chr3R SFS, using
+# the per-arm fits from godambe_correction_LRT/real_arms/Chr3R/sfs_fit_{simple,
 # complex}/best_fit.pkl. All bootstrap/LRT logic is unchanged from the original.
 
 """
@@ -20,8 +20,8 @@ D_adj = adjust * D ~ chi^2_1 under H0.
 
 Single-chromosome block bootstrap
 ----------------------------------
-The demographic fits here use Chr3L's OWN SFS (not pooled with any other arm),
-so the bootstrap resamples blocks tiling Chr3L only. Chr3L is tiled into
+The demographic fits here use Chr3R's OWN SFS (not pooled with any other arm),
+so the bootstrap resamples blocks tiling Chr3R only. Chr3R is tiled into
 non-overlapping blocks of a fixed physical size (BLOCK_SIZES_KB); a bootstrap
 replicate draws (with replacement) as many blocks as there are and sums their
 per-block SFS.
@@ -57,15 +57,8 @@ RNG_SEED = 0
 
 DROSO_DIR = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila"
 GODAMBE_ARM_DIR = "/sietch_colab/akapoor/Infer_Demography/godambe_correction_LRT/real_arms"
-AUTOSOMES = ["Chr3L"]
+AUTOSOMES = ["Chr3R"]
 popfile = f"{DROSO_DIR}/popfile.txt"
-
-# Per-population (CO/FR) validated block tiling from `rule validated_blocks`
-# (godambe_correction_LRT/scripts/compute_validated_blocks.py) -- directly
-# checked against real adjacent-block independence, rather than an arbitrary
-# uniform size from BLOCK_SIZES_KB. Reported alongside the sweep, not instead
-# of it, so the sweep still shows sensitivity to block-size choice.
-VALIDATED_BLOCKS_BED = f"{GODAMBE_ARM_DIR}/Chr3L/validated_blocks.bed"
 
 
 def polarized_vcf(chrom):
@@ -73,12 +66,12 @@ def polarized_vcf(chrom):
     return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
 
 
-# data_sfs is Chr3L's own SFS -- the fits below were run on this, not a
+# data_sfs is Chr3R's own SFS -- the fits below were run on this, not a
 # multi-arm combined spectrum.
-combined_sfs_path = f"{DROSO_DIR}/Chr3L/unfolded.sfs.pkl"
-simple_fit_path = f"{GODAMBE_ARM_DIR}/Chr3L/sfs_fit_simple/best_fit.pkl"
-complex_fit_path = f"{GODAMBE_ARM_DIR}/Chr3L/sfs_fit_complex/best_fit.pkl"
-out_dir = "/sietch_colab/akapoor/Infer_Demography/figures/godambe_Chr3L"
+combined_sfs_path = f"{DROSO_DIR}/Chr3R/unfolded.sfs.pkl"
+simple_fit_path = f"{GODAMBE_ARM_DIR}/Chr3R/sfs_fit_simple/best_fit.pkl"
+complex_fit_path = f"{GODAMBE_ARM_DIR}/Chr3R/sfs_fit_complex/best_fit.pkl"
+out_dir = "/sietch_colab/akapoor/Infer_Demography/figures/godambe_Chr3R"
 summary_csv_path = os.path.join(out_dir, "godambe_block_sensitivity.csv")
 sensitivity_plot_path = os.path.join(out_dir, "godambe_block_sensitivity.png")
 hist_template = os.path.join(out_dir, "J_bootstrap_hist_{block_kb}kb.png")
@@ -231,37 +224,20 @@ def _block_jobs(block_bp):
     return jobs
 
 
-def _validated_jobs():
-    """(vcf_path, (start, end)) blocks from the per-population-validated,
-    independence-checked tiling in VALIDATED_BLOCKS_BED -- same job format as
-    _block_jobs, but read from disk instead of computed arithmetically (and
-    already restricted to the arm's validated usable range, unlike
-    _block_jobs, which tiles the raw, unmasked arm bounds)."""
-    jobs = []
-    with open(VALIDATED_BLOCKS_BED) as f:
-        for line in f:
-            chrom, start, end = line.split()
-            jobs.append((polarized_vcf(chrom), (int(start), int(end))))
-    return jobs
-
-
-def get_chunk_spectra(block_bp, jobs=None):
-    """Per-block unfolded SFS, pooled into one list. Cached to disk (keyed by
-    block size, or 'validated' when `jobs` is given explicitly) so re-runs
-    skip parsing."""
+def get_chunk_spectra(block_bp):
+    """Per-block unfolded SFS for fixed-size blocks tiling ALL autosomes, pooled
+    into one list. Cached to disk (keyed by block size) so re-runs skip parsing."""
     os.makedirs(cache_dir, exist_ok=True)
     arms_tag = "-".join(AUTOSOMES)
-    key = "validated" if jobs is not None else f"{int(block_bp)}bp"
-    cache = os.path.join(cache_dir, f"chunk_spectra_{arms_tag}_{key}.pkl")
+    cache = os.path.join(cache_dir, f"chunk_spectra_{arms_tag}_{int(block_bp)}bp.pkl")
     if os.path.exists(cache):
         with open(cache, "rb") as f:
             return pickle.load(f)
 
-    if jobs is None:
-        jobs = _block_jobs(block_bp)
+    jobs = _block_jobs(block_bp)
     with ProcessPoolExecutor(max_workers=MAX_WORKERS) as pool:
         chunk_spectra = list(tqdm(pool.map(_parse_chunk, jobs), total=len(jobs),
-                                  desc=f"parse {len(jobs)} blocks @ {key}"))
+                                  desc=f"parse {len(jobs)} blocks @ {block_bp/1e3:.0f} kb"))
     with open(cache, "wb") as f:
         pickle.dump(chunk_spectra, f)
     return chunk_spectra
@@ -282,10 +258,10 @@ p_eps[growth_idx] = score_eps
 mp = theta_opt * split_migration_growth_both_sfs(p_eps, ns)           # growth_CO = +eps
 
 
-def bootstrap_J(block_bp, rng, jobs=None):
+def bootstrap_J(block_bp, rng):
     """Per-bootstrap J_b: resample the pooled cross-arm blocks with replacement
     (n_blocks draws), sum to one bootstrap SFS, and square its growth_CO score."""
-    chunk_spectra = get_chunk_spectra(block_bp, jobs=jobs)
+    chunk_spectra = get_chunk_spectra(block_bp)
     n_blocks = len(chunk_spectra)
     idx = np.arange(n_blocks)
     J_boot = np.empty(NUM_BOOT_REPS)
@@ -297,12 +273,12 @@ def bootstrap_J(block_bp, rng, jobs=None):
     return J_boot
 
 
-def check_chunk_reconstruction(block_bp, jobs=None):
+def check_chunk_reconstruction(block_bp):
     """Sanity check: the non-overlapping blocks (across all arms) should sum to
     the empirical combined SFS used in the likelihood. If this fails badly, the
     bootstrap data are not matched to data_sfs (e.g. parse_vcf vs. how the
     combined SFS was built), and the correction is not trustworthy."""
-    chunk_spectra = get_chunk_spectra(block_bp, jobs=jobs)
+    chunk_spectra = get_chunk_spectra(block_bp)
     chunk_sum = moments.Spectrum(sum(chunk_spectra))
 
     snp_diff = float(chunk_sum.S() - data_sfs.S())
@@ -318,30 +294,27 @@ def check_chunk_reconstruction(block_bp, jobs=None):
     }
 
 
-def summarize_block_size(block_kb, seed, jobs=None):
+def summarize_block_size(block_kb, seed):
     """Run the Godambe correction for one block size and return one row for the
-    sensitivity table, plus the vector of per-bootstrap J values. `jobs`
-    overrides the uniform tiling with an explicit block list (the validated,
-    independence-checked tiling); `block_kb` is then just a label for plotting."""
+    sensitivity table, plus the vector of per-bootstrap J values."""
     block_bp = int(block_kb * 1e3)
     rng = np.random.default_rng(seed)
-    J_boot = bootstrap_J(block_bp, rng, jobs=jobs)
+    J_boot = bootstrap_J(block_bp, rng)
     mean_J = float(J_boot.mean())
     sd_J = float(J_boot.std(ddof=1))
 
-    n_blocks = len(get_chunk_spectra(block_bp, jobs=jobs))
+    n_blocks = len(get_chunk_spectra(block_bp))
 
     adjust = H_growth / mean_J
     D_adj = adjust * D
     p_adj = float(moments.Godambe.sum_chi2_ppf(D_adj, weights=(0, 1)))
 
-    recon = check_chunk_reconstruction(block_bp, jobs=jobs)
+    recon = check_chunk_reconstruction(block_bp)
 
     row = {
         "block_kb": float(block_kb),
         "block_bp": float(block_bp),
         "n_blocks": int(n_blocks),
-        "validated": jobs is not None,
         "H": float(H_growth),
         "mean_J": mean_J,
         "sd_J_boot": sd_J,
@@ -406,7 +379,7 @@ print(f"  D (stored best_ll)       = {D_stored:.6g}")
 if abs(D - D_stored) > 1e-3 * max(1.0, abs(D)):
     print("  *** WARNING: D differs between conventions — the two fits were "
           "likely run on DIFFERENT SFS. Re-fit both models on the current "
-          "Chr3L SFS. ***")
+          "Chr3R SFS. ***")
 
 os.makedirs(out_dir, exist_ok=True)
 
@@ -433,28 +406,6 @@ for block_kb in BLOCK_SIZES_KB:
         f"SFS maxdiff={row['max_abs_sfs_diff']:.3g}"
     )
 
-# ---- Validated blocks: per-population, independence-checked tiling from
-# `rule validated_blocks`, reported alongside the uniform BLOCK_SIZES_KB sweep
-# (not instead of it) -- see VALIDATED_BLOCKS_BED's definition above.
-validated_jobs = _validated_jobs()
-_starts_ends = [job[1] for job in validated_jobs]
-validated_block_kb = (_starts_ends[0][1] - _starts_ends[0][0]) / 1e3  # actual bp size, in kb
-seed = RNG_SEED + 999_999  # distinct from every sweep seed (RNG_SEED + int(block_kb))
-row, J_boot = summarize_block_size(validated_block_kb, seed, jobs=validated_jobs)
-results.append(row)
-J_by_block[validated_block_kb] = J_boot
-
-print(
-    f"{validated_block_kb:>5.1f} kb  "
-    f"n_blocks={row['n_blocks']:>5d}  "
-    f"mean_J={row['mean_J']:>12.3g}  "
-    f"H/J={row['adjust_H_over_J']:>10.5g}  "
-    f"D_adj={row['D_adj']:>10.5g}  "
-    f"p_adj={row['p_adj']:>10.5g}  "
-    f"SFS maxdiff={row['max_abs_sfs_diff']:.3g}  "
-    f"[validated]"
-)
-
 # Write CSV summary without requiring pandas.
 fieldnames = list(results[0].keys())
 with open(summary_csv_path, "w") as f:
@@ -471,16 +422,13 @@ p_adj_vals = np.array([r["p_adj"] for r in results])
 adjust_vals = np.array([r["adjust_H_over_J"] for r in results])
 D_adj_vals = np.array([r["D_adj"] for r in results])
 mean_J_vals = np.array([r["mean_J"] for r in results])
-is_validated = np.array([r["validated"] for r in results])
 
 fig, ax1 = plt.subplots(figsize=(8, 4.8))
-ax1.plot(block_kb_arr[~is_validated], p_adj_vals[~is_validated], marker="o", label="uniform sweep")
-ax1.plot(block_kb_arr[is_validated], p_adj_vals[is_validated], marker="*", markersize=16,
-         linestyle="none", color="#eb6834", label="validated (per-population, CO/FR)")
+ax1.plot(block_kb_arr, p_adj_vals, marker="o")
 ax1.axhline(0.05, ls="--", lw=1, label="p = 0.05")
 ax1.set_xlabel("Block size (kb)")
 ax1.set_ylabel("Godambe-adjusted p-value")
-ax1.set_title("Block-size sensitivity of Godambe-adjusted LRT (Chr3L)")
+ax1.set_title("Block-size sensitivity of Godambe-adjusted LRT (Chr3R)")
 ax1.set_xticks(block_kb_arr)
 for x, y, nb in zip(block_kb_arr, p_adj_vals, n_blocks_arr):
     ax1.annotate(f"{nb} blocks", (x, y), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8)
@@ -497,7 +445,7 @@ fig, ax = plt.subplots(figsize=(8, 4.8))
 ax.plot(block_kb_arr, mean_J_vals, marker="o", label="mean J")
 ax.set_xlabel("Block size (kb)")
 ax.set_ylabel("mean J")
-ax.set_title("Score-variance estimate J across block sizes (Chr3L)")
+ax.set_title("Score-variance estimate J across block sizes (Chr3R)")
 ax.set_xticks(block_kb_arr)
 ax.legend(fontsize=8)
 fig.tight_layout()
@@ -509,7 +457,7 @@ fig, ax = plt.subplots(figsize=(8, 4.8))
 ax.plot(block_kb_arr, adjust_vals, marker="o", label="H/J")
 ax.set_xlabel("Block size (kb)")
 ax.set_ylabel("Adjustment factor H/J")
-ax.set_title("Godambe adjustment factor across block sizes (Chr3L)")
+ax.set_title("Godambe adjustment factor across block sizes (Chr3R)")
 ax.set_xticks(block_kb_arr)
 ax.legend(fontsize=8)
 fig.tight_layout()
