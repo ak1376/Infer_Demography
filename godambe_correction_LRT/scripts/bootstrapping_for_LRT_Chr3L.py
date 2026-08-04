@@ -52,7 +52,7 @@ MAX_WORKERS = 8
 # Candidate block sizes in kb. ~100 kb is the LD-justified recommendation from
 # bootstrap_window_size.py (set by the slow-decaying Chr2R-FR curve).
 BLOCK_SIZES_KB = [50, 75, 100, 150, 200, 300, 500]
-NUM_BOOT_REPS = 1000
+NUM_BOOT_REPS = 10000
 RNG_SEED = 0
 
 DROSO_DIR = "/sietch_colab/akapoor/Infer_Demography/real_data_analysis/data/drosophila"

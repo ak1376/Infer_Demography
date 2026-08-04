@@ -86,24 +86,6 @@ def find_crossing_distance(medians, edges, floor, tolerance):
     return None  # never reached the floor within the tested distance range
 
 
-def assign_blocks(positions, block_size_bp):
-    start = positions.min()
-    return ((positions - start) // block_size_bp).astype(int)
-
-
-def adjacent_block_cross_r2(r2_matrix, block_ids):
-    """median r2 between each pair of physically-adjacent blocks' SNPs."""
-    n_blocks = block_ids.max() + 1
-    medians = []
-    for b in range(n_blocks - 1):
-        idx_i = np.where(block_ids == b)[0]
-        idx_j = np.where(block_ids == b + 1)[0]
-        if len(idx_i) == 0 or len(idx_j) == 0:
-            continue
-        medians.append(np.median(r2_matrix[np.ix_(idx_i, idx_j)]))
-    return np.array(medians)
-
-
 def polymorphic_mask(haplotypes):
     """Sites polymorphic WITHIN this set of haplotypes -- excludes sites that
     are only variable because of a *different* population's samples."""
@@ -159,37 +141,78 @@ def process_chunk(vcf, popfile, co_samples, fr_samples, arm, chunk_start, chunk_
                 floor_co=floor_co, floor_fr=floor_fr, block_co=block_co, block_fr=block_fr)
 
 
-def validate_chunk(vcf, co_samples, fr_samples, arm, chunk_start, chunk_end,
-                    block_size_bp, floor_co, floor_fr, tolerance):
-    """Adjacent-block cross-r2 check for one chunk, at the chosen block size."""
-    region = f"{arm}:{chunk_start}-{chunk_end}"
-    hm_co = HaplotypeMatrix.from_vcf(vcf, region=region, samples=co_samples)
-    hm_fr = HaplotypeMatrix.from_vcf(vcf, region=region, samples=fr_samples)
+def find_floor_for_position(chunk_results, pos):
+    """The floor from whichever original process_chunk neighborhood contains
+    this bp position -- floors vary locally, so a boundary's ratio is judged
+    against its own neighborhood's background level."""
+    for c in chunk_results:
+        if c["chunk_start"] <= pos < c["chunk_end"]:
+            return c["floor_co"], c["floor_fr"]
+    return None, None
 
-    positions = hm_co.positions
-    # capture haplotypes BEFORE pairwise_r2() -- see process_chunk's comment
-    poly_co = polymorphic_mask(hm_co.haplotypes)
-    poly_fr = polymorphic_mask(hm_fr.haplotypes)
 
-    r2_co = hm_co.pairwise_r2().get()
-    r2_fr = hm_fr.pairwise_r2().get()
+def validate_blocks_direct(vcf, co_samples, fr_samples, arm, blocks, chunk_results, group_size):
+    """Cross-r2 for every REAL adjacent block-pair in the literal, final
+    tiling (the same blocks written to validated_blocks.bed) -- unlike the
+    old chunk-local re-tiling, this checks the EXACT boundaries that get
+    bootstrapped, not a same-size approximation that drifts out of phase with
+    them. Processes `group_size`+1 consecutive blocks per VCF fetch,
+    overlapping by one block, so every real boundary is checked exactly once
+    at its exact bp position.
+    """
+    detail_rows = []
+    i = 0
+    n = len(blocks)
+    while i < n - 1:
+        window = blocks[i: i + group_size + 1]
+        if len(window) < 2:
+            break
+        region_start, region_end = window[0][0], window[-1][1]
+        region = f"{arm}:{region_start}-{region_end}"
+        hm_co = HaplotypeMatrix.from_vcf(vcf, region=region, samples=co_samples)
+        hm_fr = HaplotypeMatrix.from_vcf(vcf, region=region, samples=fr_samples)
 
-    positions_co = positions[poly_co]
-    positions_fr = positions[poly_fr]
-    r2_co = r2_co[np.ix_(poly_co, poly_co)]
-    r2_fr = r2_fr[np.ix_(poly_fr, poly_fr)]
+        positions = hm_co.positions
+        # capture haplotypes BEFORE pairwise_r2() -- see process_chunk's comment
+        poly_co = polymorphic_mask(hm_co.haplotypes)
+        poly_fr = polymorphic_mask(hm_fr.haplotypes)
 
-    if len(positions_co) < 2 or len(positions_fr) < 2:
-        return 0, 0, 0, 0
+        r2_co = hm_co.pairwise_r2().get()
+        r2_fr = hm_fr.pairwise_r2().get()
 
-    block_ids_co = assign_blocks(positions_co, block_size_bp)
-    block_ids_fr = assign_blocks(positions_fr, block_size_bp)
-    cross_co = adjacent_block_cross_r2(r2_co, block_ids_co)
-    cross_fr = adjacent_block_cross_r2(r2_fr, block_ids_fr)
+        positions_co = positions[poly_co]
+        positions_fr = positions[poly_fr]
+        r2_co = r2_co[np.ix_(poly_co, poly_co)]
+        r2_fr = r2_fr[np.ix_(poly_fr, poly_fr)]
 
-    bad_co = int(np.sum(cross_co > tolerance * floor_co))
-    bad_fr = int(np.sum(cross_fr > tolerance * floor_fr))
-    return len(cross_co), bad_co, len(cross_fr), bad_fr
+        # assign each SNP to its REAL block index, using the literal known
+        # boundaries -- not a re-derived local tiling
+        boundaries = [b[1] for b in window[:-1]]
+        block_idx_co = np.searchsorted(boundaries, positions_co, side="right")
+        block_idx_fr = np.searchsorted(boundaries, positions_fr, side="right")
+
+        for k in range(len(window) - 1):
+            boundary_bp = window[k][1]
+            floor_co, floor_fr = find_floor_for_position(chunk_results, boundary_bp)
+
+            idx_i_co = np.where(block_idx_co == k)[0]
+            idx_j_co = np.where(block_idx_co == k + 1)[0]
+            if floor_co is not None and len(idx_i_co) and len(idx_j_co):
+                cr = float(np.median(r2_co[np.ix_(idx_i_co, idx_j_co)]))
+                detail_rows.append(dict(pop="CO", block_index=i + k, boundary_bp=boundary_bp,
+                                         block_i=list(window[k]), block_j=list(window[k + 1]),
+                                         cross_r2=cr, floor=floor_co, ratio=cr / floor_co))
+
+            idx_i_fr = np.where(block_idx_fr == k)[0]
+            idx_j_fr = np.where(block_idx_fr == k + 1)[0]
+            if floor_fr is not None and len(idx_i_fr) and len(idx_j_fr):
+                cr = float(np.median(r2_fr[np.ix_(idx_i_fr, idx_j_fr)]))
+                detail_rows.append(dict(pop="FR", block_index=i + k, boundary_bp=boundary_bp,
+                                         block_i=list(window[k]), block_j=list(window[k + 1]),
+                                         cross_r2=cr, floor=floor_fr, ratio=cr / floor_fr))
+
+        i += group_size
+    return detail_rows
 
 
 # --------------------------------------------------------------------------
@@ -214,6 +237,13 @@ def main():
     ap.add_argument("--out-bed", required=True)
     ap.add_argument("--out-report", required=True)
     ap.add_argument("--out-histogram", required=True)
+    ap.add_argument("--out-crossr2-check", required=True,
+                     help="histogram of adjacent-block cross-r2 / floor ratios, i.e. how far "
+                          "above the background floor 'bad' block-pairs actually are")
+    ap.add_argument("--validate-group-size", type=int, default=4,
+                     help="consecutive real blocks per VCF fetch during validation "
+                          "(group_size+1 blocks per window, overlapping by 1, so every "
+                          "real boundary is checked exactly once)")
     args = ap.parse_args()
 
     co_samples, fr_samples = read_popfile(args.popfile)
@@ -262,18 +292,23 @@ def main():
     print(f"usable range: {args.arm}:{chrom_start:,}-{usable_chrom_end:,} "
           f"(excluding {(chrom_end - usable_chrom_end) / 1e6:.1f} Mb at the end)")
 
-    # ---- validate: tile the usable range, check real adjacent blocks ----
-    total_pairs_co = total_pairs_fr = total_bad_co = total_bad_fr = 0
-    for c in chunk_results:
-        if c["chunk_start"] >= usable_chrom_end:
-            continue
-        n_co, bad_co, n_fr, bad_fr = validate_chunk(
-            args.vcf, co_samples, fr_samples, args.arm, c["chunk_start"], c["chunk_end"],
-            final_block_size_bp, c["floor_co"], c["floor_fr"], args.tolerance)
-        total_pairs_co += n_co
-        total_bad_co += bad_co
-        total_pairs_fr += n_fr
-        total_bad_fr += bad_fr
+    # ---- the literal, final block list (same one written to --out-bed below) ----
+    block_starts = list(range(chrom_start, usable_chrom_end, final_block_size_bp))
+    blocks = [(start, min(start + final_block_size_bp, usable_chrom_end))
+              for start in block_starts]
+
+    # ---- validate: check the EXACT real adjacent blocks in `blocks`, not a
+    # re-derived local approximation. detail_rows: one entry per real
+    # adjacent block-pair, so we can see not just the pass/fail count but
+    # HOW FAR above the floor the failures are. ----
+    detail_rows = validate_blocks_direct(args.vcf, co_samples, fr_samples, args.arm,
+                                          blocks, chunk_results, args.validate_group_size)
+
+    co_rows = [r for r in detail_rows if r["pop"] == "CO"]
+    fr_rows = [r for r in detail_rows if r["pop"] == "FR"]
+    total_pairs_co, total_pairs_fr = len(co_rows), len(fr_rows)
+    total_bad_co = sum(1 for r in co_rows if r["ratio"] > args.tolerance)
+    total_bad_fr = sum(1 for r in fr_rows if r["ratio"] > args.tolerance)
 
     pct_bad_co = 100 * total_bad_co / total_pairs_co if total_pairs_co else float("nan")
     pct_bad_fr = 100 * total_bad_fr / total_pairs_fr if total_pairs_fr else float("nan")
@@ -282,26 +317,36 @@ def main():
     print(f"validation: FR {total_bad_fr}/{total_pairs_fr} adjacent pairs still above "
           f"{args.tolerance}x floor ({pct_bad_fr:.1f}%)")
 
-    # ---- save the block BED file ----
+    # ---- save the block BED file (the exact `blocks` list just validated) ----
     Path(args.out_bed).parent.mkdir(parents=True, exist_ok=True)
-    block_starts = list(range(chrom_start, usable_chrom_end, final_block_size_bp))
     with open(args.out_bed, "w") as f:
-        for start in block_starts:
-            end = min(start + final_block_size_bp, usable_chrom_end)
+        for start, end in blocks:
             f.write(f"{args.arm}\t{start}\t{end}\n")
-    print(f"\nsaved {len(block_starts)} blocks to {args.out_bed}")
+    print(f"\nsaved {len(blocks)} blocks to {args.out_bed}")
+
+    # worst-offending block-pairs per population (highest ratio above floor) --
+    # candidates for excluding that specific block boundary from the tiling
+    worst_co = sorted(co_rows, key=lambda r: -r["ratio"])[:10]
+    worst_fr = sorted(fr_rows, key=lambda r: -r["ratio"])[:10]
+    print("\nworst CO offenders (block_i, block_j, cross-r2/floor ratio):")
+    for r in worst_co:
+        print(f"  block {r['block_index']}: {r['block_i']} <-> {r['block_j']}  ratio={r['ratio']:.2f}")
+    print("worst FR offenders (block_i, block_j, cross-r2/floor ratio):")
+    for r in worst_fr:
+        print(f"  block {r['block_index']}: {r['block_i']} <-> {r['block_j']}  ratio={r['ratio']:.2f}")
 
     # ---- save the JSON report ----
     Path(args.out_report).parent.mkdir(parents=True, exist_ok=True)
     report = dict(
         arm=args.arm, chrom_start=chrom_start, chrom_end=chrom_end,
-        usable_chrom_end=usable_chrom_end, n_blocks=len(block_starts),
+        usable_chrom_end=usable_chrom_end, n_blocks=len(blocks),
         final_block_size_bp=final_block_size_bp, percentile=args.percentile,
         co_percentile_bp=p_co, fr_percentile_bp=p_fr,
         n_chunks=len(chunk_results),
         validation=dict(
             co_pairs=total_pairs_co, co_bad=total_bad_co, co_pct_bad=pct_bad_co,
             fr_pairs=total_pairs_fr, fr_bad=total_bad_fr, fr_pct_bad=pct_bad_fr,
+            worst_co=worst_co, worst_fr=worst_fr,
         ),
     )
     with open(args.out_report, "w") as f:
@@ -325,6 +370,41 @@ def main():
     Path(args.out_histogram).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out_histogram, dpi=150)
     print(f"saved histogram to {args.out_histogram}")
+
+    # ---- cross-r2/floor ratio check: how far above the floor are the
+    # "bad" adjacent block-pairs, not just how many of them there are ----
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    for ax, rows, label, color in zip(axes, [co_rows, fr_rows], ["CO", "FR"],
+                                       ["#2a78d6", "#eb6834"]):
+        ratios = np.array([r["ratio"] for r in rows], dtype=float)
+        n_nonfinite = int(np.sum(~np.isfinite(ratios)))
+        print(f"{label} ratio stats: n={len(ratios)}, nonfinite={n_nonfinite}, "
+              f"min={np.nanmin(ratios[np.isfinite(ratios)]):.4g}, "
+              f"max={np.nanmax(ratios[np.isfinite(ratios)]):.4g}")
+        ratios = ratios[np.isfinite(ratios) & (ratios > 0)]
+        good = ratios[ratios <= args.tolerance]
+        bad = ratios[ratios > args.tolerance]
+        lo = max(float(ratios.min()) * 0.9, 1e-3)
+        hi = max(float(ratios.max()) * 1.1, lo * 1.5)
+        bins = np.logspace(np.log10(lo), np.log10(hi), 40)
+        ax.hist(good, bins=bins, color=color, alpha=0.85, edgecolor="white",
+                label=f"OK ({len(good)})")
+        ax.hist(bad, bins=bins, color="#d62728", alpha=0.85, edgecolor="white",
+                label=f"bad ({len(bad)})")
+        ax.axvline(1.0, color="black", ls="-", lw=1.2, label="floor (ratio=1)")
+        ax.axvline(args.tolerance, color="black", ls="--", lw=1.2,
+                    label=f"tolerance ({args.tolerance}x)")
+        ax.set_xscale("log")
+        ax.set_xlabel("adjacent-block cross-r2 / that chunk's floor")
+        ax.set_title(f"{label}: {len(bad)}/{len(ratios)} pairs bad "
+                     f"({100 * len(bad) / len(ratios):.1f}%)")
+        ax.legend(fontsize=8)
+    axes[0].set_ylabel("count (adjacent block pairs)")
+    fig.suptitle(f"{args.arm}: how far above the background floor are 'bad' block pairs?")
+    fig.tight_layout()
+    Path(args.out_crossr2_check).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(args.out_crossr2_check, dpi=150)
+    print(f"saved cross-r2 check to {args.out_crossr2_check}")
 
 
 if __name__ == "__main__":
