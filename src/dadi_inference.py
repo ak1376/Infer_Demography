@@ -7,7 +7,11 @@ Robust + pipeline-friendly:
 - Guards numdifftools gradients so LD_LBFGS can't crash from NaN grads
 - Tracks last evaluated parameters + LL
 - On nlopt.runtime_error: captures a debug TXT payload (returned to caller)
-- Fallback: if LD_LBFGS runtime_error → run LN_COBYLA starting from last eval (or x0)
+- Fallback: if the primary algorithm runtime_errors → run LN_COBYLA starting from last eval (or x0)
+
+- experiment_config["optimizer_algorithm"] selects the primary nlopt algorithm by
+  name (e.g. "LN_BOBYQA", "LD_LBFGS"). Defaults to "LN_BOBYQA" (unchanged from
+  prior behavior). Mirrors moments_inference.py's optimizer_algorithm handling.
 """
 
 from __future__ import annotations
@@ -201,23 +205,30 @@ def fit_model(
         o.set_max_objective(objective)
         return o
 
-    # ---- run optimization: BOBYQA with roundoff + runtime fallback ----
+    # ---- primary algorithm (config-selectable; defaults to current LN_BOBYQA behavior) ----
+    algo_name = str(experiment_config.get("optimizer_algorithm", "LN_BOBYQA"))
     try:
-        opt = _make_opt(nlopt.LN_BOBYQA)
+        primary_algorithm = getattr(nlopt, algo_name)
+    except AttributeError:
+        raise ValueError(f"Unknown nlopt algorithm name: {algo_name!r}")
+
+    # ---- run optimization: primary algorithm with roundoff + runtime fallback ----
+    try:
+        opt = _make_opt(primary_algorithm)
         xhat = opt.optimize(x0)
 
     except nlopt.RoundoffLimited:
         # Optimizer stalled on roundoff — use best point evaluated so far
         x_best = last_eval.get("log10_params", None)
         xhat = np.asarray(x_best if x_best is not None else x0, float)
-        print("[DADI DEBUG] LN_BOBYQA roundoff-limited; returning best point so far")
-        debug_txt = _build_debug_txt("bobyqa_roundoff_limited")
+        print(f"[DADI DEBUG] {algo_name} roundoff-limited; returning best point so far")
+        debug_txt = _build_debug_txt(f"{algo_name.lower()}_roundoff_limited")
 
     except RuntimeError:
         print(
-            "[DADI DEBUG] LN_BOBYQA runtime_error; capturing debug state and falling back to LN_COBYLA"
+            f"[DADI DEBUG] {algo_name} runtime_error; capturing debug state and falling back to LN_COBYLA"
         )
-        debug_txt = _build_debug_txt("bobyqa_runtime_error")
+        debug_txt = _build_debug_txt(f"{algo_name.lower()}_runtime_error")
 
         x_start = last_eval.get("log10_params", None)
         if x_start is None:

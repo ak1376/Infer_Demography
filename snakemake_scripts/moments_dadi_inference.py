@@ -61,6 +61,23 @@ def _parse_args():
         help="Number of grid points for likelihood profiles",
     )
     p.add_argument("-v", "--verbose", action="count", default=1)
+    p.add_argument(
+        "--optimizer-algorithm",
+        type=str,
+        default=None,
+        help="nlopt algorithm name for moments mode (e.g. LD_LBFGS, LN_BOBYQA). "
+        "Overrides experiment_config['optimizer_algorithm']. The start point is "
+        "computed before the algorithm is selected, so this can be varied across "
+        "runs while keeping an identical initial condition (pair with --opt-seed "
+        "if the config sets start_jitter_sigma > 0).",
+    )
+    p.add_argument(
+        "--opt-seed",
+        type=int,
+        default=None,
+        help="Seed for the start-point jitter (experiment_config['opt_seed']). "
+        "Pin this to the same value across runs being compared.",
+    )
     return p.parse_args()
 
 
@@ -85,7 +102,9 @@ def main() -> None:
         ground_truth=args.ground_truth, # This is optional and can be None. When evaluating on real data you won't have ground truth params.
         generate_profiles=args.generate_profiles,
         profile_grid_points=args.profile_grid_points,
-        verbose=args.verbose
+        verbose=args.verbose,
+        optimizer_algorithm=args.optimizer_algorithm,
+        opt_seed=args.opt_seed,
     )
 
 

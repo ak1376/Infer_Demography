@@ -2,7 +2,12 @@
 """
 moments_inference.py
 
-Moments SFS inference for demes-based models with NLopt LD_LBFGS.
+Moments SFS inference for demes-based models with NLopt.
+
+- experiment_config["optimizer_algorithm"] selects the nlopt algorithm by name
+  (e.g. "LD_LBFGS", "LN_BOBYQA"). Defaults to "LD_LBFGS". The start point (x0)
+  is computed independently of this choice, so switching algorithms while
+  keeping the rest of the config fixed gives an identical initial condition.
 
 What this version does (per your requests):
 - Uses a GEOMETRIC-midpoint start based on bounds (overrides incoming start_vec),
@@ -166,6 +171,8 @@ def fit_model(
     eps: float = 1e-12,
     *,
     save_dir: Optional[str | Path] = None,  # <-- NEW: where to put likelihood_plots/
+    maxeval: Optional[int] = None,
+    xtol_rel: Optional[float] = None,
 ) -> Tuple[np.ndarray, float]:
     """
     Returns (fitted_real_params, ll_hat).
@@ -262,11 +269,21 @@ def fit_model(
     if start_vec.shape != (len(param_names),):
         raise ValueError(f"start_vec shape {start_vec.shape} != ({len(param_names)},)")
 
-    opt = nlopt.opt(nlopt.LD_LBFGS, start_vec.size)
+    algo_name = str(experiment_config.get("optimizer_algorithm", "LD_LBFGS"))
+    try:
+        algo = getattr(nlopt, algo_name)
+    except AttributeError:
+        raise ValueError(f"Unknown nlopt algorithm name: {algo_name!r}")
+
+    opt = nlopt.opt(algo, start_vec.size)
     opt.set_lower_bounds(np.log10(lb_full))
     opt.set_upper_bounds(np.log10(ub_full))
     opt.set_max_objective(objective)
     opt.set_ftol_rel(rtol)
+    if xtol_rel is not None:
+        opt.set_xtol_rel(xtol_rel)
+    if maxeval is not None:
+        opt.set_maxeval(maxeval)
 
     # ---- run optimization ----
     x0 = np.log10(start_vec)

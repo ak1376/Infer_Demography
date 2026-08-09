@@ -181,68 +181,98 @@ rule all:
             expand(f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",             sid=SIM_IDS),
             expand(f"{SIM_BASEDIR}/{{sid}}/demes.png",           sid=SIM_IDS),
 
-            # ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
-            # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
-            #     sid=SIM_IDS,
-            #     opt=OPTIMS,
-            # ),
+            ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
+            expand(
+                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+                sid=SIM_IDS,
+                opt=OPTIMS,
+            ),
             # expand(
             #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
             #     sid=SIM_IDS,
             #     opt=OPTIMS,
             # ),
 
-            # # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
-            # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
+            # ── 3. CONSOLIDATED SIM INFERENCES ──────────────────────────────────
+            expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl", sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",    sid=SIM_IDS),
             # expand(f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt",       sid=SIM_IDS),
 
-            # ## ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
+            ## ── 4. MOMENTS-LD (SIMULATED) ────────────────────────────────────────
             # expand(
             #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
             #     sid=SIM_IDS,
             # ),
 
-            # ## ── 5. MOMENTS-LD OPTIMIZATION (always at MomentsLD/best_fit.pkl) ─────
+            ## ── 5. MOMENTS-LD OPTIMIZATION (always at MomentsLD/best_fit.pkl) ─────
             # expand(
             #     f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/best_fit.pkl",
             #     sid=SIM_IDS,
             # ),
 
-            # ======================================================================
-            # ACTIVE TARGETS
-            # ======================================================================
+            ## ======================================================================
+            ## ACTIVE TARGETS
+            ## ======================================================================
 
-            # # ── 1. MODELING DATASETS ────────────────────────────────────────────
-            # f"experiments/{MODEL}/modeling/datasets/features_df.pkl",
-            # f"experiments/{MODEL}/modeling/datasets/targets_df.pkl",
-
-            # # ── 2. LINEAR REGRESSION ────────────────────────────────────────────
+            # ── 1. MODELING DATASETS ────────────────────────────────────────────
             # expand(
-            #     f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
-            #     reg=REG_TYPES,
+            #     f"experiments/{MODEL}/modeling_{{variant}}/datasets/features_df.pkl",
+            #     variant=MODELING_VARIANTS,
             # ),
             # expand(
-            #     f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_model_error_{{reg}}.json",
-            #     reg=REG_TYPES,
+            #     f"experiments/{MODEL}/modeling_{{variant}}/datasets/targets_df.pkl",
+            #     variant=MODELING_VARIANTS,
+            # ),
+
+            # ── 2. LINEAR REGRESSION ────────────────────────────────────────────
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
+            #     variant=MODELING_VARIANTS, reg=REG_TYPES,
             # ),
             # expand(
-            #     f"experiments/{MODEL}/modeling/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
-            #     reg=REG_TYPES,
+            #     f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_model_error_{{reg}}.json",
+            #     variant=MODELING_VARIANTS, reg=REG_TYPES,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
+            #     variant=MODELING_VARIANTS, reg=REG_TYPES,
             # ),
 
-            # # ── 3. RANDOM FOREST ────────────────────────────────────────────────
-            # f"experiments/{MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl",
-            # f"experiments/{MODEL}/modeling/random_forest/random_forest_model_error.json",
-            # f"experiments/{MODEL}/modeling/random_forest/random_forest_model.pkl",
-            # f"experiments/{MODEL}/modeling/random_forest/random_forest_feature_importances.png",
+            # ── 3. RANDOM FOREST ────────────────────────────────────────────────
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_mdl_obj.pkl",
+            #     variant=MODELING_VARIANTS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_model_error.json",
+            #     variant=MODELING_VARIANTS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_model.pkl",
+            #     variant=MODELING_VARIANTS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_feature_importances.png",
+            #     variant=MODELING_VARIANTS,
+            # ),
 
-            # # ── 4. XGBOOST ──────────────────────────────────────────────────────
-            # f"experiments/{MODEL}/modeling/xgboost/xgb_mdl_obj.pkl",
-            # f"experiments/{MODEL}/modeling/xgboost/xgb_model_error.json",
-            # f"experiments/{MODEL}/modeling/xgboost/xgb_model.pkl",
-            # f"experiments/{MODEL}/modeling/xgboost/xgb_feature_importances.png",
+            # ── 4. XGBOOST ──────────────────────────────────────────────────────
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_mdl_obj.pkl",
+            #     variant=MODELING_VARIANTS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_model_error.json",
+            #     variant=MODELING_VARIANTS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_model.pkl",
+            #     variant=MODELING_VARIANTS,
+            # ),
+            # expand(
+            #     f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_feature_importances.png",
+            #     variant=MODELING_VARIANTS,
+            # ),
 
             # # ── 5. REAL DATA (DROSOPHILA) ───────────────────────────────────────
             # POLARIZED_VCF,
@@ -301,7 +331,7 @@ rule infer_moments:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",   # not read; kept for DAG clarity
         cfg    = EXP_CFG
     output:
-        pkl = temp(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl")
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -324,6 +354,7 @@ rule infer_moments:
           --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
           --generate-profiles \
+          --opt-seed {wildcards.opt} \
 
           {params.fix}
 
@@ -340,7 +371,7 @@ rule infer_dadi:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         cfg    = EXP_CFG,
     output:
-        pkl = temp(f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl")
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -388,6 +419,10 @@ rule infer_dadi:
 rule aggregate_opts_moments:
     input:
         cfg = EXP_CFG,
+        opts = lambda w: expand(
+            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/moments/fit_params.pkl",
+            opt=OPTIMS,
+        ),
     output:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
@@ -695,7 +730,8 @@ rule ld_window:
         cfg     = EXP_CFG
     threads: 4
     resources:
-        ld_cores = 4
+        ld_cores = 4,
+        gpu      = 1
     shell:
         """
         set -euo pipefail
@@ -749,7 +785,8 @@ rule ld_window_pruned:
         cfg     = EXP_CFG,
     threads: 4
     resources:
-        ld_cores = 4
+        ld_cores = 4,
+        gpu      = 1
     shell:
         """
         set -euo pipefail

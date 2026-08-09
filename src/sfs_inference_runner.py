@@ -214,6 +214,8 @@ def run_cli(
     generate_profiles: bool = False,
     profile_grid_points: int = 41,
     verbose: bool = False,
+    optimizer_algorithm: Optional[str] = None,
+    opt_seed: Optional[int] = None,
 ) -> None:
     # Load SFS
     with open(sfs_file, "rb") as f:
@@ -222,6 +224,15 @@ def run_cli(
     # Load config
     with open(config_file, "r") as f:
         config = json.load(f)
+
+    # CLI overrides (used e.g. to compare optimizer algorithms against an
+    # identical start point: fit_model computes its start before picking the
+    # nlopt algorithm, so pinning opt_seed here fixes any start_jitter_sigma
+    # jitter across runs).
+    if optimizer_algorithm is not None:
+        config["optimizer_algorithm"] = optimizer_algorithm
+    if opt_seed is not None:
+        config["opt_seed"] = opt_seed
 
     # Load model function
     module_name, func_name = model_py.split(":")
@@ -390,6 +401,8 @@ def run_cli(
             generate_profiles=generate_profiles,
             profile_grid_points=profile_grid_points,
             verbose=verbose,
+            optimizer_algorithm=optimizer_algorithm,
+            opt_seed=opt_seed,
         )
         run_cli(
             mode="dadi",
@@ -401,6 +414,8 @@ def run_cli(
             generate_profiles=generate_profiles,
             profile_grid_points=profile_grid_points,
             verbose=verbose,
+            optimizer_algorithm=optimizer_algorithm,
+            opt_seed=opt_seed,
         )
         return
 
