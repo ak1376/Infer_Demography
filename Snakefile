@@ -410,6 +410,7 @@ rule infer_dadi:
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
           --ground-truth "{input.params}" \
+          --opt-seed {wildcards.opt} \
           {params.fix}
 
         cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"

@@ -78,6 +78,25 @@ def _parse_args():
         help="Seed for the start-point jitter (experiment_config['opt_seed']). "
         "Pin this to the same value across runs being compared.",
     )
+    p.add_argument(
+        "--start-strategy",
+        type=str,
+        choices=["jitter", "lhs"],
+        default=None,
+        help="Start-point strategy: 'jitter' (geometric midpoint + noise, default) "
+        "or 'lhs' (Latin Hypercube spread across the prior box). Overrides "
+        "experiment_config['start_strategy'].",
+    )
+    p.add_argument(
+        "--num-optimizations",
+        type=int,
+        default=None,
+        help="Overrides experiment_config['num_optimizations']. Only matters for "
+        "--start-strategy lhs: it sizes the LHS grid that --opt-seed indexes into "
+        "(lhs_start_log10 picks row opt_seed %% num_optimizations), so it must match "
+        "the actual number of restarts being run or every restart collapses onto "
+        "the same LHS row.",
+    )
     return p.parse_args()
 
 
@@ -105,6 +124,8 @@ def main() -> None:
         verbose=args.verbose,
         optimizer_algorithm=args.optimizer_algorithm,
         opt_seed=args.opt_seed,
+        start_strategy=args.start_strategy,
+        num_optimizations=args.num_optimizations,
     )
 
 

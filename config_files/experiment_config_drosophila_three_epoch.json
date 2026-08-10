@@ -10,6 +10,8 @@
   },
   "seed": 42,
   "num_optimizations": 5,
+  "start_strategy": "jitter",
+  "start_jitter_sigma": 0.05,
   "top_k": 1,
   "num_draws": 100,
   "priors": {

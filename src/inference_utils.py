@@ -53,6 +53,43 @@ def lhs_start_log10(
     return np.clip(x0, lb_log10, ub_log10)
 
 
+def jitter_start_log10(
+    lb: np.ndarray,
+    ub: np.ndarray,
+    experiment_config: Dict[str, Any],
+) -> np.ndarray:
+    """
+    Return a starting point in log10 space: geometric midpoint of bounds,
+    optionally perturbed by seeded lognormal noise.
+
+    Fixed parameters (lb == ub) are left exactly at their fixed log10 value,
+    regardless of sigma.
+
+    Parameters
+    ----------
+    lb, ub : bounds arrays (real, positive)
+    experiment_config : may contain
+        "start_jitter_sigma" - stddev of log10-space noise (default 0.0, i.e.
+            no jitter, just the geometric midpoint)
+        "opt_seed"           - seed for reproducible jitter (default None)
+    """
+    lb_log10 = np.log10(lb)
+    ub_log10 = np.log10(ub)
+
+    x0_log10 = (lb_log10 + ub_log10) / 2.0
+
+    sigma = float(experiment_config.get("start_jitter_sigma", 0.0))
+    if sigma > 0:
+        seed = experiment_config.get("opt_seed", None)
+        rng = np.random.default_rng(None if seed is None else int(seed))
+        x0_log10 = x0_log10 + rng.normal(0.0, sigma, size=x0_log10.shape)
+
+    fixed_mask = lb == ub
+    x0_log10[fixed_mask] = lb_log10[fixed_mask]
+
+    return np.clip(x0_log10, lb_log10, ub_log10)
+
+
 def build_scaled_param_dict(
     param_names: List[str], vec_real: np.ndarray
 ) -> Dict[str, float]:

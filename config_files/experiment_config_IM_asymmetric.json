@@ -9,6 +9,8 @@
   },
   "seed": 295,
   "num_optimizations": 100,
+  "start_strategy": "jitter",
+  "start_jitter_sigma": 0.05,
   "top_k": 5,
   "num_draws": 5000,
   "parameter_order": [

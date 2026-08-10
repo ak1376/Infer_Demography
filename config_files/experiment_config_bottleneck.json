@@ -7,9 +7,11 @@
     "num_samples": {
         "ANC": 10
     }, 
-    "seed": 42, 
-    "num_optimizations": 100, 
-    "top_k": 5, 
+    "seed": 42,
+    "num_optimizations": 100,
+    "start_strategy": "jitter",
+    "start_jitter_sigma": 0.05,
+    "top_k": 5,
     "num_draws": 5000,
     "priors": {
     "N0"                : [2000, 20000],

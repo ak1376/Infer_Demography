@@ -10,10 +10,9 @@ Moments SFS inference for demes-based models with NLopt.
   keeping the rest of the config fixed gives an identical initial condition.
 
 What this version does (per your requests):
-- Uses a GEOMETRIC-midpoint start based on bounds (overrides incoming start_vec),
-  with optional mild jitter controlled by experiment_config:
-    * experiment_config["start_jitter_sigma"] = 0.2   # log10-space
-    * experiment_config["opt_seed"] = OPT             # reproducible per optimization
+- Start point is the incoming start_vec as-is (computed once by the shared
+  caller, sfs_inference_runner.py, via experiment_config["start_strategy"], so
+  dadi and moments always optimize from the identical starting point).
 - Computes mask-safe Poisson composite log-likelihood:
     LL = sum( sfs * log(model + eps) - model )
 - Optional 1D profile likelihood curves (hold others fixed at xhat):
@@ -162,7 +161,7 @@ def _save_profiles(
 # ───────────────────────── optimisation wrapper ────────────────────────
 def fit_model(
     sfs: moments.Spectrum,
-    start_vec: np.ndarray,  # kept for backward compatibility; overridden below
+    start_vec: np.ndarray,
     demo_model: Callable[[Dict[str, float]], Any],
     experiment_config: Dict[str, Any],
     param_order: Optional[List[str]] = None,
@@ -177,11 +176,9 @@ def fit_model(
     """
     Returns (fitted_real_params, ll_hat).
 
-    Start behavior:
-      - overrides incoming start_vec to geometric midpoint of bounds
-      - optional mild jitter around that midpoint via config keys:
-          start_jitter_sigma (float, log10 space; e.g. 0.2)
-          opt_seed (int; e.g. OPT index for reproducible multi-start)
+    start_vec is used as-is (computed by the caller, sfs_inference_runner.py,
+    via experiment_config["start_strategy"]) so dadi and moments always start
+    from the identical point.
 
     Likelihood plots:
       - If save_dir is provided AND experiment_config["generate_profiles"] is True,
@@ -212,15 +209,9 @@ def fit_model(
             f"All bounds must be positive for log10 optimization. Bad: {bad}"
         )
 
-    # ---- build geometric-midpoint start (+ optional jitter) ----
-    start_vec = 10 ** ((np.log10(lb_full) + np.log10(ub_full)) / 2.0)
-
-    sigma = float(experiment_config.get("start_jitter_sigma", 0.0))
-    if sigma > 0:
-        seed = experiment_config.get("opt_seed", None)
-        rng = np.random.default_rng(None if seed is None else int(seed))
-        start_vec = start_vec * (10 ** rng.normal(0.0, sigma, size=start_vec.shape))
-
+    start_vec = np.asarray(start_vec, dtype=float)
+    if start_vec.shape != (len(param_names),):
+        raise ValueError(f"start_vec shape {start_vec.shape} != ({len(param_names)},)")
     start_vec = np.clip(start_vec, lb_full, ub_full)
 
     # ---- SFS demes order ----
@@ -265,10 +256,6 @@ def fit_model(
         return ll
 
     # ---- optimizer setup ----
-    start_vec = np.asarray(start_vec, dtype=float)
-    if start_vec.shape != (len(param_names),):
-        raise ValueError(f"start_vec shape {start_vec.shape} != ({len(param_names)},)")
-
     algo_name = str(experiment_config.get("optimizer_algorithm", "LD_LBFGS"))
     try:
         algo = getattr(nlopt, algo_name)
@@ -282,8 +269,12 @@ def fit_model(
     opt.set_ftol_rel(rtol)
     if xtol_rel is not None:
         opt.set_xtol_rel(xtol_rel)
-    if maxeval is not None:
-        opt.set_maxeval(maxeval)
+    # Always cap maxeval: numerical (finite-difference) gradients are noisy enough
+    # that ftol_rel can fail to trigger for a very long time on some algorithms
+    # (e.g. LD_LBFGS), so an explicit cap is needed to guarantee termination.
+    if maxeval is None:
+        maxeval = int(experiment_config.get("moments_maxeval", 500))
+    opt.set_maxeval(maxeval)
 
     # ---- run optimization ----
     x0 = np.log10(start_vec)
