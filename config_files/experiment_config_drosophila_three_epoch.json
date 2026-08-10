@@ -112,7 +112,7 @@
   "use_gpu_dadi": true,
   "pts_base": [20, 25, 30],
   "dadi_maxeval": 300,
-  "generate_profiles": true,
+  "generate_profiles": false,
   "profile_points": 41,
   "profile_widen": 0.5,
   "profile_make_plots": true,

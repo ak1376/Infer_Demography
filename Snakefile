@@ -353,7 +353,6 @@ rule infer_moments:
           --model-py "{params.model_py}" \
           --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
-          --generate-profiles \
           --opt-seed {wildcards.opt} \
 
           {params.fix}

@@ -86,7 +86,7 @@ def fit_model(
     ns = tuple(int(dim - 1) for dim in sfs.shape)
 
     # ---- dadi pts grid ----
-    pts_base = [10, 20, 30]
+    pts_base = list(experiment_config.get("pts_base", [10, 20, 30]))
     diploid_ns = [(dim - 1) // 2 for dim in sfs.shape]
     n_max_hap = max(2 * n for n in diploid_ns)
     pts_l = [int(n_max_hap + p) for p in pts_base]
