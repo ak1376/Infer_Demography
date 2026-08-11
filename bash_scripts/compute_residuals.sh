@@ -18,7 +18,7 @@
 #
 # Optional overrides:
 #   ROOT=/path/to/Infer_Demography
-#   CFG=/path/to/experiment_config.json
+#   CFG_PATH=/path/to/experiment_config.json   (else read from model_config.yaml)
 #   SNAKEFILE=/path/to/Snakefile
 #   SNAKEMAKE_OPTS="--keep-going -p"
 
@@ -27,7 +27,8 @@ mkdir -p logs
 
 # ---------------- user/config paths ----------------
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
-CFG="${CFG:-$ROOT/config_files/experiment_config_IM_symmetric.json}"
+source "$ROOT/bash_scripts/lib_active_config.sh"
+CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="${SNAKEFILE:-$ROOT/Snakefile}"
 
 ENGINE="${ENGINE:-moments}"          # moments | dadi | both

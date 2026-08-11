@@ -22,7 +22,8 @@ BATCH_SIZE=50   # number of (sim,opt) pairs per array element
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"
 
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json}"
+source "$ROOT/bash_scripts/lib_active_config.sh"
+CFG="$(resolve_cfg_path "$ROOT")"
 export EXP_CFG="$CFG"
 
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")

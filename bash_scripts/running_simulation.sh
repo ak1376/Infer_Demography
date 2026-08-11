@@ -17,9 +17,9 @@
 BATCH_SIZE=1
 TOTAL_TASKS=5000
 
-# the master script exports CFG_PATH; abort if it is not set
-# : "${CFG_PATH:?CFG_PATH is not defined}"
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json"
+ROOT="/projects/kernlab/akapoor/Infer_Demography"
+source "$ROOT/bash_scripts/lib_active_config.sh"
+CFG_PATH="$(resolve_cfg_path "$ROOT")"
 EXPERIMENT_CONFIG_FILE="$CFG_PATH"
 
 # Extract the values from the JSON config
@@ -70,14 +70,10 @@ EXP_ROOT="/projects/kernlab/akapoor/Infer_Demography/experiments/${DEMOGRAPHIC_M
 for TASK_ID in $(seq $BATCH_START $BATCH_END); do
     PAD_ID=$(printf "$TASK_ID")   # 0 → 00, 1 → 01 …
 
-    # Unlock any stale locks before running
-    snakemake --unlock \
-      --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
-      --directory /projects/kernlab/akapoor/Infer_Demography
-
     snakemake -j "$SLURM_CPUS_PER_TASK" \
       --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
       --directory /projects/kernlab/akapoor/Infer_Demography \
+      --nolock \
       --rerun-incomplete \
       "experiments/${DEMOGRAPHIC_MODEL}/simulations/${PAD_ID}/tree_sequence.trees"
 done

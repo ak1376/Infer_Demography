@@ -14,8 +14,9 @@
 
 set -euo pipefail
 
-CFG_PATH="/projects/kernlab/akapoor/Infer_Demography/config_files/experiment_config_split_migration_growth.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
+source "$ROOT/bash_scripts/lib_active_config.sh"
+CFG_PATH="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 

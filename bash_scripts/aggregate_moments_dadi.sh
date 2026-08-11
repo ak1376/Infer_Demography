@@ -25,8 +25,9 @@ DRYRUN="${DRYRUN:-0}"              # 1 => add -n to snakemake (no execution)
 # -----------------------------
 # Paths & config
 # -----------------------------
-CFG="${CFG_PATH:-/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json}"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
+source "$ROOT/bash_scripts/lib_active_config.sh"
+CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 export EXP_CFG="$CFG"
 

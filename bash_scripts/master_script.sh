@@ -16,7 +16,8 @@ REPO="/projects/kernlab/akapoor/Infer_Demography"
 mkdir -p "$REPO/logs"
 cd "$REPO"
 
-CFG_PATH="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json"
+source "$REPO/bash_scripts/lib_active_config.sh"
+CFG_PATH="$(resolve_cfg_path "$REPO")"
 export CFG_PATH
 
 snakemake --directory "$REPO" --unlock || true

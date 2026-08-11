@@ -1,3 +1,7 @@
+# Single source of truth for "which experiment am I running" — read by the
+# Snakefile (EXP_CFG) and by every bash_scripts/*.sh via lib_active_config.sh.
+active_experiment_config: "config_files/experiment_config_split_migration_growth.json"
+
 linear:
   types: ["standard", "ridge", "lasso", "elasticnet"]
   standard: {}

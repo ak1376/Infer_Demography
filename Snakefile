@@ -23,7 +23,7 @@ INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window_replicate.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
-EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
+EXP_CFG = config["active_experiment_config"]
 
 # Experiment metadata
 CFG           = json.loads(Path(EXP_CFG).read_text())
@@ -74,13 +74,6 @@ def polarized_diploid_vcf(chrom):  return f"{DROSO_DIR}/{chrom}/polarized.diploi
 def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded.sfs.pkl"
 def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr', 'chr', 1)}.q30.fa"
 
-wildcard_constraints:
-    chrom = r"Chr(2L|2R|3L|3R)",
-    variant = r"(w|wo)_FIM_(w|wo)_SFSresids",
-    ld_variant = r"by_chrom|genmap",
-    reg = r"standard|ridge|lasso|elasticnet",
-
-
 def _resid_vector_fname():
     # which vector do we want to feed into all_inferences.pkl?
     return "residuals_gs_coeffs.npy" if USE_GS else "residuals_flat.npy"
@@ -114,9 +107,53 @@ MODELING_VARIANTS = [
     "wo_FIM_wo_SFSresids",
 ]
 
+# (use_fim_features, use_residuals) per variant name.
+_VARIANT_FLAGS = {
+    "w_FIM_w_SFSresids":   (True,  True),
+    "w_FIM_wo_SFSresids":  (True,  False),
+    "wo_FIM_w_SFSresids":  (False, True),
+    "wo_FIM_wo_SFSresids": (False, False),
+}
+
 def _variant_flags(variant):
-    """(use_fim_features, use_residuals) for a variant name like 'w_FIM_wo_SFSresids'."""
-    return (variant.startswith("w_FIM_"), variant.endswith("_w_SFSresids"))
+    return _VARIANT_FLAGS[variant]
+
+# CLI-flag builders shared by random_forest/raw_features_random_forest and
+# xgboost/raw_features_xgboost — same optuna/manual-override knobs regardless
+# of which dataset root the rule reads from.
+def _rf_opt_flags():
+    return " ".join([
+        "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
+        f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
+        f"--optuna_timeout {config['rf']['optuna_timeout']}" if config.get("rf", {}).get("optuna_timeout") is not None else "",
+        f"--optuna_seed {config['rf']['optuna_seed']}" if config.get("rf", {}).get("optuna_seed") is not None else "",
+        f"--final_fit {config['rf']['final_fit']}" if config.get("rf", {}).get("final_fit") is not None else "",
+        f"--n_estimators {config['rf']['n_estimators']}" if config.get("rf", {}).get("n_estimators") is not None else "",
+        f"--max_depth {config['rf']['max_depth']}" if config.get("rf", {}).get("max_depth") is not None else "",
+        f"--min_samples_split {config['rf']['min_samples_split']}" if config.get("rf", {}).get("min_samples_split") is not None else "",
+        f"--min_samples_leaf {config['rf']['min_samples_leaf']}" if config.get("rf", {}).get("min_samples_leaf") is not None else "",
+        f"--max_features {config['rf']['max_features']}" if config.get("rf", {}).get("max_features") is not None else "",
+        f"--max_samples {config['rf']['max_samples']}" if config.get("rf", {}).get("max_samples") is not None else "",
+    ]).strip()
+
+def _xgb_opt_flags():
+    return " ".join([
+        "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
+        f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
+        f"--optuna_timeout {config['xgb']['optuna_timeout']}" if config.get("xgb", {}).get("optuna_timeout") is not None else "",
+        f"--optuna_seed {config['xgb']['optuna_seed']}" if config.get("xgb", {}).get("optuna_seed") is not None else "",
+        f"--final_fit {config['xgb']['final_fit']}" if config.get("xgb", {}).get("final_fit") is not None else "",
+        f"--early_stopping_rounds {config['xgb']['early_stopping_rounds']}" if config.get("xgb", {}).get("early_stopping_rounds") is not None else "",
+        f"--n_estimators {config['xgb']['n_estimators']}" if config.get("xgb", {}).get("n_estimators") is not None else "",
+        f"--max_depth {config['xgb']['max_depth']}" if config.get("xgb", {}).get("max_depth") is not None else "",
+        f"--learning_rate {config['xgb']['learning_rate']}" if config.get("xgb", {}).get("learning_rate") is not None else "",
+        f"--subsample {config['xgb']['subsample']}" if config.get("xgb", {}).get("subsample") is not None else "",
+        f"--colsample_bytree {config['xgb']['colsample_bytree']}" if config.get("xgb", {}).get("colsample_bytree") is not None else "",
+        f"--min_child_weight {config['xgb']['min_child_weight']}" if config.get("xgb", {}).get("min_child_weight") is not None else "",
+        f"--reg_lambda {config['xgb']['reg_lambda']}" if config.get("xgb", {}).get("reg_lambda") is not None else "",
+        f"--reg_alpha {config['xgb']['reg_alpha']}" if config.get("xgb", {}).get("reg_alpha") is not None else "",
+        f"--top_k_features_plot {config['xgb']['top_k_plot']}" if config.get("xgb", {}).get("top_k_plot") is not None else "",
+    ]).strip()
 
 # Regressors
 REG_TYPES = config["linear"]["types"]  # e.g., ["standard","ridge","lasso","elasticnet"]
@@ -167,6 +204,16 @@ REAL_MODEL_OBJS = {
     "linear_elasticnet":f"{REAL_MODELING_DIR}/linear_elasticnet/linear_mdl_obj_elasticnet.pkl",
 }
 
+wildcard_constraints:
+    chrom      = r"Chr(2L|2R|3L|3R)",
+    variant    = r"(w|wo)_FIM_(w|wo)_SFSresids",
+    ld_variant = r"by_chrom|genmap",
+    reg        = r"standard|ridge|lasso|elasticnet",
+    opt        = "|".join(str(i) for i in range(NUM_OPTIMS)),
+    engine     = "moments|dadi",
+    frac_tag   = r"thin\d+",
+    model_key  = "|".join(REAL_MODEL_OBJS.keys()),
+
 # LD r-bins
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 
@@ -174,9 +221,6 @@ R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 PRUNE_FRACS = CFG.get("prune_keep_fractions", [])
 def _frac_tag(f): return f"thin{round(float(f) * 100):02d}"
 PRUNE_TAGS  = [_frac_tag(f) for f in PRUNE_FRACS]
-
-SIM_IDS  = [i for i in range(NUM_DRAWS)]
-WINDOWS  = range(NUM_WINDOWS)
 
 ##############################################################################
 # RULE all – final targets the workflow must create
@@ -443,73 +487,30 @@ rule aggregate_opts_moments:
     output:
         mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, pathlib
+        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
 
         sid = wildcards.sid
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
-        mom_pkls = sorted(glob.glob(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/moments/fit_params.pkl"
-        ))
+        records = discover_opt_pkls(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/moments/fit_params.pkl",
+            rf"/run_{sid}_(\d+)/inferences/moments/fit_params\.pkl$",
+        )
 
-        def _as_list(x):
-            if x is None:
-                return []
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-        n_readable = 0
-        n_nonempty = 0
-
-        for pkl_path in mom_pkls:
-            m = re.search(rf"/run_{sid}_(\d+)/inferences/moments/fit_params\.pkl$", pkl_path)
-            if not m:
-                continue
-
-            opt_idx = int(m.group(1))
-
-            try:
-                with open(pkl_path, "rb") as fh:
-                    d = pickle.load(fh)
-                n_readable += 1
-            except Exception as e:
-                print(f"WARNING: could not load {pkl_path}: {e}")
-                continue
-
-            this_params = _as_list(d.get("best_params"))
-            this_lls    = _as_list(d.get("best_ll"))
-
-            if len(this_lls) == 0:
-                continue
-
-            n_nonempty += 1
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-        if n_nonempty < MIN_FILES:
-            raise ValueError(
-                f"[aggregate_opts_moments] Need >= {MIN_FILES} non-empty moments optimizations for sid={sid}, "
-                f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(mom_pkls)}). "
-                f"Not aggregating."
-            )
-
-        keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params":   [params[i] for i in keep],
-            "best_ll":       [lls[i] for i in keep],
-            "opt_index":     [opt_ids[i] for i in keep],
-            "n_files_found": int(len(mom_pkls)),
-            "n_nonempty":    int(n_nonempty),
-            "min_required":  int(TOP_K),
-        }
+        best, diag = aggregate_top_k(
+            records, TOP_K, min_nonempty=MIN_FILES,
+            err_label="aggregate_opts_moments", err_engine="moments", err_context=f"for sid={sid}",
+        )
+        best["n_files_found"] = diag["n_records"]
+        best["n_nonempty"]    = diag["n_nonempty"]
+        best["min_required"]  = int(TOP_K)
 
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
         with open(output.mom, "wb") as fh:
             pickle.dump(best, fh)
 
-        print(f"✅ moments: found {len(mom_pkls)} files, aggregated {len(lls)} entries → {output.mom}")
+        print(f"✅ moments: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.mom}")
         print(f"✅ moments: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 # ── DADI ONLY ──────────────────────────────────────────────────────────────
@@ -519,73 +520,30 @@ rule aggregate_opts_dadi:
     output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, pathlib
+        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
 
         sid = wildcards.sid
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
-        dadi_pkls = sorted(glob.glob(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/dadi/fit_params.pkl"
-        ))
+        records = discover_opt_pkls(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/dadi/fit_params.pkl",
+            rf"/run_{sid}_(\d+)/inferences/dadi/fit_params\.pkl$",
+        )
 
-        def _as_list(x):
-            if x is None:
-                return []
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-        n_readable = 0
-        n_nonempty = 0
-
-        for pkl_path in dadi_pkls:
-            m = re.search(rf"/run_{sid}_(\d+)/inferences/dadi/fit_params\.pkl$", pkl_path)
-            if not m:
-                continue
-
-            opt_idx = int(m.group(1))
-
-            try:
-                with open(pkl_path, "rb") as fh:
-                    d = pickle.load(fh)
-                n_readable += 1
-            except Exception as e:
-                print(f"WARNING: could not load {pkl_path}: {e}")
-                continue
-
-            this_params = _as_list(d.get("best_params"))
-            this_lls    = _as_list(d.get("best_ll"))
-
-            if len(this_lls) == 0:
-                continue
-
-            n_nonempty += 1
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-        if n_nonempty < MIN_FILES:
-            raise ValueError(
-                f"[aggregate_opts_dadi] Need >= {MIN_FILES} non-empty dadi optimizations for sid={sid}, "
-                f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(dadi_pkls)}). "
-                f"Not aggregating."
-            )
-
-        keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params":   [params[i] for i in keep],
-            "best_ll":       [lls[i] for i in keep],
-            "opt_index":     [opt_ids[i] for i in keep],
-            "n_files_found": int(len(dadi_pkls)),
-            "n_nonempty":    int(n_nonempty),
-            "min_required":  int(TOP_K),
-        }
+        best, diag = aggregate_top_k(
+            records, TOP_K, min_nonempty=MIN_FILES,
+            err_label="aggregate_opts_dadi", err_engine="dadi", err_context=f"for sid={sid}",
+        )
+        best["n_files_found"] = diag["n_records"]
+        best["n_nonempty"]    = diag["n_nonempty"]
+        best["min_required"]  = int(TOP_K)
 
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
         with open(output.dadi, "wb") as fh:
             pickle.dump(best, fh)
 
-        print(f"✅ dadi: found {len(dadi_pkls)} files, aggregated {len(lls)} entries → {output.dadi}")
+        print(f"✅ dadi: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.dadi}")
         print(f"✅ dadi: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 # ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
@@ -990,73 +948,30 @@ rule aggregate_opts_momentsld:
     output:
         best = f"{LD_ROOT}/best_fit.pkl",
     run:
-        import pickle, numpy as np, pathlib, re, glob
+        import pickle, pathlib
+        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
 
         sid = wildcards.sid
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
-        ld_pkls = sorted(glob.glob(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/MomentsLD/best_fit.pkl"
-        ))
+        records = discover_opt_pkls(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/MomentsLD/best_fit.pkl",
+            rf"/run_{sid}_(\d+)/inferences/MomentsLD/best_fit\.pkl$",
+        )
 
-        def _as_list(x):
-            if x is None:
-                return []
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
-
-        params, lls, opt_ids = [], [], []
-        n_readable = 0
-        n_nonempty = 0
-
-        for pkl_path in ld_pkls:
-            m = re.search(rf"/run_{sid}_(\d+)/inferences/MomentsLD/best_fit\.pkl$", pkl_path)
-            if not m:
-                continue
-
-            opt_idx = int(m.group(1))
-
-            try:
-                with open(pkl_path, "rb") as fh:
-                    d = pickle.load(fh)
-                n_readable += 1
-            except Exception as e:
-                print(f"WARNING: could not load {pkl_path}: {e}")
-                continue
-
-            this_params = _as_list(d.get("best_params"))
-            this_lls    = _as_list(d.get("best_ll"))
-
-            if len(this_lls) == 0:
-                continue
-
-            n_nonempty += 1
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-        if n_nonempty < MIN_FILES:
-            raise ValueError(
-                f"[aggregate_opts_momentsld] Need >= {MIN_FILES} non-empty MomentsLD optimizations for sid={sid}, "
-                f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(ld_pkls)}). "
-                f"Not aggregating."
-            )
-
-        keep = np.argsort(lls)[::-1][:TOP_K]
-
-        best = {
-            "best_params":   [params[i] for i in keep],
-            "best_ll":       [lls[i] for i in keep],
-            "opt_index":     [opt_ids[i] for i in keep],
-            "n_files_found": int(len(ld_pkls)),
-            "n_nonempty":    int(n_nonempty),
-            "min_required":  int(TOP_K),
-        }
+        best, diag = aggregate_top_k(
+            records, TOP_K, min_nonempty=MIN_FILES,
+            err_label="aggregate_opts_momentsld", err_engine="MomentsLD", err_context=f"for sid={sid}",
+        )
+        best["n_files_found"] = diag["n_records"]
+        best["n_nonempty"]    = diag["n_nonempty"]
+        best["min_required"]  = int(TOP_K)
 
         pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
         with open(output.best, "wb") as fh:
             pickle.dump(best, fh)
 
-        print(f"✅ momentsLD: found {len(ld_pkls)} files, aggregated {len(lls)} entries → {output.best}")
+        print(f"✅ momentsLD: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.best}")
         print(f"✅ momentsLD: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 ##############################################################################
@@ -1160,43 +1075,14 @@ rule sfs_residuals:
         inf_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}",
         out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}",
         n_bins   = CFG.get("sfs_n_bins", ""),  # empty string if not specified
+        script   = "bash_scripts/run_sfs_residuals.sh",
     threads: 1
     shell:
         r"""
-        set -euo pipefail
-
-        # Ensure outdir exists (script also does this, but harmless)
-        mkdir -p "{params.out_dir}"
-
-        # Build optional n_bins flag
-        N_BINS_ARG=""
-        if [ -n "{params.n_bins}" ]; then
-            N_BINS_ARG="--n-bins {params.n_bins}"
-        fi
-
-        PYTHONPATH={workflow.basedir} \
-        python "{RESID_SCRIPT}" \
-          --mode {wildcards.engine} \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --observed-sfs "{input.obs_sfs}" \
-          --inference-dir "{params.inf_dir}" \
-          --outdir "{params.out_dir}" \
-          $N_BINS_ARG
-
-        # Base outputs must exist
-        test -f "{output.res_arr}"
-        test -f "{output.res_flat}"
-        test -f "{output.meta_json}"
-        test -f "{output.hist_png}"
-
-        # GS outputs: if enabled, require real artifacts; else create sentinels
-        if [ "{USE_GS}" = "True" ]; then
-            test -f "{output.gs_coeffs}"
-            test -f "{output.gs_basis}"
-        else
-            touch "{output.gs_coeffs}" "{output.gs_basis}"
-        fi
+        bash "{params.script}" \
+            "{wildcards.engine}" "{params.cfg}" "{params.model_py}" "{input.obs_sfs}" \
+            "{params.inf_dir}" "{params.out_dir}" "{USE_GS}" "{RESID_SCRIPT}" \
+            "{workflow.basedir}" "{params.n_bins}"
         """
 
 
@@ -1228,7 +1114,8 @@ rule combine_results:
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
-        import pickle, pathlib, numpy as np, re, os, json
+        import pickle, pathlib
+        from src.combine_payloads import build_fim_payload, build_residual_payload
 
         if not input.dadi or not input.moments or not input.momentsLD:
             missing = [k for k, v in [("dadi", input.dadi), ("moments", input.moments), ("momentsLD", input.momentsLD)] if not v]
@@ -1237,77 +1124,17 @@ rule combine_results:
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
 
-        cfg_obj = json.loads(open(input.cfg, "r").read())
-        use_gs = bool(cfg_obj.get("gram_schmidt", False))
-
         summary = {}
         summary["moments"]   = pickle.load(open(input.moments, "rb"))
         summary["dadi"]      = pickle.load(open(input.dadi, "rb"))
         summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
 
-        # ---------------- FIM upper-triangles ----------------
-        fim_payload = {}
-        for fim_path in input.fims:
-            eng = re.sub(r".*?/fim/([^.]+)\.fim\.npy$", r"\1", fim_path)
-            F = np.load(fim_path)
-            iu = np.triu_indices(F.shape[0])
-            fim_payload[eng] = {
-                "shape": [int(F.shape[0]), int(F.shape[1])],
-                "tri_flat": F[iu].astype(float).tolist(),
-                "indices": "upper_including_diagonal",
-                "order": "row-major",
-            }
+        fim_payload = build_fim_payload(input.fims)
         if fim_payload:
             summary["FIM"] = fim_payload
 
-        # ---------------- Residual SFS vectors ----------------
-        # We attach either:
-        #   - residuals_flat.npy (raw) OR
-        #   - residuals_gs_coeffs.npy (GS reduced)
-        resid_payload = {}
-        for vec_path in input.resid_vecs:
-            m = re.search(r"/sfs_residuals/([^/]+)/([^/]+)\.npy$", vec_path)
-            if not m:
-                continue
-            eng = m.group(1)
-            stem = m.group(2)  # residuals_flat OR residuals_gs_coeffs
-            base = os.path.dirname(vec_path)
-
-            vec = np.load(vec_path)
-
-            # full residual array shape (optional)
-            arr_path = os.path.join(base, "residuals.npy")
-            arr = np.load(arr_path) if os.path.exists(arr_path) else None
-
-            payload = {
-                "vector": vec.astype(float).tolist(),
-                "vector_dim": int(vec.size),
-                "vector_type": (
-                    "gram_schmidt_coeffs" if stem == "residuals_gs_coeffs" else "raw_flat_residuals"
-                ),
-                "full_residual_shape": (list(arr.shape) if arr is not None else None),
-                "order": "row-major",
-            }
-
-            # If GS: attach GS metadata/basis shapes when available
-            if stem == "residuals_gs_coeffs":
-                meta_path = os.path.join(base, "meta.json")
-                basis_path = os.path.join(base, "residuals_gs_basis.npy")
-                if os.path.exists(basis_path):
-                    Q = np.load(basis_path)
-                    payload["gs_basis_shape"] = [int(Q.shape[0]), int(Q.shape[1])]
-                if os.path.exists(meta_path):
-                    try:
-                        mj = json.loads(open(meta_path, "r").read())
-                        payload["gram_schmidt_k"] = mj.get("gram_schmidt_k", None)
-                        payload["gram_schmidt_k_effective"] = mj.get("gram_schmidt_k_effective", None)
-                        payload["gram_schmidt_basis"] = mj.get("gram_schmidt_basis", None)
-                        payload["gram_schmidt_eps"] = mj.get("gram_schmidt_eps", None)
-                    except Exception:
-                        pass
-
-            resid_payload[eng] = payload
-
+        # Either residuals_flat.npy (raw) or residuals_gs_coeffs.npy (GS reduced).
+        resid_payload = build_residual_payload(input.resid_vecs)
         if resid_payload:
             summary["SFS_residuals"] = resid_payload
 
@@ -1367,38 +1194,6 @@ rule combine_features:
             --out-dir "{params.outdir}" \
             --use-fim-features {params.fim_flag} \
             --use-residuals {params.resid_flag}
-
-        echo "=== AFTER feature_extraction, listing outputs ==="
-        ls -lah "{params.outdir}/datasets" || true
-
-        echo "=== Expected files ==="
-        for f in \
-        "{output.features_df}" \
-        "{output.targets_df}" \
-        "{output.ntrain_X}" \
-        "{output.ntrain_y}" \
-        "{output.ntune_X}" \
-        "{output.ntune_y}" \
-        "{output.nval_X}" \
-        "{output.nval_y}" \
-        "{output.split_idx}" \
-        "{output.scatter_png}" \
-        "{output.mse_val_png}" \
-        "{output.mse_train_png}" \
-        "{output.metrics_all}" \
-        "{output.metrics_dadi}" \
-        "{output.metrics_moments}" \
-        "{output.metrics_momentsLD}" \
-        "{output.outliers_tsv}" \
-        "{output.outliers_txt}" \
-        ; do
-        if [ -f "$f" ]; then
-            echo "OK   $f"
-        else
-            echo "MISS $f"
-            exit 1
-        fi
-        done
         """
 
 ##############################################################################
@@ -1420,8 +1215,6 @@ rule make_color_scheme:
         python "{params.script}" \
             --config "{params.cfg}" \
             --out-dir "$(dirname {output.shades})"
-
-        test -f "{output.shades}" && test -f "{output.mains}"
         """
 
 ##############################################################################
@@ -1475,8 +1268,6 @@ rule linear_regression:
             --alpha {params.alpha} \
             --l1_ratio {params.l1_ratio} \
             {params.gridflag}
-
-        test -f "{output.obj}" && test -f "{output.errjs}" && test -f "{output.mdl}"
         """
 
 ##############################################################################
@@ -1503,25 +1294,7 @@ rule random_forest:
     params:
         script    = "snakemake_scripts/random_forest.py",
         model_dir = f"experiments/{MODEL}/modeling_{{variant}}/random_forest",
-        opt_flags = lambda w: " ".join([
-            "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
-            f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
-            f"--optuna_timeout {config['rf']['optuna_timeout']}" if config.get("rf", {}).get("optuna_timeout") is not None else "",
-            f"--optuna_seed {config['rf']['optuna_seed']}" if config.get("rf", {}).get("optuna_seed") is not None else "",
-
-            f"--final_fit {config['rf']['final_fit']}" if config.get("rf", {}).get("final_fit") is not None else "",
-
-            # manual overrides (bypass optuna if any are set)
-            f"--n_estimators {config['rf']['n_estimators']}" if config.get("rf", {}).get("n_estimators") is not None else "",
-            f"--max_depth {config['rf']['max_depth']}" if config.get("rf", {}).get("max_depth") is not None else "",
-            f"--min_samples_split {config['rf']['min_samples_split']}" if config.get("rf", {}).get("min_samples_split") is not None else "",
-
-            # extra knobs
-            f"--min_samples_leaf {config['rf']['min_samples_leaf']}" if config.get("rf", {}).get("min_samples_leaf") is not None else "",
-            f"--max_features {config['rf']['max_features']}" if config.get("rf", {}).get("max_features") is not None else "",
-            f"--max_samples {config['rf']['max_samples']}" if config.get("rf", {}).get("max_samples") is not None else "",
-        ]).strip()
-
+        opt_flags = lambda w: _rf_opt_flags(),
     threads: 8
     benchmark:
         f"benchmarks/random_forest_{{variant}}.tsv"
@@ -1541,12 +1314,6 @@ rule random_forest:
             --main_colors_file       "{input.colors}" \
             --model_directory "{params.model_dir}" \
             {params.opt_flags}
-
-        test -f "{output.obj}"   && \
-        test -f "{output.errjs}" && \
-        test -f "{output.mdl}"   && \
-        test -f "{output.plot}"  && \
-        test -f "{output.fi}"
         """
 
 ##############################################################################
@@ -1573,27 +1340,7 @@ rule xgboost:
     params:
         script    = "snakemake_scripts/xgboost_evaluation.py",
         model_dir = f"experiments/{MODEL}/modeling_{{variant}}/xgboost",
-        opt_flags = lambda w: " ".join([
-            "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
-            f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
-            f"--optuna_timeout {config['xgb']['optuna_timeout']}" if config.get("xgb", {}).get("optuna_timeout") is not None else "",
-            f"--optuna_seed {config['xgb']['optuna_seed']}" if config.get("xgb", {}).get("optuna_seed") is not None else "",
-
-            f"--final_fit {config['xgb']['final_fit']}" if config.get("xgb", {}).get("final_fit") is not None else "",
-            f"--early_stopping_rounds {config['xgb']['early_stopping_rounds']}" if config.get("xgb", {}).get("early_stopping_rounds") is not None else "",
-
-            # manual overrides (bypass optuna if any are set)
-            f"--n_estimators {config['xgb']['n_estimators']}" if config.get("xgb", {}).get("n_estimators") is not None else "",
-            f"--max_depth {config['xgb']['max_depth']}" if config.get("xgb", {}).get("max_depth") is not None else "",
-            f"--learning_rate {config['xgb']['learning_rate']}" if config.get("xgb", {}).get("learning_rate") is not None else "",
-            f"--subsample {config['xgb']['subsample']}" if config.get("xgb", {}).get("subsample") is not None else "",
-            f"--colsample_bytree {config['xgb']['colsample_bytree']}" if config.get("xgb", {}).get("colsample_bytree") is not None else "",
-            f"--min_child_weight {config['xgb']['min_child_weight']}" if config.get("xgb", {}).get("min_child_weight") is not None else "",
-            f"--reg_lambda {config['xgb']['reg_lambda']}" if config.get("xgb", {}).get("reg_lambda") is not None else "",
-            f"--reg_alpha {config['xgb']['reg_alpha']}" if config.get("xgb", {}).get("reg_alpha") is not None else "",
-
-            f"--top_k_features_plot {config['xgb']['top_k_plot']}" if config.get("xgb", {}).get("top_k_plot") is not None else "",
-        ]).strip()
+        opt_flags = lambda w: _xgb_opt_flags(),
     threads: 4
     benchmark:
         f"benchmarks/xgboost_{{variant}}.tsv"
@@ -1613,12 +1360,6 @@ rule xgboost:
             --main_colors_file       "{input.colors}" \
             --model_directory "{params.model_dir}" \
             {params.opt_flags}
-
-        test -f "{output.obj}"   && \
-        test -f "{output.errjs}" && \
-        test -f "{output.mdl}"   && \
-        test -f "{output.plot}"  && \
-        test -f "{output.fi}"
         """
 
 ##############################################################################
@@ -1822,42 +1563,21 @@ rule aggregate_opts_moments_real:
     output:
         mom = f"{REAL_INF_ROOT}/moments/best_fit.pkl"
     run:
-        import pickle, numpy as np, pathlib
+        import pickle, pathlib
+        from src.aggregate_utils import aggregate_top_k
 
-        def _as_list(x):
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+        records = [(p, i) for i, p in enumerate(input.mom)]
 
-        params, lls, opt_ids = [], [], []
-        thetas, nancs = [], []
-
-        for opt_idx, pkl in enumerate(input.mom):
-            d = pickle.load(open(pkl, "rb"))
-            this_params = _as_list(d["best_params"])
-            this_lls    = _as_list(d["best_ll"])
-
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-            # optional useful metadata (safe even if missing)
-            thetas.extend(_as_list(d.get("theta_hat", np.nan)))
-            nancs.extend(_as_list(d.get("N_ANC_implied_from_theta", np.nan)))
-
-        keep = np.argsort(lls)[::-1][:REAL_TOP_K]
-
-        best = {
-            "mode": "moments",
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-            "theta_hat":   [thetas[i] for i in keep],
-            "N_ANC_implied_from_theta": [nancs[i] for i in keep],
-        }
+        best, diag = aggregate_top_k(
+            records, REAL_TOP_K,
+            extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
+        )
+        best = {"mode": "moments", **best}
 
         pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.mom, "wb"))
 
-        print(f"✅ [REAL] Aggregated {len(params)} moments optimization results → {output.mom}")
+        print(f"✅ [REAL] Aggregated {diag['n_entries']} moments optimization results → {output.mom}")
 
 
 # ── REAL DATA: DADI ONLY ───────────────────────────────────────────────────
@@ -1867,41 +1587,21 @@ rule aggregate_opts_dadi_real:
     output:
         dadi = f"{REAL_INF_ROOT}/dadi/best_fit.pkl"
     run:
-        import pickle, numpy as np, pathlib
+        import pickle, pathlib
+        from src.aggregate_utils import aggregate_top_k
 
-        def _as_list(x):
-            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+        records = [(p, i) for i, p in enumerate(input.dadi)]
 
-        params, lls, opt_ids = [], [], []
-        thetas, nancs = [], []
-
-        for opt_idx, pkl in enumerate(input.dadi):
-            d = pickle.load(open(pkl, "rb"))
-            this_params = _as_list(d["best_params"])
-            this_lls    = _as_list(d["best_ll"])
-
-            params.extend(this_params)
-            lls.extend(this_lls)
-            opt_ids.extend([opt_idx] * len(this_lls))
-
-            thetas.extend(_as_list(d.get("theta_hat", np.nan)))
-            nancs.extend(_as_list(d.get("N_ANC_implied_from_theta", np.nan)))
-
-        keep = np.argsort(lls)[::-1][:REAL_TOP_K]
-
-        best = {
-            "mode": "dadi",
-            "best_params": [params[i] for i in keep],
-            "best_ll":     [lls[i]    for i in keep],
-            "opt_index":   [opt_ids[i] for i in keep],
-            "theta_hat":   [thetas[i] for i in keep],
-            "N_ANC_implied_from_theta": [nancs[i] for i in keep],
-        }
+        best, diag = aggregate_top_k(
+            records, REAL_TOP_K,
+            extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
+        )
+        best = {"mode": "dadi", **best}
 
         pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.dadi, "wb"))
 
-        print(f"✅ [REAL] Aggregated {len(params)} dadi optimization results → {output.dadi}")
+        print(f"✅ [REAL] Aggregated {diag['n_entries']} dadi optimization results → {output.dadi}")
 
 
 ##############################################################################
@@ -2072,7 +1772,6 @@ rule aggregate_ld_real_chrom:
             --output-root "{params.output_root}" \
             --config-file "{params.cfg}" \
             --skip-optimize
-        test -f "{output.mv}"
         """
 
 rule compare_ld_decay_autosomes:
@@ -2157,10 +1856,6 @@ rule aggregate_ld_windows_real:
             --output-root   "{params.output_root}" \
             --config-file   "{params.cfg}" \
             --skip-optimize
-
-        test -f "{output.mv}"
-        test -f "{output.boot}"
-        test -f "{output.pdf}"
         """
 
 
@@ -2265,41 +1960,14 @@ rule sfs_residuals_real:
         inf_dir  = REAL_INF_ROOT,
         out_dir  = lambda w: f"{REAL_INF_ROOT}/sfs_residuals/{w.engine}",
         n_bins   = CFG.get("sfs_n_bins", ""),  # empty string if not specified
+        script   = "bash_scripts/run_sfs_residuals.sh",
     threads: 1
     shell:
         r"""
-        set -euo pipefail
-        mkdir -p "{params.out_dir}"
-
-        # Build optional n_bins flag
-        N_BINS_ARG=""
-        if [ -n "{params.n_bins}" ]; then
-            N_BINS_ARG="--n-bins {params.n_bins}"
-        fi
-
-        PYTHONPATH={workflow.basedir} \
-        python "{RESID_SCRIPT}" \
-          --mode "{wildcards.engine}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --observed-sfs "{input.obs_sfs}" \
-          --inference-dir "{params.inf_dir}" \
-          --outdir "{params.out_dir}" \
-          $N_BINS_ARG
-
-        # Base outputs must exist
-        test -f "{output.res_arr}"
-        test -f "{output.res_flat}"
-        test -f "{output.meta_json}"
-        test -f "{output.hist_png}"
-
-        # GS outputs: if enabled, require real artifacts; else create sentinels
-        if [ "{USE_GS}" = "True" ]; then
-            test -f "{output.gs_coeffs}"
-            test -f "{output.gs_basis}"
-        else
-            touch "{output.gs_coeffs}" "{output.gs_basis}"
-        fi
+        bash "{params.script}" \
+            "{wildcards.engine}" "{params.cfg}" "{params.model_py}" "{input.obs_sfs}" \
+            "{params.inf_dir}" "{params.out_dir}" "{USE_GS}" "{RESID_SCRIPT}" \
+            "{workflow.basedir}" "{params.n_bins}"
         """
 
 
@@ -2331,77 +1999,21 @@ rule combine_results_real:
     output:
         combo = f"{REAL_INF_ROOT}/all_inferences.pkl",
     run:
-        import json, os, re, pickle, pathlib
-        import numpy as np
+        import pickle, pathlib
+        from src.combine_payloads import build_fim_payload, build_residual_payload
 
         outdir = pathlib.Path(output.combo).parent
         outdir.mkdir(parents=True, exist_ok=True)
-
-        cfg_obj = json.loads(open(input.cfg, "r").read())
-        use_gs = bool(cfg_obj.get("gram_schmidt", False))
 
         summary = {}
         summary["moments"] = pickle.load(open(input.moments, "rb"))
         summary["dadi"]    = pickle.load(open(input.dadi, "rb"))
 
-        # ---------------- FIM upper-triangles ----------------
-        fim_payload = {}
-        for fim_path in input.fims:
-            eng = re.sub(r".*?/fim/([^.]+)\.fim\.npy$", r"\1", fim_path)
-            F = np.load(fim_path)
-            iu = np.triu_indices(F.shape[0])
-            fim_payload[eng] = {
-                "shape": [int(F.shape[0]), int(F.shape[1])],
-                "tri_flat": F[iu].astype(float).tolist(),
-                "indices": "upper_including_diagonal",
-                "order": "row-major",
-            }
+        fim_payload = build_fim_payload(input.fims)
         if fim_payload:
             summary["FIM"] = fim_payload
 
-        # ---------------- Residual SFS vectors ----------------
-        resid_payload = {}
-        for vec_path in input.resid_vecs:
-            m = re.search(r"/sfs_residuals/([^/]+)/([^/]+)\.npy$", vec_path)
-            if not m:
-                continue
-            eng = m.group(1)
-            stem = m.group(2)  # residuals_flat OR residuals_gs_coeffs
-            base = os.path.dirname(vec_path)
-
-            vec = np.load(vec_path)
-
-            arr_path = os.path.join(base, "residuals.npy")
-            arr = np.load(arr_path) if os.path.exists(arr_path) else None
-
-            payload = {
-                "vector": vec.astype(float).tolist(),
-                "vector_dim": int(vec.size),
-                "vector_type": (
-                    "gram_schmidt_coeffs" if stem == "residuals_gs_coeffs" else "raw_flat_residuals"
-                ),
-                "full_residual_shape": (list(arr.shape) if arr is not None else None),
-                "order": "row-major",
-            }
-
-            if stem == "residuals_gs_coeffs":
-                meta_path = os.path.join(base, "meta.json")
-                basis_path = os.path.join(base, "residuals_gs_basis.npy")
-                if os.path.exists(basis_path):
-                    Q = np.load(basis_path)
-                    payload["gs_basis_shape"] = [int(Q.shape[0]), int(Q.shape[1])]
-                if os.path.exists(meta_path):
-                    try:
-                        mj = json.loads(open(meta_path, "r").read())
-                        payload["gram_schmidt_k"] = mj.get("gram_schmidt_k", None)
-                        payload["gram_schmidt_k_effective"] = mj.get("gram_schmidt_k_effective", None)
-                        payload["gram_schmidt_basis"] = mj.get("gram_schmidt_basis", None)
-                        payload["gram_schmidt_eps"] = mj.get("gram_schmidt_eps", None)
-                    except Exception:
-                        pass
-
-            resid_payload[eng] = payload
-
+        resid_payload = build_residual_payload(input.resid_vecs)
         if resid_payload:
             summary["SFS_residuals"] = resid_payload
 
@@ -2440,8 +2052,6 @@ rule build_real_prediction_dataset:
             --real-inf-dir   "{params.real_inf_dir}" \
             --train-features "{input.train_features}" \
             --out-dir        "{params.out_dir}"
-
-        test -f "{output.feats}" && test -f "{output.raw}" && test -f "{output.meta}"
         """
 
 ##############################################################################
@@ -2474,8 +2084,6 @@ rule predict_real_data:
             --config         "{input.cfg}" \
             --out-prefix     "{params.out_prefix}" \
             --model-key      "{wildcards.model_key}"
-
-        test -f "{output.json}" && test -f "{output.csv}"
         """
 
 ##############################################################################
@@ -2606,19 +2214,7 @@ rule raw_features_random_forest:
         fi    = f"{RAW_MDL_DIR}/random_forest/random_forest_feature_importances.png",
     params:
         model_dir = f"{RAW_MDL_DIR}/random_forest",
-        opt_flags = lambda w: " ".join([
-            "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
-            f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
-            f"--optuna_timeout {config['rf']['optuna_timeout']}" if config.get("rf", {}).get("optuna_timeout") is not None else "",
-            f"--optuna_seed {config['rf']['optuna_seed']}" if config.get("rf", {}).get("optuna_seed") is not None else "",
-            f"--final_fit {config['rf']['final_fit']}" if config.get("rf", {}).get("final_fit") is not None else "",
-            f"--n_estimators {config['rf']['n_estimators']}" if config.get("rf", {}).get("n_estimators") is not None else "",
-            f"--max_depth {config['rf']['max_depth']}" if config.get("rf", {}).get("max_depth") is not None else "",
-            f"--min_samples_split {config['rf']['min_samples_split']}" if config.get("rf", {}).get("min_samples_split") is not None else "",
-            f"--min_samples_leaf {config['rf']['min_samples_leaf']}" if config.get("rf", {}).get("min_samples_leaf") is not None else "",
-            f"--max_features {config['rf']['max_features']}" if config.get("rf", {}).get("max_features") is not None else "",
-            f"--max_samples {config['rf']['max_samples']}" if config.get("rf", {}).get("max_samples") is not None else "",
-        ]).strip(),
+        opt_flags = lambda w: _rf_opt_flags(),
     threads: 8
     shell:
         r"""
@@ -2659,23 +2255,7 @@ rule raw_features_xgboost:
         fi    = f"{RAW_MDL_DIR}/xgboost/xgb_feature_importances.png",
     params:
         model_dir = f"{RAW_MDL_DIR}/xgboost",
-        opt_flags = lambda w: " ".join([
-            "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
-            f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
-            f"--optuna_timeout {config['xgb']['optuna_timeout']}" if config.get("xgb", {}).get("optuna_timeout") is not None else "",
-            f"--optuna_seed {config['xgb']['optuna_seed']}" if config.get("xgb", {}).get("optuna_seed") is not None else "",
-            f"--final_fit {config['xgb']['final_fit']}" if config.get("xgb", {}).get("final_fit") is not None else "",
-            f"--early_stopping_rounds {config['xgb']['early_stopping_rounds']}" if config.get("xgb", {}).get("early_stopping_rounds") is not None else "",
-            f"--n_estimators {config['xgb']['n_estimators']}" if config.get("xgb", {}).get("n_estimators") is not None else "",
-            f"--max_depth {config['xgb']['max_depth']}" if config.get("xgb", {}).get("max_depth") is not None else "",
-            f"--learning_rate {config['xgb']['learning_rate']}" if config.get("xgb", {}).get("learning_rate") is not None else "",
-            f"--subsample {config['xgb']['subsample']}" if config.get("xgb", {}).get("subsample") is not None else "",
-            f"--colsample_bytree {config['xgb']['colsample_bytree']}" if config.get("xgb", {}).get("colsample_bytree") is not None else "",
-            f"--min_child_weight {config['xgb']['min_child_weight']}" if config.get("xgb", {}).get("min_child_weight") is not None else "",
-            f"--reg_lambda {config['xgb']['reg_lambda']}" if config.get("xgb", {}).get("reg_lambda") is not None else "",
-            f"--reg_alpha {config['xgb']['reg_alpha']}" if config.get("xgb", {}).get("reg_alpha") is not None else "",
-            f"--top_k_features_plot {config['xgb']['top_k_plot']}" if config.get("xgb", {}).get("top_k_plot") is not None else "",
-        ]).strip(),
+        opt_flags = lambda w: _xgb_opt_flags(),
     threads: 4
     shell:
         r"""

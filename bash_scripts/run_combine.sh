@@ -23,8 +23,9 @@ SIM_RANGE="${SIM_RANGE:-}"             # optional: "5000-20000"
 # -----------------------------
 # Paths & config
 # -----------------------------
-CFG="/home/akapoor/kernlab/Infer_Demography/config_files/experiment_config_split_migration_growth.json"
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
+source "$ROOT/bash_scripts/lib_active_config.sh"
+CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
