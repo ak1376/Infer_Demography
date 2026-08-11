@@ -31,7 +31,7 @@ echo "Submitting pipeline from: $PWD"
 
 sim_id=$(submit bash_scripts/running_simulation.sh); [[ -n "$sim_id" ]]
 
-win_id=$(submit $(dep_afterany "$sim_id") bash_scripts/simulate_windows.sh); [[ -n "$win_id" ]]
+win_id=$(submit $(dep_afterany "$sim_id") bash_scripts/build_windows.sh); [[ -n "$win_id" ]]
 ld_id=$(submit  $(dep_afterany "$win_id") bash_scripts/LD_stats_windows.sh); [[ -n "$ld_id" ]]
 momLD_id=$(submit $(dep_afterany "$ld_id") bash_scripts/MomentsLD.sh); [[ -n "$momLD_id" ]]
 

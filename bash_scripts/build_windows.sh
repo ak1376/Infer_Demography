@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=win_sim
+#SBATCH --job-name=build_win
 #SBATCH --array=0-9999
-#SBATCH --output=logs/win_sim_%A_%a.out
-#SBATCH --error=logs/win_sim_%A_%a.err
+#SBATCH --output=logs/build_win_%A_%a.out
+#SBATCH --error=logs/build_win_%A_%a.err
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=10G
@@ -71,7 +71,7 @@ for IDX in $(seq "$START" "$END"); do
             --directory "$ROOT" \
             --nolock \
             --rerun-incomplete \
-            --allowed-rules simulate_window ld_window \
+            --allowed-rules simulate_big_sequence simulate_window_replicate chunk_window ld_window \
             --latency-wait 300 \
             -j "$SLURM_CPUS_PER_TASK" \
             "$TARGET"

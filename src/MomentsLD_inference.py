@@ -23,7 +23,12 @@ import moments
 import nlopt
 import numdifftools as nd
 
-from src.inference_utils import absolute_to_scaled_params, scaled_to_absolute_params
+from src.inference_utils import (
+    absolute_to_scaled_params,
+    scaled_to_absolute_params,
+    lhs_start_log10,
+    jitter_start_log10,
+)
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -1051,7 +1056,17 @@ def run_momentsld_inference(
     param_names = list(priors.keys())
     lower_bounds = np.array([prior[0] for prior in priors.values()])
     upper_bounds = np.array([prior[1] for prior in priors.values()])
-    start_values = np.sqrt(lower_bounds * upper_bounds)  # geometric mean starting point
+
+    # Start point: LHS or jittered-midpoint, keyed by config["opt_seed"] so each
+    # restart (one Snakemake job per opt) gets a distinct, reproducible start —
+    # same mechanism as the moments/dadi SFS inference (src/inference_utils.py).
+    start_strategy = str(config.get("start_strategy", "jitter")).lower()
+    if start_strategy == "lhs":
+        start_values = 10 ** lhs_start_log10(lower_bounds, upper_bounds, config)
+    elif start_strategy == "jitter":
+        start_values = 10 ** jitter_start_log10(lower_bounds, upper_bounds, config)
+    else:
+        raise ValueError(f"Unknown start_strategy: {start_strategy!r}")
 
     # Get populations to sample
     populations = list(config.get("num_samples", {}).keys())
@@ -1095,7 +1110,7 @@ def run_momentsld_inference(
     # Save results
     results = {
         "best_params": dict(zip(param_names, optimal_params)),
-        "best_lls": max_likelihood,
+        "best_ll": max_likelihood,
         "status": status,
     }
 

@@ -134,24 +134,15 @@ def normalise_df(
 # =============================================================================
 
 
-def param_dicts(tool: str, blob: dict) -> List[Dict[str, float]]:
-    """Return a list of {param: value} dicts (1 per replicate) from all_inferences.pkl."""
+def param_dicts(blob: dict) -> List[Dict[str, float]]:
+    """
+    Return a list of {param: value} dicts (1 per replicate) from all_inferences.pkl.
+    Handles both a multi-restart list (dadi/moments/momentsLD top-K) and a
+    single-shot dict (e.g. pruning-mode momentsLD).
+    """
     if not isinstance(blob, dict) or not blob:
         return []
 
-    t = tool.lower()
-
-    # MomentsLD stores a single best-fit dict under best_params (no replicates)
-    if t == "momentsld":
-        bp = blob.get("best_params")
-        if isinstance(bp, dict):
-            return [bp]
-        op = blob.get("opt_params")  # support older formats just in case
-        if isinstance(op, dict):
-            return [op]
-        return []
-
-    # dadi/moments store a list (one per replicate) or a single dict
     bp = blob.get("best_params")
     if isinstance(bp, list):
         return [d for d in bp if isinstance(d, dict)]
@@ -688,18 +679,13 @@ def build_feature_target_tables(
         # ---- inferred params
         for tool in TOOLS_DEFAULT:
             if tool in data and data[tool] is not None:
-                for rep_idx, pdict in enumerate(param_dicts(tool, data[tool])):
+                for rep_idx, pdict in enumerate(param_dicts(data[tool])):
                     if not isinstance(pdict, dict):
                         continue
                     for k, v in pdict.items():
                         if v is None or (isinstance(v, float) and np.isnan(v)):
                             continue
-                        col = (
-                            f"{tool}_{k}"
-                            if tool.lower() == "momentsld"
-                            else f"{tool}_{k}_rep_{rep_idx}"
-                        )
-                        row[col] = float(v)
+                        row[f"{tool}_{k}_rep_{rep_idx}"] = float(v)
 
         # ---- FIM
         if cfg.use_fim_features and isinstance(data.get("FIM"), dict) and data["FIM"]:

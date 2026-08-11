@@ -6,7 +6,9 @@
 # through a trained model.
 #
 # The column convention mirrors src/feature_extraction_helpers.build_feature_target_tables:
-#   dadi_{param}_rep_{i}, moments_{param}_rep_{i}, momentsLD_{param}
+#   dadi_{param}_rep_{i}, moments_{param}_rep_{i}, momentsLD_{param}_rep_{i}
+# (real-data MomentsLD only ever has one restart, so momentsLD's rep index is
+# always 0 here, but training may have up to top_k reps.)
 # Values are z-score normalized by the uniform-prior stats (same as training).
 
 from __future__ import annotations
@@ -94,18 +96,13 @@ def main() -> None:
         blob = data.get(tool)
         if blob is None:
             continue
-        for rep_idx, pdict in enumerate(fx.param_dicts(tool, blob)):
+        for rep_idx, pdict in enumerate(fx.param_dicts(blob)):
             if not isinstance(pdict, dict):
                 continue
             for k, v in pdict.items():
                 if v is None or (isinstance(v, float) and np.isnan(v)):
                     continue
-                col = (
-                    f"{tool}_{k}"
-                    if tool.lower() == "momentsld"
-                    else f"{tool}_{k}_rep_{rep_idx}"
-                )
-                row[col] = float(v)
+                row[f"{tool}_{k}_rep_{rep_idx}"] = float(v)
 
     raw_df = pd.DataFrame([row], index=["real"]).sort_index(axis=1)
 

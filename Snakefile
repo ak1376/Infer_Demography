@@ -35,6 +35,16 @@ TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 WINDOW_SIZE   = 10_000_000
 
+# window_mode: "replicates" (default) independently re-simulates each of the
+# NUM_WINDOWS windows for a sid (simulate_one_window_replicate, one msprime/SLiM
+# run per window). "chunked" simulates ONE big tree sequence per sid
+# (BIG_GENOME_LENGTH bp) and chops it into NUM_WINDOWS overlapping windows of
+# genome_length bp each via src/windowing.py::window_trees.
+WINDOW_MODE = CFG.get("window_mode", "replicates")
+if WINDOW_MODE not in ("replicates", "chunked"):
+    raise ValueError(f"window_mode must be 'replicates' or 'chunked', got {WINDOW_MODE!r}")
+BIG_GENOME_LENGTH = 10.0 * float(CFG["genome_length"])
+
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
 
@@ -66,6 +76,7 @@ def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr'
 wildcard_constraints:
     chrom = r"Chr(2L|2R|3L|3R)",
     variant = r"(w|wo)_FIM_(w|wo)_SFSresids",
+    ld_variant = r"by_chrom|genmap",
     reg = r"standard|ridge|lasso|elasticnet",
 
 
@@ -689,32 +700,105 @@ rule prepare_sfs_splits:
         """
 
 ##############################################################################
-# RULE simulate_window – one VCF window
+# RULE simulate_big_sequence – ONE big tree sequence per sid, for
+# window_mode="chunked" (never triggered when window_mode="replicates",
+# since nothing then depends on its output).
 ##############################################################################
-rule simulate_window:
+rule simulate_big_sequence:
     input:
         params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
         done     = f"{SIM_BASEDIR}/{{sid}}/.done"
     output:
-        vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
+        trees = temp(f"{SIM_BASEDIR}/{{sid}}/big_tree_sequence.trees")
     params:
-        base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
-        rep_idx    = "{win}",
-        cfg        = EXP_CFG
+        cfg               = EXP_CFG,
+        big_genome_length = BIG_GENOME_LENGTH,
     threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "{WIN_SCRIPT}" \
-            --sim-dir      "{params.base_sim}" \
-            --rep-index    {params.rep_idx} \
-            --config-file  "{params.cfg}" \
-            --meta-file    "{input.metafile}" \
-            --out-dir      "{params.out_winDir}"
-        """
+    run:
+        import json
+        import pickle
+        from src.simulation import simulation, load_sampled_coverage_from_meta
+
+        cfg = json.loads(Path(params.cfg).read_text())
+        engine = str(cfg["engine"]).lower()
+        model_type = cfg.get("model_type") or cfg.get("demographic_model")
+
+        sampled_params = pickle.load(open(input.params, "rb"))
+        sampled_coverage = (
+            load_sampled_coverage_from_meta(Path(input.metafile)) if engine == "slim" else None
+        )
+
+        big_cfg = dict(cfg)
+        big_cfg["genome_length"] = float(params.big_genome_length)
+
+        ts, _g = simulation(
+            sampled_params=sampled_params,
+            model_type=model_type,
+            experiment_config=big_cfg,
+            sampled_coverage=sampled_coverage,
+        )
+        ts.dump(output.trees)
+
+##############################################################################
+# RULE simulate_window – one VCF window
+# window_mode="replicates": independently re-simulate each window.
+# window_mode="chunked": chop simulate_big_sequence's one big tree sequence
+# into NUM_WINDOWS overlapping windows of genome_length bp (src/windowing.py).
+##############################################################################
+if WINDOW_MODE == "replicates":
+    rule simulate_window:
+        input:
+            params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
+            metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
+            done     = f"{SIM_BASEDIR}/{{sid}}/.done"
+        output:
+            vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
+        params:
+            base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+            out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
+            rep_idx    = "{win}",
+            cfg        = EXP_CFG
+        threads: 1
+        shell:
+            r"""
+            set -euo pipefail
+            PYTHONPATH={workflow.basedir} \
+            python "{WIN_SCRIPT}" \
+                --sim-dir      "{params.base_sim}" \
+                --rep-index    {params.rep_idx} \
+                --config-file  "{params.cfg}" \
+                --meta-file    "{input.metafile}" \
+                --out-dir      "{params.out_winDir}"
+            """
+else:
+    rule simulate_window:
+        input:
+            big_trees = f"{SIM_BASEDIR}/{{sid}}/big_tree_sequence.trees",
+        output:
+            vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
+        params:
+            out_winDir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
+            cfg         = EXP_CFG,
+            num_windows = NUM_WINDOWS,
+        threads: 1
+        run:
+            import json
+            from src.windowing import window_trees
+
+            cfg = json.loads(Path(params.cfg).read_text())
+            window_size = int(cfg["genome_length"])
+            recomb_rate = float(cfg["recombination_rate"])
+
+            written = window_trees(
+                Path(input.big_trees),
+                Path(params.out_winDir),
+                window_size=window_size,
+                num_windows=params.num_windows,
+                recomb_rate=recomb_rate,
+                window_index=int(wildcards.win),
+            )
+            written[0]["trees"].unlink()  # nothing downstream reads the per-window .trees
 
 ##############################################################################
 # RULE ld_window – LD statistics for one window                             #
@@ -800,11 +884,12 @@ rule ld_window_pruned:
         """
 
 ##############################################################################
-# RULE optimize_momentsld – aggregate windows & optimise momentsLD          #
+# RULE aggregate_ld_stats – aggregate LD windows into means/varcovs + PDF   #
 # Works for unpruned-only AND mixed (unpruned primary + pruned fallback).   #
-# Output is always MomentsLD/best_fit.pkl regardless of pruning config.     #
+# Runs once per sid; every optimization restart (infer_momentsld, below)    #
+# reuses this cached means.varcovs.pkl instead of re-aggregating.           #
 ##############################################################################
-rule optimize_momentsld:
+rule aggregate_ld_stats:
     input:
         pkls = lambda w: expand(
             f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl",
@@ -824,7 +909,6 @@ rule optimize_momentsld:
         mv   = f"{LD_ROOT}/means.varcovs.pkl",
         boot = temp(f"{LD_ROOT}/bootstrap_sets.pkl"),
         pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
-        best = f"{LD_ROOT}/best_fit.pkl",
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
@@ -841,11 +925,129 @@ rule optimize_momentsld:
             "--run-dir",     params.sim_dir,
             "--output-root", params.output_root,
             "--config-file", params.cfg,
+            "--skip-optimize",
         ]
         if params.pruning_dir:
             cmd += ["--fallback-ld-dir", params.pruning_dir]
         env = {**os.environ, "PYTHONPATH": workflow.basedir}
         subprocess.run(cmd, check=True, env=env)
+
+##############################################################################
+# RULE infer_momentsld – one LHS/jitter-seeded MomentsLD restart            #
+# Mirrors infer_moments/infer_dadi: one Snakemake job per {opt}, each a     #
+# single nlopt run from a distinct start point keyed by opt_seed.           #
+##############################################################################
+rule infer_momentsld:
+    input:
+        mv  = f"{LD_ROOT}/means.varcovs.pkl",
+        cfg = EXP_CFG,
+    output:
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/MomentsLD/best_fit.pkl"
+    params:
+        sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
+        results_dir = lambda w: f"experiments/{MODEL}/runs/run_{w.sid}_{w.opt}/inferences/MomentsLD",
+        cfg = EXP_CFG,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.results_dir}"
+
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/LD_inference.py" \
+            --run-dir     "{params.sim_dir}" \
+            --output-root "{params.output_root}" \
+            --results-dir "{params.results_dir}" \
+            --config-file "{params.cfg}" \
+            --opt-seed    {wildcards.opt}
+
+        test -f "{output.pkl}"
+        """
+
+##############################################################################
+# RULE aggregate_opts_momentsld – pick top-K across LHS/jitter restarts     #
+# Mirrors aggregate_opts_moments/aggregate_opts_dadi exactly (same TOP_K,   #
+# same best_params/best_ll/opt_index list schema).                         #
+##############################################################################
+rule aggregate_opts_momentsld:
+    input:
+        cfg = EXP_CFG,
+        opts = lambda w: expand(
+            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/MomentsLD/best_fit.pkl",
+            opt=OPTIMS,
+        ),
+    output:
+        best = f"{LD_ROOT}/best_fit.pkl",
+    run:
+        import pickle, numpy as np, pathlib, re, glob
+
+        sid = wildcards.sid
+        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
+
+        ld_pkls = sorted(glob.glob(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/MomentsLD/best_fit.pkl"
+        ))
+
+        def _as_list(x):
+            if x is None:
+                return []
+            return x if isinstance(x, (list, tuple, np.ndarray)) else [x]
+
+        params, lls, opt_ids = [], [], []
+        n_readable = 0
+        n_nonempty = 0
+
+        for pkl_path in ld_pkls:
+            m = re.search(rf"/run_{sid}_(\d+)/inferences/MomentsLD/best_fit\.pkl$", pkl_path)
+            if not m:
+                continue
+
+            opt_idx = int(m.group(1))
+
+            try:
+                with open(pkl_path, "rb") as fh:
+                    d = pickle.load(fh)
+                n_readable += 1
+            except Exception as e:
+                print(f"WARNING: could not load {pkl_path}: {e}")
+                continue
+
+            this_params = _as_list(d.get("best_params"))
+            this_lls    = _as_list(d.get("best_ll"))
+
+            if len(this_lls) == 0:
+                continue
+
+            n_nonempty += 1
+            params.extend(this_params)
+            lls.extend(this_lls)
+            opt_ids.extend([opt_idx] * len(this_lls))
+
+        if n_nonempty < MIN_FILES:
+            raise ValueError(
+                f"[aggregate_opts_momentsld] Need >= {MIN_FILES} non-empty MomentsLD optimizations for sid={sid}, "
+                f"but got nonempty={n_nonempty} (readable={n_readable}, paths_found={len(ld_pkls)}). "
+                f"Not aggregating."
+            )
+
+        keep = np.argsort(lls)[::-1][:TOP_K]
+
+        best = {
+            "best_params":   [params[i] for i in keep],
+            "best_ll":       [lls[i] for i in keep],
+            "opt_index":     [opt_ids[i] for i in keep],
+            "n_files_found": int(len(ld_pkls)),
+            "n_nonempty":    int(n_nonempty),
+            "min_required":  int(TOP_K),
+        }
+
+        pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.best, "wb") as fh:
+            pickle.dump(best, fh)
+
+        print(f"✅ momentsLD: found {len(ld_pkls)} files, aggregated {len(lls)} entries → {output.best}")
+        print(f"✅ momentsLD: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 ##############################################################################
 # RULE optimize_momentsld_mixed – optimise MomentsLD from PRUNED stats        #
@@ -1429,33 +1631,6 @@ rule modeling_all:
         ),
 
 
-rule recode_haploid_to_diploid_Chr2L:
-    """
-    Recode haploid-coded GTs in Chr2L.vcf.gz to diploid-coded GTs,
-    BGZF-compress, and tabix-index.
-    """
-    input:
-        vcf="drosophila_data/data/Chr2L.vcf.gz",
-        tbi="drosophila_data/data/Chr2L.vcf.gz.tbi",
-    output:
-        vcf="real_data_analysis/data/drosophila/Chr2L/diploidGT.vcf.gz",
-        tbi="real_data_analysis/data/drosophila/Chr2L/diploidGT.vcf.gz.tbi",
-    params:
-        script=f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
-        tmp_vcf="real_data_analysis/data/drosophila/Chr2L/diploidGT.vcf",  # Changed to match output dir
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-
-        # Ensure output directory exists
-        mkdir -p "$(dirname "{params.tmp_vcf}")"
-        
-        python "{params.script}" "{input.vcf}" "{params.tmp_vcf}"
-        bgzip -f "{params.tmp_vcf}"
-        tabix -f -p vcf "{output.vcf}"
-        """
-
 ##############################################################################
 # RULE annotate_ancestral_allele  (per-chromosome, autosomes)
 # Polarize the raw haploid VCF using the DPGP ML-ancestor FASTA.
@@ -1772,109 +1947,25 @@ rule compute_ld_real:
 
 ##############################################################################
 # PER-AUTOSOME LD DECAY ANALYSIS
-# Same window/LD machinery as the rules above, but parametrised by {chrom} and
-# written under REAL_LD_BYCHROM/{chrom}/ so each autosome is analysed
-# independently. Feeds a cross-autosome decay-curve comparison (no inference).
+# One windowing/LD/aggregation/decay-comparison chain, parametrised by
+# {chrom} AND {ld_variant}:
+#   ld_variant="by_chrom" -> flat-rate WINDOW_SIZE (10 Mb) windows, written
+#                             under REAL_LD_BYCHROM/{chrom}/
+#   ld_variant="genmap"   -> GENMAP_WINDOW_SIZE (1 Mb) windows binned by
+#                             genetic distance from the real Comeron (R5/dm3)
+#                             recombination map instead of a flat rate,
+#                             written under REAL_LD_GENMAP/{chrom}/ — lets you
+#                             check whether the cross-autosome curves collapse
+#                             once the recombination landscape is accounted for.
+# Both variants feed a cross-autosome decay-curve comparison (no inference).
 ##############################################################################
-rule split_real_vcf_window_chrom:
-    input:
-        vcf     = lambda wc: polarized_diploid_vcf(wc.chrom),
-        popfile = REAL_POPFILE,
-    output:
-        vcf_gz = f"{REAL_LD_BYCHROM}/{{chrom}}/windows/window_{{i}}.vcf.gz"
-    params:
-        script      = "snakemake_scripts/split_vcf_windows.py",
-        window_size = WINDOW_SIZE,
-        num_windows = NUM_WINDOWS,
-        out_dir     = f"{REAL_LD_BYCHROM}/{{chrom}}/windows",
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.out_dir}"
+LD_VARIANT_WINDOW_SIZE = {"by_chrom": WINDOW_SIZE, "genmap": GENMAP_WINDOW_SIZE}
 
-        python "{params.script}" \
-            --input-vcf "{input.vcf}" \
-            --popfile "{input.popfile}" \
-            --out-dir "{params.out_dir}" \
-            --window-size "{params.window_size}" \
-            --num-windows "{params.num_windows}" \
-            --window-index "{wildcards.i}"
-        """
 
-rule compute_ld_real_chrom:
-    input:
-        vcf_gz = f"{REAL_LD_BYCHROM}/{{chrom}}/windows/window_{{i}}.vcf.gz"
-    output:
-        pkl = f"{REAL_LD_BYCHROM}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
-    resources:
-        gpu = 1 if USE_GPU_LD else 0
-    params:
-        script  = "snakemake_scripts/compute_ld_window.py",
-        config  = EXP_CFG,
-        sim_dir = f"{REAL_LD_BYCHROM}/{{chrom}}",
-        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.sim_dir}/LD_stats"
+def ld_variant_root(ld_variant, chrom):
+    return f"{REAL_LD_BYCHROM if ld_variant == 'by_chrom' else REAL_LD_GENMAP}/{chrom}"
 
-        python "{params.script}" \
-            --sim-dir "{params.sim_dir}" \
-            --window-index "{wildcards.i}" \
-            --config-file "{params.config}" \
-            --r-bins "{params.r_bins}"
-        """
 
-rule aggregate_ld_chrom:
-    """Aggregate per-window LD stats for one autosome into means/varcovs."""
-    input:
-        pkls = lambda w: expand(
-            f"{REAL_LD_BYCHROM}/{w.chrom}/LD_stats/LD_stats_window_{{i}}.pkl",
-            i=WINDOWS
-        ),
-    output:
-        mv = f"{REAL_LD_BYCHROM}/{{chrom}}/means.varcovs.pkl",
-    params:
-        output_root = f"{REAL_LD_BYCHROM}/{{chrom}}",
-        cfg         = EXP_CFG,
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/LD_inference.py" \
-            --output-root "{params.output_root}" \
-            --config-file "{params.cfg}" \
-            --skip-optimize
-        test -f "{output.mv}"
-        """
-
-rule compare_ld_decay_autosomes:
-    """Overlay LD decay curves across autosomes, one panel per LD statistic."""
-    input:
-        mv = expand(f"{REAL_LD_BYCHROM}/{{chrom}}/means.varcovs.pkl", chrom=AUTOSOMES),
-    output:
-        pdf = f"{REAL_LD_BYCHROM}/ld_decay_across_autosomes.pdf",
-    params:
-        script = "snakemake_scripts/compare_ld_decay_autosomes.py",
-        labels = " ".join(AUTOSOMES),
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        python "{params.script}" \
-            --means {input.mv} \
-            --labels {params.labels} \
-            --out-pdf "{output.pdf}"
-        """
-
-##############################################################################
-# PER-AUTOSOME LD DECAY WITH THE REAL COMERON (R5/dm3) RECOMBINATION MAP
-# Same as the by_chrom rules above, but (1) windows are 1 Mb (faster) and
-# (2) LD stats are binned by genetic distance from the Comeron map instead of a
-# flat rate. Lets you check whether the cross-autosome curves collapse once the
-# recombination landscape is accounted for.
-##############################################################################
 rule build_genetic_map_real:
     input:
         xlsx = COMERON_XLSX,
@@ -1892,17 +1983,17 @@ rule build_genetic_map_real:
             --out   "{output.gmap}"
         """
 
-rule split_real_vcf_window_genmap:
+rule split_real_vcf_window_chrom:
     input:
         vcf     = lambda wc: polarized_diploid_vcf(wc.chrom),
         popfile = REAL_POPFILE,
     output:
-        vcf_gz = f"{REAL_LD_GENMAP}/{{chrom}}/windows/window_{{i}}.vcf.gz"
+        vcf_gz = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/windows/window_{{i}}.vcf.gz"
     params:
         script      = "snakemake_scripts/split_vcf_windows.py",
-        window_size = GENMAP_WINDOW_SIZE,
+        window_size = lambda wc: LD_VARIANT_WINDOW_SIZE[wc.ld_variant],
         num_windows = NUM_WINDOWS,
-        out_dir     = f"{REAL_LD_GENMAP}/{{chrom}}/windows",
+        out_dir     = lambda wc: f"{ld_variant_root(wc.ld_variant, wc.chrom)}/windows",
     shell:
         r"""
         set -euo pipefail
@@ -1917,43 +2008,50 @@ rule split_real_vcf_window_genmap:
             --window-index "{wildcards.i}"
         """
 
-rule compute_ld_real_genmap:
+rule compute_ld_real_chrom:
     input:
-        vcf_gz = f"{REAL_LD_GENMAP}/{{chrom}}/windows/window_{{i}}.vcf.gz",
-        gmap   = f"{REAL_LD_GENMAP}/{{chrom}}/genetic_map.txt",
+        vcf_gz = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/windows/window_{{i}}.vcf.gz",
+        gmap   = lambda wc: (
+            [f"{REAL_LD_GENMAP}/{wc.chrom}/genetic_map.txt"] if wc.ld_variant == "genmap" else []
+        ),
     output:
-        pkl = f"{REAL_LD_GENMAP}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
+        pkl = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
     resources:
         gpu = 1 if USE_GPU_LD else 0
     params:
         script  = "snakemake_scripts/compute_ld_window.py",
         config  = EXP_CFG,
-        sim_dir = f"{REAL_LD_GENMAP}/{{chrom}}",
+        sim_dir = lambda wc: ld_variant_root(wc.ld_variant, wc.chrom),
         r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
     shell:
         r"""
         set -euo pipefail
         mkdir -p "{params.sim_dir}/LD_stats"
 
+        GMAP_FLAG=""
+        if [ -n "{input.gmap}" ]; then
+            GMAP_FLAG="--rec-map-file {input.gmap}"
+        fi
+
         python "{params.script}" \
             --sim-dir "{params.sim_dir}" \
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
             --r-bins "{params.r_bins}" \
-            --rec-map-file "{input.gmap}"
+            $GMAP_FLAG
         """
 
-rule aggregate_ld_genmap:
-    """Aggregate the Comeron-mapped per-window LD stats for one autosome."""
+rule aggregate_ld_real_chrom:
+    """Aggregate per-window LD stats for one autosome (by_chrom or genmap variant) into means/varcovs."""
     input:
         pkls = lambda w: expand(
-            f"{REAL_LD_GENMAP}/{w.chrom}/LD_stats/LD_stats_window_{{i}}.pkl",
+            f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{w.ld_variant}/{w.chrom}/LD_stats/LD_stats_window_{{i}}.pkl",
             i=WINDOWS
         ),
     output:
-        mv = f"{REAL_LD_GENMAP}/{{chrom}}/means.varcovs.pkl",
+        mv = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/means.varcovs.pkl",
     params:
-        output_root = f"{REAL_LD_GENMAP}/{{chrom}}",
+        output_root = lambda wc: ld_variant_root(wc.ld_variant, wc.chrom),
         cfg         = EXP_CFG,
     threads: 1
     shell:
@@ -1967,12 +2065,15 @@ rule aggregate_ld_genmap:
         test -f "{output.mv}"
         """
 
-rule compare_ld_decay_genmap:
-    """Overlay Comeron-mapped LD decay curves across autosomes."""
+rule compare_ld_decay_autosomes:
+    """Overlay LD decay curves across autosomes, one panel per LD statistic, for one variant."""
     input:
-        mv = expand(f"{REAL_LD_GENMAP}/{{chrom}}/means.varcovs.pkl", chrom=AUTOSOMES),
+        mv = lambda wc: expand(
+            f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{wc.ld_variant}/{{chrom}}/means.varcovs.pkl",
+            chrom=AUTOSOMES,
+        ),
     output:
-        pdf = f"{REAL_LD_GENMAP}/ld_decay_across_autosomes.pdf",
+        pdf = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/ld_decay_across_autosomes.pdf",
     params:
         script = "snakemake_scripts/compare_ld_decay_autosomes.py",
         labels = " ".join(AUTOSOMES),

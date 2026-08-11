@@ -8,6 +8,7 @@
     "CEU": 10
   },
   "seed": 42,
+  "window_mode": "replicates",
   "num_optimizations": 100,
   "start_strategy": "jitter",
   "start_jitter_sigma": 0.05,
