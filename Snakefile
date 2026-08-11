@@ -775,34 +775,70 @@ else:
             written[0]["trees"].unlink()  # nothing downstream reads the per-window .trees
 
 ##############################################################################
-# RULE ld_window – LD statistics for one window                             #
+# RULE ld_window – LD statistics for one window
+# prune_keep_fractions unset: computes stats directly on the full window
+# (unchanged, original behavior).
+# prune_keep_fractions set (e.g. [0.15]): LD pair count scales as
+# density^2, so a dense window (many variants) can make the full
+# computation prohibitively slow. This branch thins the window first
+# (reusing rule prune_window's already-existing pruned VCF) and computes
+# stats on THAT instead, writing to the exact same output path - nothing
+# downstream (aggregate_ld_stats etc.) needs to know pruning happened.
 ##############################################################################
-rule ld_window:
-    input:
-        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
-    output:
-        pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
-    params:
-        sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        bins    = R_BINS_STR,
-        cfg     = EXP_CFG
-    threads: 4
-    resources:
-        ld_cores = 4,
-        gpu      = 1
-    shell:
-        """
-        set -euo pipefail
-        python "{LD_SCRIPT}" \
-            --sim-dir      {params.sim_dir} \
-            --window-index {wildcards.win} \
-            --config-file  {params.cfg} \
-            --r-bins       "{params.bins}"
+if PRUNE_TAGS:
+    rule ld_window:
+        input:
+            vcf_gz = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{PRUNE_TAGS[0]}/windows/window_{{win}}.vcf.gz",
+        output:
+            pkl = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
+        params:
+            sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}",
+            bins    = R_BINS_STR,
+            cfg     = EXP_CFG,
+        threads: 4
+        resources:
+            ld_cores = 4,
+            gpu      = 1
+        shell:
+            """
+            set -euo pipefail
+            python "{LD_SCRIPT}" \
+                --sim-dir      {params.sim_dir} \
+                --window-index {wildcards.win} \
+                --config-file  {params.cfg} \
+                --r-bins       "{params.bins}"
 
-        # .h5 is written by the LD script but not declared as a Snakemake output;
-        # remove it here so it doesn't accumulate across windows.
-        rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
-        """
+            mkdir -p "$(dirname "{output.pkl}")"
+            mv "{params.sim_dir}/LD_stats/LD_stats_window_{wildcards.win}.pkl" "{output.pkl}"
+            rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
+            """
+else:
+    rule ld_window:
+        input:
+            vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
+        output:
+            pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
+        params:
+            sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
+            bins    = R_BINS_STR,
+            cfg     = EXP_CFG
+        threads: 4
+        resources:
+            ld_cores = 4,
+            gpu      = 1
+        shell:
+            """
+            set -euo pipefail
+            python "{LD_SCRIPT}" \
+                --sim-dir      {params.sim_dir} \
+                --window-index {wildcards.win} \
+                --config-file  {params.cfg} \
+                --r-bins       "{params.bins}"
+
+            # .h5 is written by the LD script but not declared as a Snakemake output;
+            # remove it here so it doesn't accumulate across windows.
+            rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
+            """
 
 ##############################################################################
 # RULE prune_window – thin one VCF to a keep-fraction                       #
