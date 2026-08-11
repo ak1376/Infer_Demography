@@ -23,6 +23,7 @@ export EXP_CFG="$CFG"
 
 NUM_DRAWS=$(jq -r '.num_draws' "$CFG")
 MODEL=$(jq -r '.demographic_model' "$CFG")
+WINDOW_MODE=$(jq -r '.window_mode // "replicates"' "$CFG")
 
 NUM_WINDOWS="${NUM_WINDOWS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-50}"
@@ -30,7 +31,7 @@ MAX_CONCURRENT="${MAX_CONCURRENT:-200}"
 
 TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
 
-echo "CFG=$CFG  MODEL=$MODEL  NUM_DRAWS=$NUM_DRAWS  NUM_WINDOWS=$NUM_WINDOWS  TOTAL_TASKS=$TOTAL_TASKS"
+echo "CFG=$CFG  MODEL=$MODEL  WINDOW_MODE=$WINDOW_MODE  NUM_DRAWS=$NUM_DRAWS  NUM_WINDOWS=$NUM_WINDOWS  TOTAL_TASKS=$TOTAL_TASKS"
 echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-unset}  SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
 
 # --- first launch: resubmit with correct array range ---
@@ -48,6 +49,20 @@ END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 
 echo "Array $SLURM_ARRAY_TASK_ID → indices $START .. $END"
 
+# window_mode="replicates": simulate_window_replicate independently
+# re-simulates each window, so only sampled_params.pkl/.done (from an
+# earlier running_simulation.sh stage) need to be ready.
+# window_mode="chunked": chunk_window slices the ALREADY-simulated
+# tree_sequence.trees (also produced by running_simulation.sh, kept
+# non-temp for this mode - see Snakefile rule simulate). It must already
+# exist here since each window below is its own separate snakemake call,
+# with no shared DAG to run "simulate" safely without races/re-simulation.
+if [[ "$WINDOW_MODE" == "chunked" ]]; then
+  BUILD_RULE="chunk_window"
+else
+  BUILD_RULE="simulate_window_replicate"
+fi
+
 for IDX in $(seq "$START" "$END"); do
   SID=$(( IDX / NUM_WINDOWS ))
   WIN=$(( IDX % NUM_WINDOWS ))
@@ -57,6 +72,10 @@ for IDX in $(seq "$START" "$END"); do
     echo "[SKIP] SID=$SID not ready"
     continue
   }
+  if [[ "$WINDOW_MODE" == "chunked" && ! -f "$SIM_DIR/tree_sequence.trees" ]]; then
+    echo "[SKIP] SID=$SID tree_sequence.trees not ready (run running_simulation.sh first)"
+    continue
+  fi
 
   LD_PKL="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/LD_stats/LD_stats_window_${WIN}.pkl"
   if [[ -s "$LD_PKL" ]]; then
@@ -71,7 +90,7 @@ for IDX in $(seq "$START" "$END"); do
             --directory "$ROOT" \
             --nolock \
             --rerun-incomplete \
-            --allowed-rules simulate_big_sequence simulate_window_replicate chunk_window ld_window \
+            --allowed-rules "$BUILD_RULE" ld_window \
             --latency-wait 300 \
             -j "$SLURM_CPUS_PER_TASK" \
             "$TARGET"

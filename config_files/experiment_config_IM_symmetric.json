@@ -50,8 +50,8 @@
     "coverage_percent": [
       1,
       95
-    ], 
-    "slim_scaling": 10, 
+    ],
+    "slim_scaling": 10,
     "slim_burn_in": 5
   },
   "use_fim_features": true,

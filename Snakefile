@@ -20,7 +20,7 @@ configfile: "config_files/model_config.yaml"
 # External scripts
 SIM_SCRIPT   = "snakemake_scripts/simulation.py"
 INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
-WIN_SCRIPT   = "snakemake_scripts/simulate_window.py"
+WIN_SCRIPT   = "snakemake_scripts/simulate_window_replicate.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
 EXP_CFG = "config_files/experiment_config_IM_symmetric.json"
@@ -36,14 +36,15 @@ NUM_WINDOWS   = int(CFG.get("num_windows", 100))
 WINDOW_SIZE   = 10_000_000
 
 # window_mode: "replicates" (default) independently re-simulates each of the
-# NUM_WINDOWS windows for a sid (simulate_one_window_replicate, one msprime/SLiM
-# run per window). "chunked" simulates ONE big tree sequence per sid
-# (BIG_GENOME_LENGTH bp) and chops it into NUM_WINDOWS overlapping windows of
-# genome_length bp each via src/windowing.py::window_trees.
+# NUM_WINDOWS windows for a sid at chunk_genome_length bp each
+# (simulate_one_window_replicate, one msprime/SLiM run per window). "chunked"
+# simulates ONE original tree sequence per sid at genome_length bp and chops
+# it into NUM_WINDOWS overlapping windows of chunk_genome_length bp each via
+# src/windowing.py::window_trees. chunk_genome_length falls back to
+# genome_length when not set in the config (today's un-chunked behavior).
 WINDOW_MODE = CFG.get("window_mode", "replicates")
 if WINDOW_MODE not in ("replicates", "chunked"):
     raise ValueError(f"window_mode must be 'replicates' or 'chunked', got {WINDOW_MODE!r}")
-BIG_GENOME_LENGTH = 10.0 * float(CFG["genome_length"])
 
 # Engines to COMPUTE (always); modeling usage is controlled in feature_extraction via config
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
@@ -307,7 +308,12 @@ rule simulate:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
         fig    = f"{SIM_BASEDIR}/{{sid}}/demes.png",
         meta   = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
-        ts     = temp(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees"),
+        # window_mode="chunked": chunk_window (a separate, later job) slices
+        # this same tree sequence into windows, so it must persist past this
+        # rule's own job. window_mode="replicates" never consumes it, so it
+        # stays temp (auto-deleted) there, same as always.
+        ts     = (f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees" if WINDOW_MODE == "chunked"
+                  else temp(f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees")),
         done   = protected(f"{SIM_BASEDIR}/{{sid}}/.done"),
     params:
         sim_dir = SIM_BASEDIR,
@@ -700,54 +706,22 @@ rule prepare_sfs_splits:
         """
 
 ##############################################################################
-# RULE simulate_big_sequence – ONE big tree sequence per sid, for
-# window_mode="chunked" (never triggered when window_mode="replicates",
-# since nothing then depends on its output).
-##############################################################################
-rule simulate_big_sequence:
-    input:
-        params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
-        done     = f"{SIM_BASEDIR}/{{sid}}/.done"
-    output:
-        trees = temp(f"{SIM_BASEDIR}/{{sid}}/big_tree_sequence.trees")
-    params:
-        cfg               = EXP_CFG,
-        big_genome_length = BIG_GENOME_LENGTH,
-    threads: 1
-    run:
-        import json
-        import pickle
-        from src.simulation import simulation, load_sampled_coverage_from_meta
-
-        cfg = json.loads(Path(params.cfg).read_text())
-        engine = str(cfg["engine"]).lower()
-        model_type = cfg.get("model_type") or cfg.get("demographic_model")
-
-        sampled_params = pickle.load(open(input.params, "rb"))
-        sampled_coverage = (
-            load_sampled_coverage_from_meta(Path(input.metafile)) if engine == "slim" else None
-        )
-
-        big_cfg = dict(cfg)
-        big_cfg["genome_length"] = float(params.big_genome_length)
-
-        ts, _g = simulation(
-            sampled_params=sampled_params,
-            model_type=model_type,
-            experiment_config=big_cfg,
-            sampled_coverage=sampled_coverage,
-        )
-        ts.dump(output.trees)
-
-##############################################################################
-# RULE simulate_window – one VCF window
-# window_mode="replicates": independently re-simulate each window.
-# window_mode="chunked": chop simulate_big_sequence's one big tree sequence
-# into NUM_WINDOWS overlapping windows of genome_length bp (src/windowing.py).
+# RULE simulate_window_replicate / chunk_window – one VCF window
+# window_mode="replicates": simulate_window_replicate independently
+# re-simulates each window from scratch, at chunk_genome_length bp
+# (falls back to genome_length if chunk_genome_length is unset).
+# window_mode="chunked": chunk_window chops rule simulate's own
+# tree_sequence.trees (genome_length bp, the original/full sequence
+# already simulated for the SFS) into NUM_WINDOWS overlapping windows of
+# chunk_genome_length bp each (src/windowing.py) – no simulation happens
+# in this rule, just slicing. This reuses simulate's tree sequence
+# instead of re-simulating a second one, so there's no redundant
+# simulation between the SFS path and the LD/windowing path.
+# Both branches produce the same output path so downstream rules
+# (ld_window) and callers don't need to know which mode is active.
 ##############################################################################
 if WINDOW_MODE == "replicates":
-    rule simulate_window:
+    rule simulate_window_replicate:
         input:
             params   = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
             metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
@@ -772,9 +746,9 @@ if WINDOW_MODE == "replicates":
                 --out-dir      "{params.out_winDir}"
             """
 else:
-    rule simulate_window:
+    rule chunk_window:
         input:
-            big_trees = f"{SIM_BASEDIR}/{{sid}}/big_tree_sequence.trees",
+            trees = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
         output:
             vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
         params:
@@ -787,11 +761,11 @@ else:
             from src.windowing import window_trees
 
             cfg = json.loads(Path(params.cfg).read_text())
-            window_size = int(cfg["genome_length"])
+            window_size = int(cfg.get("chunk_genome_length", cfg["genome_length"]))
             recomb_rate = float(cfg["recombination_rate"])
 
             written = window_trees(
-                Path(input.big_trees),
+                Path(input.trees),
                 Path(params.out_winDir),
                 window_size=window_size,
                 num_windows=params.num_windows,

@@ -595,6 +595,10 @@ def simulate_one_window_replicate(
       - meta_file: optional bgs.meta.json from base sim so we can reuse exact coverage
       - seed_stride: default 10000 matches your old script
 
+    Simulates at cfg["chunk_genome_length"] bp (falls back to cfg["genome_length"]
+    if chunk_genome_length is unset), independently of the base simulation's own
+    genome_length.
+
     Writes:
       - window_<idx>.vcf.gz
       - samples.txt
@@ -628,6 +632,7 @@ def simulate_one_window_replicate(
     w_seed = window_seed_from_base(base_seed, rep_index, stride=seed_stride)
 
     window_cfg = dict(cfg)
+    window_cfg["genome_length"] = float(cfg.get("chunk_genome_length", cfg["genome_length"]))
     if w_seed is not None:
         window_cfg["seed"] = w_seed
         print(

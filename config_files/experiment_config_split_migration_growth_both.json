@@ -1,5 +1,6 @@
 {
   "genome_length": 24000000,
+  "chunk_genome_length": 1e7,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
   "demographic_model": "split_migration_growth_both",
@@ -9,10 +10,12 @@
     "FR": 9
   },
   "seed": 42,
-  "num_optimizations": 20,
+  "window_mode": "chunked",
+  "num_windows": 100,
+  "num_optimizations": 100,
   "start_strategy": "lhs",
-  "top_k": 1,
-  "num_draws": 100,
+  "top_k": 5,
+  "num_draws": 5000,
   "priors": {
     "N_ANC": [
       3162,
