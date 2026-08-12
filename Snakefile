@@ -635,11 +635,16 @@ if WINDOW_MODE == "replicates":
                 --out-dir      "{params.out_winDir}"
             """
 else:
+    # Batched: one call loads tree_sequence.trees ONCE and writes every
+    # window for this {sid} in that same pass, instead of one Snakemake job
+    # (and one full tskit.load + keep_intervals scan of the whole ARG) per
+    # window. Requesting any single window_<win>.vcf.gz still triggers this
+    # whole rule, which then produces all of them together.
     rule chunk_window:
         input:
             trees = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
         output:
-            vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
+            vcf_gz = temp(expand(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz", win=WINDOWS, allow_missing=True))
         params:
             out_winDir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
             cfg         = EXP_CFG,
@@ -659,9 +664,10 @@ else:
                 window_size=window_size,
                 num_windows=params.num_windows,
                 recomb_rate=recomb_rate,
-                window_index=int(wildcards.win),
+                window_index=None,  # batch: every window, one tree-sequence load
             )
-            written[0]["trees"].unlink()  # nothing downstream reads the per-window .trees
+            for w in written:
+                w["trees"].unlink()  # nothing downstream reads the per-window .trees
 
 ##############################################################################
 # RULE ld_window – LD statistics for one window
