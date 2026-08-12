@@ -118,9 +118,9 @@ _VARIANT_FLAGS = {
 def _variant_flags(variant):
     return _VARIANT_FLAGS[variant]
 
-# CLI-flag builders shared by random_forest/raw_features_random_forest and
-# xgboost/raw_features_xgboost — same optuna/manual-override knobs regardless
-# of which dataset root the rule reads from.
+# CLI-flag builders for random_forest/xgboost — same optuna/manual-override
+# knobs regardless of which modeling_{variant} the rule instantiates for
+# (including variant="raw_features", see RAW_FEAT_DIR/RAW_MDL_DIR below).
 def _rf_opt_flags():
     return " ".join([
         "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
@@ -206,7 +206,9 @@ REAL_MODEL_OBJS = {
 
 wildcard_constraints:
     chrom      = r"Chr(2L|2R|3L|3R)",
-    variant    = r"(w|wo)_FIM_(w|wo)_SFSresids",
+    # combine_features narrows this back down (raw_features has its own
+    # producer rules, build_raw_features_dataset/prepare_raw_features_splits).
+    variant    = r"(w|wo)_FIM_(w|wo)_SFSresids|raw_features",
     ld_variant = r"by_chrom|genmap",
     reg        = r"standard|ridge|lasso|elasticnet",
     opt        = "|".join(str(i) for i in range(NUM_OPTIMS)),
@@ -386,13 +388,13 @@ rule simulate:
 ##############################################################################
 # RULE infer_moments  – custom NLopt Poisson SFS optimisation (moments)
 ##############################################################################
-rule infer_moments:
+rule infer_engine:
     input:
         sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",   # not read; kept for DAG clarity
+        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",   # not read by moments; kept for DAG clarity
         cfg    = EXP_CFG
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl"
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/{{engine}}/fit_params.pkl"
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -406,47 +408,8 @@ rule infer_moments:
     shell:
         r"""
         set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/moments_dadi_inference.py" \
-          --mode moments \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --ground-truth "{input.params}" \
-          --outdir "{params.run_dir}/inferences" \
-          --opt-seed {wildcards.opt} \
 
-          {params.fix}
-
-        cp "{params.run_dir}/inferences/moments/best_fit.pkl" "{output.pkl}"
-        """
-
-
-##############################################################################
-# RULE infer_dadi – custom NLopt Poisson SFS optimisation (dadi)
-##############################################################################
-rule infer_dadi:
-    input:
-        sfs    = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",
-        cfg    = EXP_CFG,
-    output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl"
-    params:
-        run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
-        cfg      = EXP_CFG,
-        model_py = (
-            f"src.simulation:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "src.simulation:drosophila_three_epoch"
-        ),
-        fix      = "",
-    threads: 8
-    shell:
-        r"""
-        set -euo pipefail
-
-        echo "===== infer_dadi ENV ====="
+        echo "===== infer_{wildcards.engine} ENV ====="
         echo "sid={wildcards.sid} opt={wildcards.opt}"
         echo "SLURM_JOB_ID=${{SLURM_JOB_ID:-unset}} SLURM_ARRAY_TASK_ID=${{SLURM_ARRAY_TASK_ID:-unset}}"
         echo "CUDA_VISIBLE_DEVICES=${{CUDA_VISIBLE_DEVICES:-unset}}"
@@ -460,95 +423,59 @@ rule infer_dadi:
         export MKL_NUM_THREADS={threads}
 
         # Ensure output dirs exist
-        mkdir -p "{params.run_dir}/inferences/dadi"
+        mkdir -p "{params.run_dir}/inferences/{wildcards.engine}"
 
         PYTHONPATH={workflow.basedir} \
         python "snakemake_scripts/moments_dadi_inference.py" \
-          --mode dadi \
+          --mode {wildcards.engine} \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
           --ground-truth "{input.params}" \
+          --outdir "{params.run_dir}/inferences" \
           --opt-seed {wildcards.opt} \
           {params.fix}
 
-        cp "{params.run_dir}/inferences/dadi/best_fit.pkl" "{output.pkl}"
+        cp "{params.run_dir}/inferences/{wildcards.engine}/best_fit.pkl" "{output.pkl}"
         """
 
-# ── MOMENTS ONLY ───────────────────────────────────────────────────────────
-rule aggregate_opts_moments:
+# ── MOMENTS / DADI (sim) ────────────────────────────────────────────────────
+rule aggregate_opts_engine:
     input:
         cfg = EXP_CFG,
         opts = lambda w: expand(
-            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/moments/fit_params.pkl",
+            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/{w.engine}/fit_params.pkl",
             opt=OPTIMS,
         ),
     output:
-        mom = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+        pkl = f"experiments/{MODEL}/inferences/sim_{{sid}}/{{engine}}/fit_params.pkl"
     run:
         import pickle, pathlib
         from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
 
         sid = wildcards.sid
+        engine = wildcards.engine
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
         records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/moments/fit_params.pkl",
-            rf"/run_{sid}_(\d+)/inferences/moments/fit_params\.pkl$",
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{engine}/fit_params.pkl",
+            rf"/run_{sid}_(\d+)/inferences/{engine}/fit_params\.pkl$",
         )
 
         best, diag = aggregate_top_k(
             records, TOP_K, min_nonempty=MIN_FILES,
-            err_label="aggregate_opts_moments", err_engine="moments", err_context=f"for sid={sid}",
+            err_label=f"aggregate_opts_{engine}", err_engine=engine, err_context=f"for sid={sid}",
         )
         best["n_files_found"] = diag["n_records"]
         best["n_nonempty"]    = diag["n_nonempty"]
         best["min_required"]  = int(TOP_K)
 
-        pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.mom, "wb") as fh:
+        pathlib.Path(output.pkl).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.pkl, "wb") as fh:
             pickle.dump(best, fh)
 
-        print(f"✅ moments: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.mom}")
-        print(f"✅ moments: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
-
-# ── DADI ONLY ──────────────────────────────────────────────────────────────
-rule aggregate_opts_dadi:
-    input:
-        cfg = EXP_CFG,
-        opts = lambda w: expand(
-            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/dadi/fit_params.pkl",
-            opt=OPTIMS,
-        ),
-    output:
-        dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
-    run:
-        import pickle, pathlib
-        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
-
-        sid = wildcards.sid
-        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
-
-        records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/dadi/fit_params.pkl",
-            rf"/run_{sid}_(\d+)/inferences/dadi/fit_params\.pkl$",
-        )
-
-        best, diag = aggregate_top_k(
-            records, TOP_K, min_nonempty=MIN_FILES,
-            err_label="aggregate_opts_dadi", err_engine="dadi", err_context=f"for sid={sid}",
-        )
-        best["n_files_found"] = diag["n_records"]
-        best["n_nonempty"]    = diag["n_nonempty"]
-        best["min_required"]  = int(TOP_K)
-
-        pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.dadi, "wb") as fh:
-            pickle.dump(best, fh)
-
-        print(f"✅ dadi: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.dadi}")
-        print(f"✅ dadi: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
+        print(f"✅ {engine}: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.pkl}")
+        print(f"✅ {engine}: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 # ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
 rule cleanup_optimization_runs:
@@ -1152,6 +1079,8 @@ rule combine_results:
 rule combine_features:
     input:
         cfg  = EXP_CFG
+    wildcard_constraints:
+        variant = r"(w|wo)_FIM_(w|wo)_SFSresids"
     output:
         # full post-filtering data
         features_df   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/features_df.pkl",
@@ -1497,13 +1426,13 @@ rule all_unfolded_sfs:
 
 
 ##############################################################################
-# REAL DATA – NLopt Poisson SFS optimisation (moments)
+# REAL DATA – NLopt Poisson SFS optimisation (moments / dadi)
 ##############################################################################
-rule infer_moments_real:
+rule infer_engine_real:
     input:
         sfs = COMBINED_SFS,
     output:
-        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/moments/best_fit.pkl")
+        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl")
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
@@ -1518,7 +1447,7 @@ rule infer_moments_real:
         set -euo pipefail
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/moments_dadi_inference_real.py \
-          --mode moments \
+          --mode {wildcards.engine} \
           --sfs-file "{input.sfs}" \
           --config "{params.cfg}" \
           --model-py "{params.model_py}" \
@@ -1527,85 +1456,29 @@ rule infer_moments_real:
           -v
         """
 
-
-
-##############################################################################
-# REAL DATA – NLopt Poisson SFS optimisation (dadi)
-##############################################################################
-rule infer_dadi_real:
+# ── REAL DATA: MOMENTS / DADI ───────────────────────────────────────────────
+rule aggregate_opts_engine_real:
     input:
-        sfs = COMBINED_SFS,
+        runs = lambda w: [f"{REAL_RUN_ROOT}/run_{o}/inferences/{w.engine}/best_fit.pkl"
+                          for o in range(NUM_REAL_OPTIMS)]
     output:
-        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/dadi/best_fit.pkl")
-    params:
-        run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
-        cfg      = EXP_CFG,
-        model_py = (
-            f"demes_models:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "demes_models:drosophila_three_epoch"
-        ),
-    threads: 2
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/moments_dadi_inference_real.py \
-          --mode dadi \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
-          --opt-seed {wildcards.opt} \
-          -v
-        """
-
-# ── REAL DATA: MOMENTS ONLY ────────────────────────────────────────────────
-rule aggregate_opts_moments_real:
-    input:
-        mom = [f"{REAL_RUN_ROOT}/run_{o}/inferences/moments/best_fit.pkl" for o in range(NUM_REAL_OPTIMS)]
-    output:
-        mom = f"{REAL_INF_ROOT}/moments/best_fit.pkl"
+        pkl = f"{REAL_INF_ROOT}/{{engine}}/best_fit.pkl"
     run:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
 
-        records = [(p, i) for i, p in enumerate(input.mom)]
+        records = [(p, i) for i, p in enumerate(input.runs)]
 
         best, diag = aggregate_top_k(
             records, REAL_TOP_K,
             extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
         )
-        best = {"mode": "moments", **best}
+        best = {"mode": wildcards.engine, **best}
 
-        pathlib.Path(output.mom).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.mom, "wb"))
+        pathlib.Path(output.pkl).parent.mkdir(parents=True, exist_ok=True)
+        pickle.dump(best, open(output.pkl, "wb"))
 
-        print(f"✅ [REAL] Aggregated {diag['n_entries']} moments optimization results → {output.mom}")
-
-
-# ── REAL DATA: DADI ONLY ───────────────────────────────────────────────────
-rule aggregate_opts_dadi_real:
-    input:
-        dadi = [f"{REAL_RUN_ROOT}/run_{o}/inferences/dadi/best_fit.pkl" for o in range(NUM_REAL_OPTIMS)]
-    output:
-        dadi = f"{REAL_INF_ROOT}/dadi/best_fit.pkl"
-    run:
-        import pickle, pathlib
-        from src.aggregate_utils import aggregate_top_k
-
-        records = [(p, i) for i, p in enumerate(input.dadi)]
-
-        best, diag = aggregate_top_k(
-            records, REAL_TOP_K,
-            extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
-        )
-        best = {"mode": "dadi", **best}
-
-        pathlib.Path(output.dadi).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.dadi, "wb"))
-
-        print(f"✅ [REAL] Aggregated {diag['n_entries']} dadi optimization results → {output.dadi}")
+        print(f"✅ [REAL] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
 
 
 ##############################################################################
@@ -2089,12 +1962,17 @@ rule predict_real_data:
         """
 
 ##############################################################################
-# RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble         #
-# Not in rule all. Run explicitly, e.g.:                                    #
-#   snakemake --snakefile Snakefile raw_features_xgboost                   #
+# RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble          #
+# Not in rule all. Not built via combine_features/prepare_sfs_splits (see   #
+# their variant wildcard_constraints) — build_raw_features_dataset and      #
+# prepare_raw_features_splits below produce this variant's dataset files    #
+# directly, but from there it's just modeling_{variant} with               #
+# variant="raw_features", so the same linear_regression/random_forest/      #
+# xgboost rules train it. Run explicitly, e.g.:                             #
+#   snakemake --snakefile Snakefile "experiments/<model>/modeling_raw_features/xgboost/xgb_mdl_obj.pkl"
 ##############################################################################
-RAW_FEAT_DIR = f"experiments/{MODEL}/modeling/raw_features_datasets"
-RAW_MDL_DIR  = f"experiments/{MODEL}/modeling/raw_features_modeling"
+RAW_FEAT_DIR = f"experiments/{MODEL}/modeling_raw_features/datasets"
+RAW_MDL_DIR  = f"experiments/{MODEL}/modeling_raw_features"
 
 rule build_raw_features_dataset:
     input:
@@ -2152,137 +2030,7 @@ rule prepare_raw_features_splits:
             --split-indices "{input.split_idx}"
         """
 
-rule raw_features_linear_regression:
-    input:
-        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
-        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
-        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
-        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
-        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
-        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
-        shades   = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        colors   = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        mdlcfg   = "config_files/model_config.yaml",
-    output:
-        obj   = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
-        errjs = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_model_error_{{reg}}.json",
-        mdl   = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
-        plot  = f"{RAW_MDL_DIR}/linear_{{reg}}/linear_results_{{reg}}.png",
-    params:
-        expcfg    = EXP_CFG,
-        model_dir = f"{RAW_MDL_DIR}/linear_{{reg}}",
-        alpha     = lambda w: config["linear"].get(w.reg, {}).get("alpha", 0.0),
-        l1_ratio  = lambda w: config["linear"].get(w.reg, {}).get("l1_ratio", 0.5),
-        gridflag  = lambda w: "--do_grid_search" if config["linear"].get(w.reg, {}).get("grid_search", False) else "",
-    threads: 2
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/linear_evaluation.py \
-            --X_train_path "{input.ntrain_X}" \
-            --y_train_path "{input.ntrain_y}" \
-            --X_tune_path  "{input.ntune_X}" \
-            --y_tune_path  "{input.ntune_y}" \
-            --X_val_path   "{input.nval_X}" \
-            --y_val_path   "{input.nval_y}" \
-            --experiment_config_path "{params.expcfg}" \
-            --model_config_path      "{input.mdlcfg}" \
-            --color_shades_file      "{input.shades}" \
-            --main_colors_file       "{input.colors}" \
-            --model_directory        "{params.model_dir}" \
-            --regression_type "{wildcards.reg}" \
-            --alpha {params.alpha} \
-            --l1_ratio {params.l1_ratio} {params.gridflag}
-        """
-
-rule raw_features_random_forest:
-    input:
-        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
-        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
-        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
-        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
-        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
-        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
-        shades   = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        colors   = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        expcfg   = EXP_CFG,
-        mdlcfg   = "config_files/model_config.yaml",
-    output:
-        obj   = f"{RAW_MDL_DIR}/random_forest/random_forest_mdl_obj.pkl",
-        errjs = f"{RAW_MDL_DIR}/random_forest/random_forest_model_error.json",
-        mdl   = f"{RAW_MDL_DIR}/random_forest/random_forest_model.pkl",
-        plot  = f"{RAW_MDL_DIR}/random_forest/random_forest_results.png",
-        fi    = f"{RAW_MDL_DIR}/random_forest/random_forest_feature_importances.png",
-    params:
-        model_dir = f"{RAW_MDL_DIR}/random_forest",
-        opt_flags = lambda w: _rf_opt_flags(),
-    threads: 8
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/random_forest.py \
-            --X_train_path "{input.ntrain_X}" \
-            --y_train_path "{input.ntrain_y}" \
-            --X_tune_path  "{input.ntune_X}" \
-            --y_tune_path  "{input.ntune_y}" \
-            --X_val_path   "{input.nval_X}" \
-            --y_val_path   "{input.nval_y}" \
-            --experiment_config_path "{input.expcfg}" \
-            --model_config_path      "{input.mdlcfg}" \
-            --color_shades_file      "{input.shades}" \
-            --main_colors_file       "{input.colors}" \
-            --model_directory        "{params.model_dir}" \
-            {params.opt_flags}
-        """
-
-rule raw_features_xgboost:
-    input:
-        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
-        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
-        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
-        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
-        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
-        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
-        shades   = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        colors   = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        expcfg   = EXP_CFG,
-        mdlcfg   = "config_files/model_config.yaml",
-    output:
-        obj   = f"{RAW_MDL_DIR}/xgboost/xgb_mdl_obj.pkl",
-        errjs = f"{RAW_MDL_DIR}/xgboost/xgb_model_error.json",
-        mdl   = f"{RAW_MDL_DIR}/xgboost/xgb_model.pkl",
-        plot  = f"{RAW_MDL_DIR}/xgboost/xgb_results.png",
-        fi    = f"{RAW_MDL_DIR}/xgboost/xgb_feature_importances.png",
-    params:
-        model_dir = f"{RAW_MDL_DIR}/xgboost",
-        opt_flags = lambda w: _xgb_opt_flags(),
-    threads: 4
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/xgboost_evaluation.py \
-            --X_train_path "{input.ntrain_X}" \
-            --y_train_path "{input.ntrain_y}" \
-            --X_tune_path  "{input.ntune_X}" \
-            --y_tune_path  "{input.ntune_y}" \
-            --X_val_path   "{input.nval_X}" \
-            --y_val_path   "{input.nval_y}" \
-            --experiment_config_path "{input.expcfg}" \
-            --model_config_path      "{input.mdlcfg}" \
-            --color_shades_file      "{input.shades}" \
-            --main_colors_file       "{input.colors}" \
-            --model_directory        "{params.model_dir}" \
-            {params.opt_flags}
-        """
-
-##############################################################################
-# Wildcard Constraints                                                      #
-##############################################################################
-wildcard_constraints:
-    opt       = "|".join(str(i) for i in range(NUM_OPTIMS)),
-    engine    = "moments|dadi",
-    frac_tag  = r"thin\d+",
-    model_key = "|".join(REAL_MODEL_OBJS.keys()),
+# raw_features model training is handled by the generic linear_regression /
+# random_forest / xgboost rules above with variant="raw_features" — no
+# separate rules needed now that RAW_MDL_DIR follows the modeling_{variant}
+# convention.
