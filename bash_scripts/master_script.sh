@@ -52,22 +52,28 @@ export BATCH_SIZE=1
 sim_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
   bash_scripts/running_simulation.sh); [[ -n "$sim_id" ]]
 
-# --- 2. build LD windows ---
+# --- 2. materialize per-sim whole-genome VCFs (window_mode="chunked" only;
+#         materialize_windows.sh no-ops immediately otherwise) ---
+export BATCH_SIZE=1
+mat_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
+  $(dep_afterany "$sim_id") bash_scripts/materialize_windows.sh); [[ -n "$mat_id" ]]
+
+# --- 3. build LD windows ---
 export BATCH_SIZE=50
 win_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZE" 200)" \
-  $(dep_afterany "$sim_id") bash_scripts/build_windows.sh); [[ -n "$win_id" ]]
+  $(dep_afterany "$mat_id") bash_scripts/build_windows.sh); [[ -n "$win_id" ]]
 
-# --- 3. LD stats ---
+# --- 4. LD stats ---
 export BATCH_SIZE=50
 ld_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZE")" \
   $(dep_afterany "$win_id") bash_scripts/LD_stats_windows.sh); [[ -n "$ld_id" ]]
 
-# --- 4. Moments-LD optimization ---
+# --- 5. Moments-LD optimization ---
 export BATCH_SIZE=1
 momLD_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
   $(dep_afterany "$ld_id") bash_scripts/MomentsLD.sh); [[ -n "$momLD_id" ]]
 
-# --- 5/6. moments + dadi SFS inference ---
+# --- 6/7. moments + dadi SFS inference ---
 export BATCH_SIZE=50
 if [[ "$RUN_MOMENTS_DADI_MODE" == "parallel" ]]; then
   mom_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_OPTIMS ))" "$BATCH_SIZE" 100)" \
@@ -81,17 +87,17 @@ else
     $(dep_afterany "$mom_id") bash_scripts/dadi.sh); [[ -n "$dadi_id" ]]
 fi
 
-# --- 7. aggregate moments+dadi top-K, cleanup ---
+# --- 8. aggregate moments+dadi top-K, cleanup ---
 export BATCH_SIZE=1
 agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
   --dependency=afterany:$mom_id:$dadi_id bash_scripts/aggregate_moments_dadi.sh); [[ -n "$agg_id" ]]
 
-# --- 8. combine_results ---
+# --- 9. combine_results ---
 export BATCH_SIZE=1
 comb_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
   --dependency=afterany:$momLD_id:$agg_id bash_scripts/run_combine.sh); [[ -n "$comb_id" ]]
 
-# --- 9. build modeling dataset (single job, no array) ---
+# --- 10. build modeling dataset (single job, no array) ---
 feat_id=$(submit --dependency=afterany:$comb_id bash_scripts/aggregate_features.sh); [[ -n "$feat_id" ]]
 
 echo "Final job ID (aggregate_features): $feat_id"
