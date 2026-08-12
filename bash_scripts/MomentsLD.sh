@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=opt_momLD
-#SBATCH --array=0-4999                # <— full range, no %MAX_CONCURRENT
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=5:00:00
@@ -17,7 +16,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # 0. batching parameters ----------------------------------------------------
 # ---------------------------------------------------------------------------
-BATCH_SIZE=1
+# Overridable so master_script.sh can export the exact value it used to size
+# the --array range it submits this script with.
+BATCH_SIZE="${BATCH_SIZE:-1}"
 
 # ---------------------------------------------------------------------------
 # 1. paths & config ---------------------------------------------------------

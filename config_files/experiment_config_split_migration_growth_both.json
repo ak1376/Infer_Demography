@@ -126,6 +126,7 @@
   "profile_make_plots": true,
   "profile_theta": true,
   "start_jitter_sigma": 0.05,
+  "optimizer_algorithm": "LD_LBFGS",
   "prune_keep_fractions": [
     0.15
   ]

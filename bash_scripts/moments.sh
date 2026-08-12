@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=moments_infer
-#SBATCH --array=0-9999
 #SBATCH --output=logs/moments_%A_%a.out
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=15:00:00
@@ -16,7 +15,9 @@
 set -euo pipefail
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=50   # number of (sim,opt) pairs per array element
+# Overridable so master_script.sh can export the exact value it used to size
+# the --array range it submits this script with.
+BATCH_SIZE="${BATCH_SIZE:-50}"   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"

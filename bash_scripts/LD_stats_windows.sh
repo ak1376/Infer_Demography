@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=ld_stats
-#SBATCH --array=0-9999
 #SBATCH --output=logs/ld_%A_%a.out
 #SBATCH --error=logs/ld_%A_%a.err
 #SBATCH --time=16:00:00
@@ -34,7 +33,9 @@ export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
 mkdir -p "$CUPY_CACHE_DIR"
 
 # -------- batching knobs ---------------------------------------------------
-BATCH_SIZE=50
+# Overridable so master_script.sh can export the exact value it used to size
+# the --array range it submits this script with.
+BATCH_SIZE="${BATCH_SIZE:-50}"
 # ----------------------------------------------------------------------------
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
@@ -47,6 +48,18 @@ NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
 MODEL=$(jq -r    '.demographic_model'   "$CFG")
 NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG")
 
+TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
+
+# First launch (no array id yet): compute the correct --array range from
+# num_draws/num_windows and resubmit as an array, instead of a fixed huge
+# range regardless of what the active config actually needs.
+if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
+    echo "Submitting array 0..${NUM_ARRAY}"
+    sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
+    exit 0
+fi
+
 # Pruning keep-fractions from config (empty => pruning disabled). We only need
 # the fraction values here; r_bins / keep_frac live in the Snakefile rules that
 # the Snakemake targets below invoke, so nothing about LD binning is hardcoded.
@@ -55,8 +68,6 @@ PRUNING_ENABLED=$(( ${#PRUNE_FRACS[@]} > 0 ))
 
 # thin<NN> tag for a keep-fraction, matching src.prune_vcf._frac_tag: round(f*100), 2-digit
 frac_tag() { printf "thin%02d" "$(awk "BEGIN{printf \"%.0f\", $1 * 100}")"; }
-
-TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
 
 START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
 END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))

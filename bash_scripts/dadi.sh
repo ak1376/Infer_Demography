@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=dadi_infer_cpu
-#SBATCH --array=0-9999
 #SBATCH --output=logs/dadi_cpu_%A_%a.out
 #SBATCH --error=logs/dadi_cpu_%A_%a.err
 #SBATCH --time=15:00:00
@@ -15,7 +14,9 @@
 
 set -euo pipefail
 
-BATCH_SIZE=50
+# Overridable so master_script.sh can export the exact value it used to size
+# the --array range it submits this script with.
+BATCH_SIZE="${BATCH_SIZE:-50}"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 SNAKEFILE="$ROOT/Snakefile"

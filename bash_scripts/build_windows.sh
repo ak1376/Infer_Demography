@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=build_win
-#SBATCH --array=0-9999
 #SBATCH --output=logs/build_win_%A_%a.out
 #SBATCH --error=logs/build_win_%A_%a.err
 #SBATCH --time=12:00:00
@@ -26,7 +25,7 @@ NUM_DRAWS=$(jq -r '.num_draws' "$CFG")
 MODEL=$(jq -r '.demographic_model' "$CFG")
 WINDOW_MODE=$(jq -r '.window_mode // "replicates"' "$CFG")
 
-NUM_WINDOWS="${NUM_WINDOWS:-100}"
+NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG")
 BATCH_SIZE="${BATCH_SIZE:-50}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-200}"
 

@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=sim_job_array                # Job name
-#SBATCH --array=0-4999                            # Array range (adjust based on the number of tasks and batch size)
 #SBATCH --output=logs/simulation_%A_%a.out      # Standard output log file (%A is job ID, %a is the array index)
 #SBATCH --error=logs/simulation_%A_%a.err       # Standard error log file
 #SBATCH --time=6:00:00                          # Time limit
@@ -13,14 +12,29 @@
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
 
-# Define batch size and total number of tasks
-BATCH_SIZE=1
-TOTAL_TASKS=5000
+# Batch size per array task; total task count comes from the active
+# experiment config's num_draws (NOT hardcoded) via lib_active_config.sh.
+# Overridable so master_script.sh can export the exact value it used to
+# size the --array range it submits this script with.
+BATCH_SIZE="${BATCH_SIZE:-1}"
 
 ROOT="/projects/kernlab/akapoor/Infer_Demography"
 source "$ROOT/bash_scripts/lib_active_config.sh"
 CFG_PATH="$(resolve_cfg_path "$ROOT")"
 EXPERIMENT_CONFIG_FILE="$CFG_PATH"
+
+TOTAL_TASKS=$(jq -r '.num_draws' "$EXPERIMENT_CONFIG_FILE")
+
+# First launch (no array id yet): compute the correct --array range from
+# num_draws and resubmit as an array, instead of ever requesting a fixed
+# huge array regardless of what the active config actually needs — that
+# mismatch (0-4999 vs. num_draws=10) is what trips QOSMaxSubmitJobPerUserLimit.
+if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
+    echo "Submitting array 0..${NUM_ARRAY} (num_draws=${TOTAL_TASKS} from ${EXPERIMENT_CONFIG_FILE})"
+    sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
+    exit 0
+fi
 
 # Extract the values from the JSON config
 DEMOGRAPHIC_MODEL=$(jq -r '.demographic_model' $EXPERIMENT_CONFIG_FILE)
