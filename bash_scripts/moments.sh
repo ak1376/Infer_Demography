@@ -20,7 +20,7 @@ set -euo pipefail
 BATCH_SIZE="${BATCH_SIZE:-50}"   # number of (sim,opt) pairs per array element
 # ----------------------------------------------------------------------------
 
-ROOT="/projects/kernlab/akapoor/Infer_Demography"
+ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 SNAKEFILE="$ROOT/Snakefile"
 
 source "$ROOT/bash_scripts/lib_active_config.sh"

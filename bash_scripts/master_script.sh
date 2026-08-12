@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO="/projects/kernlab/akapoor/Infer_Demography"
+REPO="${REPO:-/projects/kernlab/akapoor/Infer_Demography}"
 mkdir -p "$REPO/logs"
 cd "$REPO"
 

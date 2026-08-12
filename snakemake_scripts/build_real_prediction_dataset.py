@@ -7,8 +7,9 @@
 #
 # The column convention mirrors src/feature_extraction_helpers.build_feature_target_tables:
 #   dadi_{param}_rep_{i}, moments_{param}_rep_{i}, momentsLD_{param}_rep_{i}
-# (real-data MomentsLD only ever has one restart, so momentsLD's rep index is
-# always 0 here, but training may have up to top_k reps.)
+# All three tools' best_fit.pkl share the same aggregate_opts_* schema
+# (best_params/best_ll/opt_index, top-K by log-likelihood), so they're all
+# consumed uniformly via fx.param_dicts() below.
 # Values are z-score normalized by the uniform-prior stats (same as training).
 
 from __future__ import annotations
@@ -43,24 +44,6 @@ def _load_pickle(path: Path):
         return pickle.load(fh)
 
 
-def _momentsld_param_dict(ld_blob: dict) -> dict | None:
-    """
-    Real MomentsLD best_fit stores its physical estimate under
-    best_params_abs + param_order (best_params is often None).
-    Return a {param: value} dict, or None if unavailable.
-    """
-    if not isinstance(ld_blob, dict):
-        return None
-    bp = ld_blob.get("best_params")
-    if isinstance(bp, dict) and bp:
-        return bp
-    absd = ld_blob.get("best_params_abs")
-    if isinstance(absd, dict) and absd:
-        order = ld_blob.get("param_order") or list(absd.keys())
-        return {p: absd[p] for p in order if p in absd}
-    return None
-
-
 def main() -> None:
     args = _parse_args()
 
@@ -86,9 +69,7 @@ def main() -> None:
     if dadi_path.exists():
         data["dadi"] = _load_pickle(dadi_path)
     if ld_path.exists():
-        ld_bp = _momentsld_param_dict(_load_pickle(ld_path))
-        if ld_bp is not None:
-            data["momentsLD"] = {"best_params": ld_bp}
+        data["momentsLD"] = _load_pickle(ld_path)
 
     # ---- build the single feature row (same logic as training) -----------
     row: dict[str, float] = {}

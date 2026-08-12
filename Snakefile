@@ -517,6 +517,10 @@ rule aggregate_opts_moments:
 rule aggregate_opts_dadi:
     input:
         cfg = EXP_CFG,
+        opts = lambda w: expand(
+            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/dadi/fit_params.pkl",
+            opt=OPTIMS,
+        ),
     output:
         dadi = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl"
     run:
@@ -1905,23 +1909,21 @@ rule aggregate_opts_momentsld_real:
     output:
         best = f"{REAL_LD_ROOT}/best_fit.pkl",
     run:
-        import pickle, numpy as np, pathlib
+        import pickle, pathlib
+        from src.aggregate_utils import aggregate_top_k
 
-        records = []
-        for opt_idx, pkl in enumerate(input.runs):
-            d = pickle.load(open(pkl, "rb"))
-            records.append((float(d["best_ll"]), opt_idx, d))
+        records = [(p, i) for i, p in enumerate(input.runs)]
 
-        records.sort(key=lambda t: t[0], reverse=True)
-        best_ll, best_opt, best_d = records[0]
-
-        out = dict(best_d)
-        out["opt_index"] = best_opt
+        # No theta_hat/N_ANC_implied_from_theta here (unlike moments/dadi real):
+        # MomentsLD has no direct access to theta, so there's no absolute-scale
+        # implication to carry through.
+        best, diag = aggregate_top_k(records, REAL_TOP_K)
+        best = {"mode": "momentsLD", **best}
 
         pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(out, open(output.best, "wb"))
+        pickle.dump(best, open(output.best, "wb"))
 
-        print(f"✅ [REAL MomentsLD] Best run: opt={best_opt}  ll={best_ll:.6f}  → {output.best}")
+        print(f"✅ [REAL] Aggregated {diag['n_entries']} MomentsLD optimization results → {output.best}")
 
 
 ##############################################################################

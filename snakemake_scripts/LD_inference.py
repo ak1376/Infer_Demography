@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-# Project root: /gpfs/projects/kernlab/akapoor/Infer_Demography
+# Project root, resolved relative to this file (not hardcoded)
 ROOT = Path(__file__).resolve().parents[1]
 
 # IMPORTANT: add the *project root* to sys.path, NOT src/

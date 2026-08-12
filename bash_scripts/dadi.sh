@@ -18,7 +18,7 @@ set -euo pipefail
 # the --array range it submits this script with.
 BATCH_SIZE="${BATCH_SIZE:-50}"
 
-ROOT="/projects/kernlab/akapoor/Infer_Demography"
+ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 SNAKEFILE="$ROOT/Snakefile"
 
 source "$ROOT/bash_scripts/lib_active_config.sh"

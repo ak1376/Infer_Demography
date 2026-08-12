@@ -456,7 +456,12 @@ def main() -> None:
             "fixed_N_ref": float(N_ref),
             "use_scaled_units": use_scaled_units,
             "best_params_optimizer_space": best_dict,
-            "best_params_abs": best_abs,
+            # Standardized key name — matches sim-side MomentsLD
+            # (src/MomentsLD_inference.py) and the real moments/dadi writers
+            # (src/moments_inference_real.py, src/dadi_inference_real.py),
+            # so aggregate_opts_momentsld_real can use the shared
+            # src.aggregate_utils.aggregate_top_k like its siblings.
+            "best_params": best_abs,
             "param_order": param_names,
             "normalization": int(args.normalization),
             "r_bins": np.asarray(r_bins, dtype=float),

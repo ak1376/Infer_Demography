@@ -25,7 +25,7 @@ DRYRUN="${DRYRUN:-0}"              # 1 => add -n to snakemake (no execution)
 # -----------------------------
 # Paths & config
 # -----------------------------
-ROOT="/projects/kernlab/akapoor/Infer_Demography"
+ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"

@@ -18,7 +18,7 @@
 # size the --array range it submits this script with.
 BATCH_SIZE="${BATCH_SIZE:-1}"
 
-ROOT="/projects/kernlab/akapoor/Infer_Demography"
+ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib_active_config.sh"
 CFG_PATH="$(resolve_cfg_path "$ROOT")"
 EXPERIMENT_CONFIG_FILE="$CFG_PATH"
