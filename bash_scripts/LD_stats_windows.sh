@@ -12,25 +12,12 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
+# NOTE: partition/gres above are only the defaults for a bare `sbatch` call.
+# The self-resubmission below overrides both based on the active config's
+# use_gpu_ld — flip that one key to switch between GPU and CPU-only nodes,
+# no need to edit this file.
 
 set -eo pipefail
-# --gres=gpu:1
-# --- Make modules available (Talapas-style) ---
-module --ignore_cache purge || true
-
-# pg_gpu requires CUDA 12 (cupy>=13, cuda-version=12.*)
-module --ignore_cache load cuda/12.4.1
-
-# --- Conda env ---
-source ~/miniforge3/etc/profile.d/conda.sh
-conda activate snakemake-env
-
-# Ensure conda libs (incl nvrtc) are visible at runtime
-export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-
-# Optional but helpful (avoid hammering $HOME with JIT cache)
-export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
-mkdir -p "$CUPY_CACHE_DIR"
 
 # -------- batching knobs ---------------------------------------------------
 # Overridable so master_script.sh can export the exact value it used to size
@@ -47,17 +34,47 @@ SNAKEFILE="$ROOT/Snakefile"
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
 MODEL=$(jq -r    '.demographic_model'   "$CFG")
 NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG")
+USE_GPU_LD=$(jq -r '.use_gpu_ld // false' "$CFG")
 
 TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
 
 # First launch (no array id yet): compute the correct --array range from
 # num_draws/num_windows and resubmit as an array, instead of a fixed huge
-# range regardless of what the active config actually needs.
+# range regardless of what the active config actually needs. Also picks the
+# partition/gres here, driven by use_gpu_ld, since #SBATCH directives in the
+# file itself can't be conditional — sbatch flags on this resubmission
+# override them.
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
-    echo "Submitting array 0..${NUM_ARRAY}"
-    sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
+    if [[ "$USE_GPU_LD" == "true" ]]; then
+        echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=true -> GPU partition)"
+        sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
+    else
+        echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=false -> CPU-only partition)"
+        sbatch --array=0-"$NUM_ARRAY" --partition=kern,preempt --gres=gpu:0 "$0" "$@"
+    fi
     exit 0
+fi
+
+# --- Make modules available (Talapas-style) ---
+module --ignore_cache purge || true
+
+if [[ "$USE_GPU_LD" == "true" ]]; then
+    # pg_gpu requires CUDA 12 (cupy>=13, cuda-version=12.*)
+    module --ignore_cache load cuda/12.4.1
+fi
+
+# --- Conda env ---
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate snakemake-env
+
+if [[ "$USE_GPU_LD" == "true" ]]; then
+    # Ensure conda libs (incl nvrtc) are visible at runtime
+    export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+
+    # Optional but helpful (avoid hammering $HOME with JIT cache)
+    export CUPY_CACHE_DIR="/tmp/${USER}/cupy_cache_${SLURM_JOB_ID}"
+    mkdir -p "$CUPY_CACHE_DIR"
 fi
 
 # Pruning keep-fractions from config (empty => pruning disabled). We only need
@@ -80,8 +97,10 @@ if (( PRUNING_ENABLED )); then
 else
     echo "Pruning DISABLED — computing UNPRUNED LD stats only."
 fi
-echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
-python -c "import cupy; from cupy_backends.cuda.libs import nvrtc; print('NVRTC', nvrtc.getVersion())" || true
+if [[ "$USE_GPU_LD" == "true" ]]; then
+    echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+    python -c "import cupy; from cupy_backends.cuda.libs import nvrtc; print('NVRTC', nvrtc.getVersion())" || true
+fi
 
 # Run one Snakemake target (LD-stat pkl). Returns snakemake's exit status.
 run_target() {
