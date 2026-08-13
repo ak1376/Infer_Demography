@@ -648,8 +648,14 @@ else:
         input:
             trees = f"{SIM_BASEDIR}/{{sid}}/tree_sequence.trees",
         output:
-            vcf_gz  = temp(f"{LD_ROOT}/windows/full_genome.vcf.gz"),
-            vcf_tbi = temp(f"{LD_ROOT}/windows/full_genome.vcf.gz.tbi"),
+            # Not temp(): chunk_window's --allowed-rules restriction (see
+            # build_windows.sh) means it can't rebuild these if a later
+            # retry/rerun of any single window needs them again after
+            # Snakemake's temp-cleanup removed them -- MissingInputException,
+            # stuck. One whole-genome VCF kept per simulation is cheap
+            # relative to everything else in this pipeline.
+            vcf_gz  = f"{LD_ROOT}/windows/full_genome.vcf.gz",
+            vcf_tbi = f"{LD_ROOT}/windows/full_genome.vcf.gz.tbi",
             samples = f"{LD_ROOT}/windows/samples.txt",
         params:
             out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
