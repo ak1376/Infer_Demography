@@ -60,7 +60,12 @@ mat_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
 
 # --- 3. build LD windows ---
 export BATCH_SIZE=50
-win_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZE" 200)" \
+# Overridable: tune concurrency to your account's actual QOS/TRES headroom
+# (check with `sacctmgr show qos format=Name,MaxJobsPU,MaxSubmitPU,MaxTRESPU`
+# for the QOS your kern/preempt/kerngpu partitions resolve to) rather than
+# editing this literal each time.
+MAX_CONCURRENT_WINDOWS="${MAX_CONCURRENT_WINDOWS:-1500}"
+win_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZE" "$MAX_CONCURRENT_WINDOWS")" \
   $(dep_afterany "$mat_id") bash_scripts/build_windows.sh); [[ -n "$win_id" ]]
 
 # --- 4. LD stats ---
