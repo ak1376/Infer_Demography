@@ -241,12 +241,12 @@ rule all:
 
             ## ── 2. PER-RUN SFS INFERENCE (sim) ──────────────────────────────────
             expand(
-                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/fit_params.pkl",
+                f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/moments/best_fit.pkl",
                 sid=SIM_IDS,
                 opt=OPTIMS,
             ),
             # expand(
-            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/fit_params.pkl",
+            #     f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/dadi/best_fit.pkl",
             #     sid=SIM_IDS,
             #     opt=OPTIMS,
             # ),
@@ -394,7 +394,7 @@ rule infer_engine:
         params = f"{SIM_BASEDIR}/{{sid}}/sampled_params.pkl",   # not read by moments; kept for DAG clarity
         cfg    = EXP_CFG
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/{{engine}}/fit_params.pkl"
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/{{engine}}/best_fit.pkl"
     params:
         run_dir  = lambda w: RUN_DIR(w.sid, w.opt),
         cfg      = EXP_CFG,
@@ -443,8 +443,6 @@ rule infer_engine:
           --outdir "{params.run_dir}/inferences" \
           --opt-seed {wildcards.opt} \
           {params.fix}
-
-        cp "{params.run_dir}/inferences/{wildcards.engine}/best_fit.pkl" "{output.pkl}"
         """
 
 # ── MOMENTS / DADI (sim) ────────────────────────────────────────────────────
@@ -467,8 +465,8 @@ rule aggregate_opts_engine:
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
         records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{engine}/fit_params.pkl",
-            rf"/run_{sid}_(\d+)/inferences/{engine}/fit_params\.pkl$",
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{engine}/best_fit.pkl",
+            rf"/run_{sid}_(\d+)/inferences/{engine}/best_fit\.pkl$",
         )
 
         best, diag = aggregate_top_k(

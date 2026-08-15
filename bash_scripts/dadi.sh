@@ -106,7 +106,7 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   fi
 
   # ---- what this job will build (per-run output) ----
-  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/fit_params.pkl"
+  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/best_fit.pkl"
   echo "→ build $TARGET"
 
   snakemake \
