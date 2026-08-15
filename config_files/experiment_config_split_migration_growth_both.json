@@ -119,7 +119,6 @@
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [10, 15, 20],
-  "dadi_maxeval": 300,
   "generate_profiles": false,
   "profile_points": 41,
   "profile_widen": 0.5,
@@ -127,6 +126,8 @@
   "profile_theta": true,
   "start_jitter_sigma": 0.05,
   "optimizer_algorithm": "LD_LBFGS",
+  "optimizer_maxeval": 300,
+  "optimizer_maxtime": 600,
   "prune_keep_fractions": [
     0.15
   ]

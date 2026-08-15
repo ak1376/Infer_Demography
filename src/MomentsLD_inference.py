@@ -662,6 +662,8 @@ def optimize_parameters(
     verbose: bool = True,
     fixed_values: Optional[List[Optional[float]]] = None,
     algorithm: int = nlopt.LN_BOBYQA,
+    maxeval: Optional[int] = None,
+    maxtime: Optional[float] = None,
 ):
     """
     Optimize demographic parameters via nlopt (default: derivative-free BOBYQA).
@@ -743,6 +745,12 @@ def optimize_parameters(
     optimizer.set_upper_bounds(free_upper)
     optimizer.set_max_objective(nlopt_objective)
     optimizer.set_ftol_rel(tolerance)
+    if maxeval is not None:
+        optimizer.set_maxeval(int(maxeval))
+    # Wall-clock backstop: bounds runtime regardless of algorithm or how slow
+    # an individual evaluation turns out to be (see moments_inference.py).
+    if maxtime is not None:
+        optimizer.set_maxtime(float(maxtime))
 
     try:
         optimal_free = optimizer.optimize(free_start)
@@ -1079,6 +1087,8 @@ def run_momentsld_inference(
     normalization = config.get("ld_normalization", 0)
     tolerance = config.get("ld_rtol", CONVERGENCE_TOL)
     verbose = config.get("ld_verbose", True)
+    maxeval = int(config.get("optimizer_maxeval", 500))
+    maxtime = config.get("optimizer_maxtime")
 
     # Handle fixed parameters (load moments best if any entry requests it)
     moments_best_params = _load_moments_best_params(config)
@@ -1105,6 +1115,8 @@ def run_momentsld_inference(
         tolerance=tolerance,
         verbose=verbose,
         fixed_values=fixed_values,
+        maxeval=maxeval,
+        maxtime=maxtime,
     )
 
     # Save results

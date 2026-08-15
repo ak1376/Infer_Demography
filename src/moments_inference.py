@@ -172,6 +172,7 @@ def fit_model(
     save_dir: Optional[str | Path] = None,  # <-- NEW: where to put likelihood_plots/
     maxeval: Optional[int] = None,
     xtol_rel: Optional[float] = None,
+    maxtime: Optional[float] = None,
 ) -> Tuple[np.ndarray, float]:
     """
     Returns (fitted_real_params, ll_hat).
@@ -273,8 +274,16 @@ def fit_model(
     # that ftol_rel can fail to trigger for a very long time on some algorithms
     # (e.g. LD_LBFGS), so an explicit cap is needed to guarantee termination.
     if maxeval is None:
-        maxeval = int(experiment_config.get("moments_maxeval", 500))
+        maxeval = int(experiment_config.get("optimizer_maxeval", 500))
     opt.set_maxeval(maxeval)
+    # Wall-clock backstop: some LHS-drawn start points land in numerically stiff
+    # parameter regions (e.g. very large N or T) where individual evaluations
+    # are far slower than typical, which maxeval alone can't bound. set_maxtime
+    # stops the optimizer after this many seconds regardless of eval count.
+    if maxtime is None:
+        maxtime = experiment_config.get("optimizer_maxtime")
+    if maxtime is not None:
+        opt.set_maxtime(float(maxtime))
 
     # ---- run optimization ----
     x0 = np.log10(start_vec)

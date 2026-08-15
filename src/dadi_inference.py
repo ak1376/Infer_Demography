@@ -199,8 +199,14 @@ def fit_model(
         o.set_upper_bounds(np.log10(ub_full))
         o.set_ftol_rel(rtol)
 
-        maxeval = int(experiment_config.get("dadi_maxeval", 500))
+        maxeval = int(experiment_config.get("optimizer_maxeval", 500))
         o.set_maxeval(maxeval)
+
+        # Wall-clock backstop: bounds runtime regardless of algorithm or how
+        # slow an individual evaluation turns out to be (see moments_inference.py).
+        maxtime = experiment_config.get("optimizer_maxtime")
+        if maxtime is not None:
+            o.set_maxtime(float(maxtime))
 
         o.set_max_objective(objective)
         return o
