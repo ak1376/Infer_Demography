@@ -89,6 +89,15 @@ PY
 
 # -------- first launch: compute proper --array range -----------------------
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+  # --rerun-triggers mtime compares timestamps, not content, so a git pull that
+  # touches the config file (e.g. picking up new optimizer settings) makes
+  # Snakemake think every already-completed opt is stale too. Touch existing
+  # per-opt results here (once, before the array is even submitted) so they
+  # read as newer than the config, and only genuinely missing/incomplete opts
+  # get scheduled.
+  echo "Touching existing best_fit.pkl outputs so they aren't seen as stale relative to $CFG"
+  find "$ROOT/experiments/${MODEL}/runs" -name best_fit.pkl -exec touch {} + 2>/dev/null || true
+
   NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
   echo "Submitting array 0..${NUM_ARRAY}"
   sbatch --array=0-"$NUM_ARRAY"%${MAX_CONCURRENT:-100} "$0" "$@"
