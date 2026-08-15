@@ -441,8 +441,7 @@ rule infer_engine:
           --model-py "{params.model_py}" \
           --ground-truth "{input.params}" \
           --outdir "{params.run_dir}/inferences" \
-          --opt-seed {wildcards.opt} \
-          {params.fix}
+          --opt-seed {wildcards.opt} {params.fix}
         """
 
 # ── MOMENTS / DADI (sim) ────────────────────────────────────────────────────
