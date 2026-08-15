@@ -409,6 +409,14 @@ rule infer_engine:
         r"""
         set -euo pipefail
 
+        # Skip already-completed opts even if Snakemake scheduled this job (e.g.
+        # because the config file's mtime changed on a git pull) — don't waste
+        # time/compute re-running an optimization that already finished.
+        if [ -s "{output.pkl}" ]; then
+            echo "SKIP: {output.pkl} already exists and is non-empty"
+            exit 0
+        fi
+
         echo "===== infer_{wildcards.engine} ENV ====="
         echo "sid={wildcards.sid} opt={wildcards.opt}"
         echo "SLURM_JOB_ID=${{SLURM_JOB_ID:-unset}} SLURM_ARRAY_TASK_ID=${{SLURM_ARRAY_TASK_ID:-unset}}"
@@ -443,10 +451,11 @@ rule infer_engine:
 rule aggregate_opts_engine:
     input:
         cfg = EXP_CFG,
-        opts = lambda w: expand(
-            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/{w.engine}/fit_params.pkl",
-            opt=OPTIMS,
-        ),
+        # No hard dependency on the full OPTIMS range here on purpose: aggregation
+        # should work on however many per-opt files currently exist (discovered via
+        # glob in the run: block below), not force every optimization to finish
+        # first. aggregate_moments_dadi.sh's FORCE=1 is what triggers a fresh
+        # aggregation pass once more opts have completed.
     output:
         pkl = f"experiments/{MODEL}/inferences/sim_{{sid}}/{{engine}}/fit_params.pkl"
     run:
