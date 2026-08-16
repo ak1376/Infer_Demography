@@ -112,30 +112,35 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   SID=$(( IDX / NUM_OPTIMS ))
   OPT=$(( IDX % NUM_OPTIMS ))
 
-  # ---- canonical "sim_XX" output we use to decide whether to skip ----
+  # ---- sim-level check: has sim_SID already been fully aggregated? ----
+  # NOTE: this says nothing about whether THIS specific opt is done — it's a
+  # whole-simulation check. It only lets us skip a sim entirely once every
+  # opt in it has finished and been rolled up into the top-k summary.
   CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/moments/fit_params.pkl"
 
   if is_nonempty_canon "$CANON_OUT"; then
-    echo "SKIP: sim_${SID} has NON-EMPTY $CANON_OUT (so skipping SID=$SID OPT=$OPT)"
+    echo "[sim_${SID}] already aggregated ($CANON_OUT) -> skipping all remaining opts for this sim, including OPT=$OPT"
     continue
   else
     if [[ -f "$CANON_OUT" ]]; then
-      echo "RE-RUN: sim_${SID} has EMPTY/UNREADABLE $CANON_OUT (so running SID=$SID OPT=$OPT)"
+      echo "[sim_${SID}] aggregate exists but is empty/unreadable -> still checking individual opts, starting with OPT=$OPT"
     else
-      echo "RUN: sim_${SID} missing $CANON_OUT (so running SID=$SID OPT=$OPT)"
+      echo "[sim_${SID}] not aggregated yet (some opts still missing) -> checking OPT=$OPT individually below"
     fi
   fi
 
-  # ---- what this job will build (per-run output) ----
+  # ---- per-opt check: does THIS specific opt already have a result? ----
   TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/moments/best_fit.pkl"
-  echo "→ build $TARGET"
 
-  # If this specific opt already finished, touch just its output file so
-  # --rerun-triggers mtime doesn't see it as stale relative to the config
-  # (e.g. after a git pull). A single stat+touch here is cheap; scanning the
-  # whole runs/ tree up front is not, at this scale (TOTAL_TASKS can be in the
-  # hundreds of thousands).
-  [[ -s "$ROOT/$TARGET" ]] && touch "$ROOT/$TARGET"
+  if [[ -s "$ROOT/$TARGET" ]]; then
+    # Touch it so --rerun-triggers mtime doesn't see it as stale relative to
+    # the config (e.g. after a git pull) -- Snakemake will then report
+    # "Nothing to be done" for this target instead of recomputing it.
+    touch "$ROOT/$TARGET"
+    echo "  SID=$SID OPT=$OPT: result already exists at $TARGET -> asking Snakemake to confirm it's up to date (should be a no-op)"
+  else
+    echo "  SID=$SID OPT=$OPT: no result yet at $TARGET -> will run the optimization"
+  fi
 
   # ---- inputs (optional but you already had these checks) ----
   SFS="$ROOT/experiments/${MODEL}/simulations/${SID}/SFS.pkl"
