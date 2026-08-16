@@ -87,26 +87,6 @@ sys.exit(0 if nonempty else 1)
 PY
 }
 
-# -------- keep already-completed opts from looking stale --------------------
-# --rerun-triggers mtime compares timestamps, not content, so any git pull that
-# touches the config file (even for an unrelated file's change — git doesn't
-# reliably preserve mtimes on unchanged files across a pull) makes Snakemake
-# think every already-completed opt is stale too. Touch existing per-opt
-# results so they read as newer than the config, and only genuinely
-# missing/incomplete opts get scheduled.
-#
-# This runs unconditionally (not just on the "first launch" self-resubmit
-# path) because this script is sometimes invoked directly with an explicit
-# --array=... range (bypassing self-resubmission), and SLURM_ARRAY_TASK_ID is
-# already set in that case. A marker file guards against every concurrently-
-# running array task redoing the same filesystem walk.
-TOUCH_MARKER="$ROOT/experiments/${MODEL}/.moments_touch_marker"
-if [[ ! -f "$TOUCH_MARKER" || "$CFG" -nt "$TOUCH_MARKER" ]]; then
-  echo "Touching existing best_fit.pkl outputs so they aren't seen as stale relative to $CFG"
-  find "$ROOT/experiments/${MODEL}/runs" -name best_fit.pkl -exec touch {} + 2>/dev/null || true
-  touch "$TOUCH_MARKER" 2>/dev/null || true
-fi
-
 # -------- first launch: compute proper --array range -----------------------
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
@@ -149,6 +129,13 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   # ---- what this job will build (per-run output) ----
   TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/moments/best_fit.pkl"
   echo "→ build $TARGET"
+
+  # If this specific opt already finished, touch just its output file so
+  # --rerun-triggers mtime doesn't see it as stale relative to the config
+  # (e.g. after a git pull). A single stat+touch here is cheap; scanning the
+  # whole runs/ tree up front is not, at this scale (TOTAL_TASKS can be in the
+  # hundreds of thousands).
+  [[ -s "$ROOT/$TARGET" ]] && touch "$ROOT/$TARGET"
 
   # ---- inputs (optional but you already had these checks) ----
   SFS="$ROOT/experiments/${MODEL}/simulations/${SID}/SFS.pkl"
