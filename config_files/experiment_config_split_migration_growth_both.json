@@ -118,7 +118,7 @@
   "engine": "slim",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
-  "pts_base": [10, 15, 20],
+  "pts_base": [30, 60, 100],
   "generate_profiles": false,
   "profile_points": 41,
   "profile_widen": 0.5,
