@@ -27,7 +27,7 @@ WINDOW_MODE=$(jq -r '.window_mode // "replicates"' "$CFG")
 
 NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG")
 BATCH_SIZE="${BATCH_SIZE:-50}"
-MAX_CONCURRENT="${MAX_CONCURRENT:-200}"
+MAX_CONCURRENT="${MAX_CONCURRENT:-5000}"
 
 TOTAL_TASKS=$(( NUM_DRAWS * NUM_WINDOWS ))
 

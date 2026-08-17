@@ -4,7 +4,7 @@
 #SBATCH --error=logs/moments_%A_%a.err
 #SBATCH --time=15:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=2G
+#SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -91,7 +91,7 @@ PY
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
   NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
   echo "Submitting array 0..${NUM_ARRAY}"
-  sbatch --array=0-"$NUM_ARRAY"%${MAX_CONCURRENT:-100} "$0" "$@"
+  sbatch --array=0-"$NUM_ARRAY"%${MAX_CONCURRENT:-5000} "$0" "$@"
   exit 0
 fi
 
