@@ -622,7 +622,7 @@ if WINDOW_MODE == "replicates":
             metafile = f"{SIM_BASEDIR}/{{sid}}/bgs.meta.json",
             done     = f"{SIM_BASEDIR}/{{sid}}/.done"
         output:
-            vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
+            vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
         params:
             base_sim   = lambda w: f"{SIM_BASEDIR}/{w.sid}",
             out_winDir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
@@ -676,7 +676,7 @@ else:
             vcf_gz  = f"{LD_ROOT}/windows/full_genome.vcf.gz",
             vcf_tbi = f"{LD_ROOT}/windows/full_genome.vcf.gz.tbi",
         output:
-            vcf_gz = temp(f"{LD_ROOT}/windows/window_{{win}}.vcf.gz")
+            vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz"
         params:
             out_winDir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
             cfg         = EXP_CFG,

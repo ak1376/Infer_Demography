@@ -139,19 +139,24 @@ for IDX in $(seq "$START" "$END"); do
             # leftover explicitly in case ld_window_pruned failed mid-way.
             rm -f "${MLD_ABS}/pruning/${tag}/windows/window_${WIN}.vcf.gz"
         done
-        # Raw VCF only fed the pruning step and is no longer needed.
-        rm -f "$RAW_VCF"
+        # TEMPORARILY DISABLED (comparing prune_keep_fractions across separate
+        # reruns -- keep the base window VCF so it doesn't need to be
+        # resimulated/rechunked for the next fraction). Re-enable by
+        # uncommenting once done comparing fractions.
+        # rm -f "$RAW_VCF"
     else
         # ---- UNPRUNED-ONLY: no pruning configured ---------------------------
         UNPRUNED_PKL="${MLD_ABS}/LD_stats/LD_stats_window_${WIN}.pkl"
         if [[ -f "$UNPRUNED_PKL" ]]; then
             echo "SKIP: unpruned exists  SID=$SID WIN=$WIN"
-            rm -f "$RAW_VCF"
+            # TEMPORARILY DISABLED -- see comment above in the pruning branch.
+            # rm -f "$RAW_VCF"
             continue
         fi
         echo "RUN: unpruned  SID=$SID WIN=$WIN"
         run_target "${MLD_REL}/LD_stats/LD_stats_window_${WIN}.pkl" || true
-        [[ -f "$UNPRUNED_PKL" ]] && rm -f "$RAW_VCF"
+        # TEMPORARILY DISABLED -- see comment above in the pruning branch.
+        # [[ -f "$UNPRUNED_PKL" ]] && rm -f "$RAW_VCF"
     fi
 done
 
