@@ -50,7 +50,13 @@ def sample_params(
     params: Dict[str, float] = {}
 
     for k, bounds in priors.items():
-        params[k] = float(rng.uniform(*bounds))
+        lo, hi = float(bounds[0]), float(bounds[1])
+        if lo <= 0 or hi <= 0:
+            raise ValueError(
+                f"Prior bounds for '{k}' must be positive for log-uniform "
+                f"sampling; got {bounds}."
+            )
+        params[k] = float(10 ** rng.uniform(np.log10(lo), np.log10(hi)))
 
     # Override with any numerically-fixed parameters from the config
     if fixed_params:
