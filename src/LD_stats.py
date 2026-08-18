@@ -19,7 +19,6 @@ from typing import Any, Dict, Optional, Tuple, List
 import numpy as np
 import tskit
 
-from pg_gpu.moments_ld import compute_ld_statistics as _pg_compute_ld_statistics
 from moments.LD.Parsing import compute_ld_statistics as _cpu_compute_ld_statistics
 
 # -----------------------------------------------------------------------------
@@ -281,6 +280,8 @@ def compute_ld_window(
     pops_cpu = list(config["num_samples"].keys())
 
     if use_gpu:
+        from pg_gpu.moments_ld import compute_ld_statistics as _pg_compute_ld_statistics  # local import so CPU-only envs still work
+
         _select_best_gpu()
         compute_fn = _pg_compute_ld_statistics
         backend = "pg_gpu"
