@@ -3,7 +3,7 @@
 #SBATCH --output=logs/build_win_%A_%a.out
 #SBATCH --error=logs/build_win_%A_%a.err
 #SBATCH --time=12:00:00
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=10G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
@@ -63,6 +63,16 @@ END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 
 echo "Array $SLURM_ARRAY_TASK_ID → indices $START .. $END"
 
+# Collect every target this array task needs, then build them all in a
+# single Snakemake invocation (see below) instead of spawning one Snakemake
+# process per window. That cuts ~50x redundant DAG-parse/startup overhead
+# per array task, lets Snakemake's own scheduler actually use all
+# $SLURM_CPUS_PER_TASK cores concurrently (previously this loop was strictly
+# sequential, so only 1 of the requested cores was ever active at a time),
+# and reduces how many concurrent --nolock Snakemake processes are hitting
+# the same .snakemake/ metadata across array tasks at once, which is what
+# produced the transient MissingRuleException seen under heavy concurrency.
+TARGETS=()
 for IDX in $(seq "$START" "$END"); do
   SID=$(( IDX / NUM_WINDOWS ))
   WIN=$(( IDX % NUM_WINDOWS ))
@@ -87,16 +97,25 @@ for IDX in $(seq "$START" "$END"); do
   fi
 
   TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/windows/window_${WIN}.vcf.gz"
-  echo "→ build SID=$SID WIN=$WIN  ($TARGET)"
+  echo "→ queue SID=$SID WIN=$WIN  ($TARGET)"
+  TARGETS+=("$TARGET")
+done
 
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+  echo "Nothing to build for this array task (all skipped)."
+else
+  echo "Building ${#TARGETS[@]} targets in one Snakemake call (-j $SLURM_CPUS_PER_TASK)..."
+  # --keep-going: one bad target (e.g. a transient issue) shouldn't abort the
+  # whole batch and strand the rest of this array task's otherwise-good work.
   snakemake --snakefile "$SNAKEFILE" \
             --directory "$ROOT" \
             --nolock \
+            --keep-going \
             --rerun-incomplete \
             --allowed-rules "$BUILD_RULE" ld_window \
             --latency-wait 300 \
             -j "$SLURM_CPUS_PER_TASK" \
-            "$TARGET"
-done
+            "${TARGETS[@]}"
+fi
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."
