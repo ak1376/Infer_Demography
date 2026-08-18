@@ -50,8 +50,8 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
         echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=true -> GPU partition)"
         sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
     else
-        echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=false -> CPU-only partition)"
-        sbatch --array=0-"$NUM_ARRAY" --partition=kern,preempt --gres=gpu:0 "$0" "$@"
+        echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=false -> CPU-only, but still eligible for kerngpu nodes)"
+        sbatch --array=0-"$NUM_ARRAY" --partition=kern,preempt,kerngpu --gres=gpu:0 "$0" "$@"
     fi
     exit 0
 fi
