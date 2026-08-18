@@ -86,7 +86,14 @@ def aggregate_top_k(records, top_k, extra_fields=(), min_nonempty=None,
             f"Not aggregating."
         )
 
-    keep = np.argsort(lls)[::-1][:top_k]
+    # np.argsort ranks NaN as the largest value, so a single failed
+    # (NaN/inf) restart would otherwise outrank every real optimization and
+    # get selected as "best". Sort on a key that pushes non-finite lls to
+    # the bottom instead, so they're only ever selected if there aren't
+    # enough finite entries to fill top_k.
+    lls_arr = np.asarray(lls, dtype=float)
+    sort_key = np.where(np.isfinite(lls_arr), lls_arr, -np.inf)
+    keep = np.argsort(sort_key)[::-1][:top_k]
 
     best = {
         "best_params": [params[i] for i in keep],
@@ -101,5 +108,6 @@ def aggregate_top_k(records, top_k, extra_fields=(), min_nonempty=None,
         "n_readable": n_readable,
         "n_nonempty": n_nonempty,
         "n_entries": len(lls),
+        "n_nonfinite": int(np.size(lls_arr) - np.isfinite(lls_arr).sum()),
     }
     return best, diagnostics

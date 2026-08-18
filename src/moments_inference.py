@@ -56,7 +56,7 @@ def _diffusion_sfs(
     graph = demo_model(p_dict)
 
     muL = float(experiment_config["mutation_rate"]) * float(
-        experiment_config["genome_length"]
+        experiment_config["sequence_length"]
     )
     # Convention: first parameter is N_ANC/N0 for theta scaling
     N0 = float(p_dict[param_names[0]])

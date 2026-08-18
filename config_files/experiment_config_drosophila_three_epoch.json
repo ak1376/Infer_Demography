@@ -1,17 +1,19 @@
 {
-  "genome_length": 24000000,
+  "sequence_length": 24000000,
+  "chunk_sequence_length": 24000000,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
   "demographic_model": "drosophila_three_epoch",
-  "log_dir": "bottleneck/inferences/moments/logs",
   "num_samples": {
     "CO": 10,
     "FR": 9
   },
   "seed": 42,
+  "window_mode": "replicates",
+  "num_windows": 100,
   "num_optimizations": 5,
   "start_strategy": "jitter",
-  "start_jitter_sigma": 0.05,
+  "aggregate_min_replicates": 5,
   "top_k": 1,
   "num_draws": 100,
   "priors": {
@@ -74,6 +76,8 @@
       0.02
     ]
   },
+  "momentsld_use_scaled_units": false,
+  "moments_best_fit_path": "experiments/drosophila_three_epoch/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
     "N_ANC": 848951.5652704649,
     "N_AFR": 1821848.9589133211,
@@ -99,7 +103,9 @@
     "coverage_percent": [
       1,
       95
-    ]
+    ],
+    "slim_scaling": 10,
+    "slim_burn_in": 5
   },
   "use_fim_features": true,
   "fim_engines": [
@@ -111,13 +117,16 @@
   "use_gpu_ld": true,
   "use_gpu_dadi": true,
   "pts_base": [20, 25, 30],
-  "optimizer_maxeval": 300,
-  "optimizer_maxtime": 600,
   "generate_profiles": false,
   "profile_points": 41,
   "profile_widen": 0.5,
   "profile_make_plots": true,
+  "start_jitter_sigma": 0.05,
+  "optimizer_algorithm": "LD_LBFGS",
+  "optimizer_maxeval": 300,
+  "optimizer_maxtime": 600,
+  "prune_keep_fractions": [
+  ],
   "gram_schmidt": true,
   "gram_schmidt_k": 10
-
 }

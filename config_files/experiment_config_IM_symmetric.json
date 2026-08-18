@@ -1,5 +1,6 @@
 {
-  "genome_length": 1e7,
+  "sequence_length": 1e8,
+  "chunk_sequence_length": 1e7,
   "mutation_rate": 1.29e-8,
   "recombination_rate": 1.2e-8,
   "demographic_model": "IM_symmetric",
@@ -8,10 +9,11 @@
     "CEU": 10
   },
   "seed": 42,
-  "window_mode": "replicates",
+  "window_mode": "chunked",
+  "num_windows": 100,
   "num_optimizations": 100,
   "start_strategy": "jitter",
-  "start_jitter_sigma": 0.05,
+  "aggregate_min_replicates": 5,
   "top_k": 5,
   "num_draws": 5000,
   "priors": {
@@ -36,7 +38,8 @@
       20000
     ]
   },
-
+  "fixed_parameters": {
+  },
   "parameter_order": [
     "N_anc",
     "N_YRI",
@@ -45,6 +48,7 @@
     "T_split"
   ],
   "selection": {
+    "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
@@ -63,7 +67,17 @@
   "engine": "slim",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
+  "pts_base": [10, 20, 30],
+  "generate_profiles": false,
+  "profile_points": 41,
+  "profile_widen": 0.5,
+  "profile_make_plots": true,
+  "start_jitter_sigma": 0.05,
+  "optimizer_algorithm": "LD_LBFGS",
+  "optimizer_maxeval": 300,
+  "optimizer_maxtime": 600,
+  "prune_keep_fractions": [
+  ],
   "gram_schmidt": false,
   "gram_schmidt_k": 10
-
 }

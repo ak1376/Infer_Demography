@@ -237,7 +237,7 @@ def main():
     sfs = pickle.loads(args.sfs_pkl.read_bytes())
     cfg = json.loads(args.config.read_text())
     mu = float(cfg["mutation_rate"])
-    L = int(cfg["genome_length"])
+    L = int(cfg["sequence_length"])
 
     # Model
     mod_path, func_name = args.model.split(":")

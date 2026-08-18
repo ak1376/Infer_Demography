@@ -280,7 +280,7 @@ def write_bgs_meta_json(
         left=(sel_cfg.get("left") if is_bgs else None),
         right=(sel_cfg.get("right") if is_bgs else None),
         genetic_map=(sel_cfg.get("genetic_map") if is_bgs else None),
-        genome_length=float(cfg.get("genome_length")),
+        genome_length=float(cfg.get("sequence_length")),
         mutation_rate=float(cfg.get("mutation_rate")),
         recombination_rate=float(cfg.get("recombination_rate")),
         coverage_fraction=(
@@ -595,9 +595,9 @@ def simulate_one_window_replicate(
       - meta_file: optional bgs.meta.json from base sim so we can reuse exact coverage
       - seed_stride: default 10000 matches your old script
 
-    Simulates at cfg["chunk_genome_length"] bp (falls back to cfg["genome_length"]
-    if chunk_genome_length is unset), independently of the base simulation's own
-    genome_length.
+    Simulates at cfg["chunk_sequence_length"] bp (falls back to cfg["sequence_length"]
+    if chunk_sequence_length is unset), independently of the base simulation's own
+    sequence_length.
 
     Writes:
       - window_<idx>.vcf.gz
@@ -632,7 +632,7 @@ def simulate_one_window_replicate(
     w_seed = window_seed_from_base(base_seed, rep_index, stride=seed_stride)
 
     window_cfg = dict(cfg)
-    window_cfg["genome_length"] = float(cfg.get("chunk_genome_length", cfg["genome_length"]))
+    window_cfg["genome_length"] = float(cfg.get("chunk_sequence_length", cfg["sequence_length"]))
     if w_seed is not None:
         window_cfg["seed"] = w_seed
         print(

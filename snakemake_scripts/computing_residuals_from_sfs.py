@@ -338,7 +338,7 @@ def main():
 
     # constants
     mu = _safe_float(cfg.get("mutation_rate"), name="mutation_rate")
-    L = int(float(cfg.get("genome_length")))
+    L = int(float(cfg.get("sequence_length")))
 
     # Pop order from cfg (we use this to define sampled_demes order)
     dip_cfg = _diploid_sample_sizes_from_cfg(cfg)

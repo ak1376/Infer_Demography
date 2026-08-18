@@ -56,12 +56,12 @@ def _intervals_from_coverage(
 def _contig_from_cfg(cfg: Dict, sel: Dict):
     """
     Synthetic-only contig builder.
-    Builds a stdpopsim Contig of length = cfg["genome_length"],
+    Builds a stdpopsim Contig of length = cfg["sequence_length"],
     with user-specified mutation_rate and recombination_rate.
     """
     sp = sps.get_species(sel.get("species", "HomSap"))
 
-    L = float(cfg["genome_length"])
+    L = float(cfg["sequence_length"])
     mu = float(cfg["mutation_rate"]) if "mutation_rate" in cfg else None
     r = float(cfg["recombination_rate"]) if "recombination_rate" in cfg else None
 

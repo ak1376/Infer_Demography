@@ -394,9 +394,9 @@ def fit_model_realdata_scaled(
     mu = float(experiment_config["mutation_rate"])
     # Sequence length for the theta -> implied-N_ANC conversion only (does NOT
     # affect the optimisation or the log-likelihood). Prefer a dedicated
-    # real-data key so "genome_length" can stay simulation-only; fall back to
-    # genome_length when it is absent (backward compatible).
-    L = float(experiment_config.get("real_genome_length", experiment_config["genome_length"]))
+    # real-data key so "sequence_length" can stay simulation-only; fall back to
+    # sequence_length when it is absent (backward compatible).
+    L = float(experiment_config.get("real_sequence_length", experiment_config["sequence_length"]))
     muL = mu * L
     if muL <= 0:
         raise ValueError("mutation_rate * (real_)genome_length must be > 0 for implied N_ANC.")

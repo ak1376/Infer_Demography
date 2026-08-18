@@ -148,7 +148,7 @@ def main():
     sfs = pickle.load(args.sfs.open("rb"))
     cfg = json.loads(args.config.read_text())
     mu = float(cfg["mutation_rate"])
-    L = int(cfg["genome_length"])
+    L = int(cfg["sequence_length"])
 
     # Resolve model and wrap to pass config if supported
     orig_model = _model_import_from_cfg(cfg)

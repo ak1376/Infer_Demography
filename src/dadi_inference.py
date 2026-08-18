@@ -104,7 +104,7 @@ def fit_model(
         )
 
         muL = float(experiment_config["mutation_rate"]) * float(
-            experiment_config["genome_length"]
+            experiment_config["sequence_length"]
         )
         theta = 4.0 * float(p_dict[param_names[0]]) * muL
         return fs * theta

@@ -687,7 +687,7 @@ else:
             from src.windowing import window_vcf
 
             cfg = json.loads(Path(params.cfg).read_text())
-            window_size = int(cfg.get("chunk_genome_length", cfg["genome_length"]))
+            window_size = int(cfg.get("chunk_sequence_length", cfg["sequence_length"]))
             recomb_rate = float(cfg["recombination_rate"])
 
             window_vcf(

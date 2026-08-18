@@ -1,43 +1,45 @@
 {
-    "genome_length": 1e8,
-    "mutation_rate": 1.5e-08,
-    "recombination_rate": 1.5e-08,
-    "demographic_model": "bottleneck",
-    "log_dir": "bottleneck/inferences/moments/logs",
-    "num_samples": {
-        "ANC": 10
-    }, 
-    "seed": 42,
-    "num_optimizations": 100,
-    "start_strategy": "jitter",
-    "start_jitter_sigma": 0.05,
-    "top_k": 5,
-    "num_draws": 5000,
-    "priors": {
-    "N0"                : [2000, 20000],
-    "N_bottleneck"      : [100, 1999],
-    "N_recover"         : [2000, 20000],
+  "sequence_length": 1e8,
+  "chunk_sequence_length": 1e8,
+  "mutation_rate": 1.5e-08,
+  "recombination_rate": 1.5e-08,
+  "demographic_model": "bottleneck",
+  "num_samples": {
+    "ANC": 10
+  },
+  "seed": 42,
+  "window_mode": "replicates",
+  "num_windows": 100,
+  "num_optimizations": 100,
+  "start_strategy": "jitter",
+  "aggregate_min_replicates": 5,
+  "top_k": 5,
+  "num_draws": 5000,
+  "priors": {
+    "N0": [2000, 20000],
+    "N_bottleneck": [100, 1999],
+    "N_recover": [2000, 20000],
     "t_bottleneck_start": [1701, 3000],
-    "t_bottleneck_end"  : [ 100,  1700]
-    }, 
-    "parameter_order": [
+    "t_bottleneck_end": [100, 1700]
+  },
+  "fixed_parameters": {
+  },
+  "parameter_order": [
     "N0",
     "N_bottleneck",
     "N_recover",
     "t_bottleneck_start",
     "t_bottleneck_end"
-    ],
-    
-    "fixed_parameters": {
-    },   
-    "selection": {
+  ],
+  "selection": {
+    "enabled": true,
     "species": "HomSap",
     "dfe_id": "Gamma_K17",
     "coverage_percent": [
       31,
       95
-    ], 
-    "slim_scaling": 10, 
+    ],
+    "slim_scaling": 10,
     "slim_burn_in": 5
   },
   "use_fim_features": false,
@@ -49,7 +51,17 @@
   "engine": "slim",
   "use_gpu_ld": false,
   "use_gpu_dadi": false,
+  "pts_base": [10, 20, 30],
+  "generate_profiles": false,
+  "profile_points": 41,
+  "profile_widen": 0.5,
+  "profile_make_plots": true,
+  "start_jitter_sigma": 0.05,
+  "optimizer_algorithm": "LD_LBFGS",
+  "optimizer_maxeval": 300,
+  "optimizer_maxtime": 600,
+  "prune_keep_fractions": [
+  ],
   "gram_schmidt": false,
   "gram_schmidt_k": 10
-
 }

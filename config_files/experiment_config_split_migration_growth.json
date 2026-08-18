@@ -1,14 +1,16 @@
 {
-  "genome_length": 1e7,
+  "sequence_length": 1e7,
+  "chunk_sequence_length": 1e7,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
   "demographic_model": "split_migration_growth",
-  "log_dir": "experiments/split_migration_growth/logs",
   "num_samples": {
     "CO": 10,
     "FR": 9
   },
   "seed": 42,
+  "window_mode": "replicates",
+  "num_windows": 100,
   "num_optimizations": 1,
   "start_strategy": "lhs",
   "aggregate_min_replicates": 1,
@@ -74,6 +76,8 @@
       2.0
     ]
   },
+  "momentsld_use_scaled_units": false,
+  "moments_best_fit_path": "experiments/split_migration_growth/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
   },
   "parameter_order": [
@@ -93,7 +97,8 @@
       1,
       95
     ],
-    "slim_scaling": 10.0
+    "slim_scaling": 10.0,
+    "slim_burn_in": 5
   },
   "use_fim_features": false,
   "fim_engines": [
@@ -109,12 +114,13 @@
   "profile_points": 41,
   "profile_widen": 0.5,
   "profile_make_plots": true,
-  "profile_theta": true,
   "start_jitter_sigma": 0.05,
   "optimizer_algorithm": "LN_BOBYQA",
   "optimizer_maxeval": 300,
   "optimizer_maxtime": 600,
   "prune_keep_fractions": [
     0.15
-  ]
+  ],
+  "gram_schmidt": false,
+  "gram_schmidt_k": 10
 }
