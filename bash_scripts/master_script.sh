@@ -34,6 +34,7 @@ snakemake --directory "$REPO" --unlock || true
 NUM_DRAWS=$(jq -r '.num_draws' "$CFG_PATH")
 NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG_PATH")
 NUM_OPTIMS=$(jq -r '.num_optimizations' "$CFG_PATH")
+USE_GPU_LD=$(jq -r '.use_gpu_ld // false' "$CFG_PATH")
 
 submit() { sbatch --parsable --export=ALL "$@"; }
 submit_array() {
@@ -69,9 +70,20 @@ win_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZ
   $(dep_afterany "$mat_id") bash_scripts/build_windows.sh); [[ -n "$win_id" ]]
 
 # --- 4. LD stats ---
+# submit_array passes --array explicitly, so LD_stats_windows.sh's own
+# dispatcher block (which normally picks partition/gres from use_gpu_ld
+# when SLURM_ARRAY_TASK_ID is unset) never runs here -- SLURM_ARRAY_TASK_ID
+# is already set on this very first submission. Pick the partition/gres
+# here instead, mirroring that block, or every run silently falls back to
+# the file's #SBATCH defaults (GPU partitions) regardless of use_gpu_ld.
 export BATCH_SIZE=50
+if [[ "$USE_GPU_LD" == "true" ]]; then
+  LD_STATS_SBATCH_OPTS=(--partition=kerngpu,gpulong,gpu --gres=gpu:1)
+else
+  LD_STATS_SBATCH_OPTS=(--partition=kern,preempt --gres=gpu:0)
+fi
 ld_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZE")" \
-  $(dep_afterany "$win_id") bash_scripts/LD_stats_windows.sh); [[ -n "$ld_id" ]]
+  $(dep_afterany "$win_id") "${LD_STATS_SBATCH_OPTS[@]}" bash_scripts/LD_stats_windows.sh); [[ -n "$ld_id" ]]
 
 # --- 5. Moments-LD optimization ---
 export BATCH_SIZE=1

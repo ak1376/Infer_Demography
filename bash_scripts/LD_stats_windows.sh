@@ -15,7 +15,11 @@
 # NOTE: partition/gres above are only the defaults for a bare `sbatch` call.
 # The self-resubmission below overrides both based on the active config's
 # use_gpu_ld — flip that one key to switch between GPU and CPU-only nodes,
-# no need to edit this file.
+# no need to edit this file. This self-resubmission only fires when
+# SLURM_ARRAY_TASK_ID is unset (i.e. this script was sbatch'd bare, without
+# --array). master_script.sh submits with --array already set (see
+# lib_array_size.sh), so it computes its own use_gpu_ld-driven
+# --partition/--gres and passes them on that initial sbatch call instead.
 
 set -eo pipefail
 
@@ -50,8 +54,8 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
         echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=true -> GPU partition)"
         sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
     else
-        echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=false -> CPU-only, but still eligible for kerngpu nodes)"
-        sbatch --array=0-"$NUM_ARRAY" --partition=kern,preempt,kerngpu --gres=gpu:0 "$0" "$@"
+        echo "Submitting array 0..${NUM_ARRAY} (use_gpu_ld=false -> CPU-only, excluding kerngpu)"
+        sbatch --array=0-"$NUM_ARRAY" --partition=kern,preempt --gres=gpu:0 "$0" "$@"
     fi
     exit 0
 fi
