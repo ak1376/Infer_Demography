@@ -942,13 +942,14 @@ rule aggregate_opts_momentsld:
         print(f"✅ momentsLD: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 ##############################################################################
-# RULE optimize_momentsld_mixed – optimise MomentsLD from PRUNED stats        #
-# Used when pruning is configured (pruned-only). Reads the pruned per-window  #
-# LD stats under pruning/{frac_tag}/LD_stats/ as the sole input and writes    #
-# best_fit under the same directory. Output path matches MomentsLD.sh's       #
-# pruning/{frac_tag}/best_fit.pkl target.                                     #
+# RULE aggregate_ld_stats_pruned – aggregate PRUNED per-window LD stats into  #
+# means/varcovs (pruned-only; mirrors aggregate_ld_stats but reads pruned    #
+# LD_stats and never runs the optimizer itself -- that's now a separate,     #
+# multi-restart stage below (infer_momentsld_pruned / aggregate_opts_        #
+# momentsld_pruned), same split as the unpruned aggregate_ld_stats /         #
+# infer_momentsld / aggregate_opts_momentsld pattern.                        #
 ##############################################################################
-rule optimize_momentsld_mixed:
+rule aggregate_ld_stats_pruned:
     input:
         pruned_pkls = lambda w: expand(
             f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
@@ -961,7 +962,6 @@ rule optimize_momentsld_mixed:
         mv   = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl",
         boot = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl"),
         pdf  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/empirical_vs_theoretical_comparison.pdf",
-        best = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
@@ -970,16 +970,97 @@ rule optimize_momentsld_mixed:
     run:
         import subprocess
         # output_root drives everything: LD_inference reads output_root/LD_stats/*.pkl
-        # (the pruned stats) and writes means/varcovs/bootstrap/pdf/best_fit there.
+        # (the pruned stats) and writes means/varcovs/bootstrap/pdf there.
         # No --fallback-ld-dir: in pruned-only mode there are no unpruned stats.
+        # --skip-optimize: aggregation only here, same as aggregate_ld_stats;
+        # optimization is the separate multi-restart stage below.
         cmd = [
             "python", "snakemake_scripts/LD_inference.py",
             "--run-dir",     params.sim_dir,
             "--output-root", params.output_root,
             "--config-file", params.cfg,
+            "--skip-optimize",
         ]
         env = {**os.environ, "PYTHONPATH": workflow.basedir}
         subprocess.run(cmd, check=True, env=env)
+
+##############################################################################
+# RULE infer_momentsld_pruned – one LHS/jitter-seeded MomentsLD restart,     #
+# pruned stats. Mirrors infer_momentsld exactly, keyed additionally by       #
+# {frac_tag}.                                                                #
+##############################################################################
+rule infer_momentsld_pruned:
+    input:
+        mv  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl",
+        cfg = EXP_CFG,
+    output:
+        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl"
+    params:
+        sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
+        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
+        results_dir = lambda w: f"experiments/{MODEL}/runs/run_{w.sid}_{w.opt}/inferences/MomentsLD/pruning/{w.frac_tag}",
+        cfg = EXP_CFG,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.results_dir}"
+
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/LD_inference.py" \
+            --run-dir     "{params.sim_dir}" \
+            --output-root "{params.output_root}" \
+            --results-dir "{params.results_dir}" \
+            --config-file "{params.cfg}" \
+            --opt-seed    {wildcards.opt}
+
+        test -f "{output.pkl}"
+        """
+
+##############################################################################
+# RULE aggregate_opts_momentsld_pruned – pick top-K across LHS/jitter        #
+# restarts, pruned stats. Mirrors aggregate_opts_momentsld exactly, keyed    #
+# additionally by {frac_tag}. Output path is unchanged from the old         #
+# optimize_momentsld_mixed target, so MomentsLD.sh's TARGET doesn't need to  #
+# change -- only its --allowed-rules list does.                             #
+##############################################################################
+rule aggregate_opts_momentsld_pruned:
+    input:
+        cfg = EXP_CFG,
+        opts = lambda w: expand(
+            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/MomentsLD/pruning/{w.frac_tag}/best_fit.pkl",
+            opt=OPTIMS,
+        ),
+    output:
+        best = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
+    run:
+        import pickle, pathlib
+        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
+
+        sid = wildcards.sid
+        frac_tag = wildcards.frac_tag
+        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
+
+        records = discover_opt_pkls(
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/MomentsLD/pruning/{frac_tag}/best_fit.pkl",
+            rf"/run_{sid}_(\d+)/inferences/MomentsLD/pruning/{frac_tag}/best_fit\.pkl$",
+        )
+
+        best, diag = aggregate_top_k(
+            records, TOP_K, min_nonempty=MIN_FILES,
+            err_label="aggregate_opts_momentsld_pruned", err_engine="MomentsLD",
+            err_context=f"for sid={sid} frac_tag={frac_tag}",
+        )
+        best["n_files_found"] = diag["n_records"]
+        best["n_nonempty"]    = diag["n_nonempty"]
+        best["min_required"]  = int(TOP_K)
+
+        pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.best, "wb") as fh:
+            pickle.dump(best, fh)
+
+        print(f"✅ momentsLD (pruned, {frac_tag}): found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.best}")
+        print(f"✅ momentsLD (pruned, {frac_tag}): kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 ##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}             #

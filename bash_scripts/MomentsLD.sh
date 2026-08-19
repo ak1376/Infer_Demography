@@ -65,7 +65,7 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
                       --directory "$ROOT" \
                       --rerun-incomplete \
                       --nolock \
-                      --allowed-rules optimize_momentsld_mixed \
+                      --allowed-rules aggregate_ld_stats_pruned infer_momentsld_pruned aggregate_opts_momentsld_pruned \
                       -j "$SLURM_CPUS_PER_TASK" \
                       "$TARGET" \
                       || { echo "Snakemake failed for SID=$SID FRAC=$FRAC_TAG"; exit 1; }

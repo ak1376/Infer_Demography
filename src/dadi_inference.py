@@ -230,7 +230,7 @@ def fit_model(
         print(f"[DADI DEBUG] {algo_name} roundoff-limited; returning best point so far")
         debug_txt = _build_debug_txt(f"{algo_name.lower()}_roundoff_limited")
 
-    except RuntimeError:
+    except (RuntimeError, nlopt.runtime_error):
         print(
             f"[DADI DEBUG] {algo_name} runtime_error; capturing debug state and falling back to LN_COBYLA"
         )
@@ -243,7 +243,7 @@ def fit_model(
         opt_fb = _make_opt(nlopt.LN_COBYLA)
         try:
             xhat = opt_fb.optimize(np.asarray(x_start, float))
-        except (RuntimeError, nlopt.RoundoffLimited):
+        except (RuntimeError, nlopt.runtime_error, nlopt.RoundoffLimited):
             x_best = last_eval.get("log10_params", None)
             xhat = np.asarray(x_best if x_best is not None else x_start, float)
             print("[DADI DEBUG] LN_COBYLA also failed; returning best point so far")

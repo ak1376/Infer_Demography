@@ -102,17 +102,16 @@ if [[ "$USE_GPU_LD" == "true" ]]; then
     python -c "import cupy; from cupy_backends.cuda.libs import nvrtc; print('NVRTC', nvrtc.getVersion())" || true
 fi
 
-# Run one Snakemake target (LD-stat pkl). Returns snakemake's exit status.
-run_target() {
-    snakemake --snakefile "$SNAKEFILE" \
-              --directory  "$ROOT"      \
-              --nolock                  \
-              --latency-wait 120        \
-              --rerun-incomplete        \
-              --rerun-triggers mtime    \
-              -j "$SLURM_CPUS_PER_TASK" \
-              "$1"
-}
+# Collect every target this array task needs, then build them all in a
+# single Snakemake invocation (see below) instead of spawning one Snakemake
+# process per target. Same rationale as build_windows.sh: cuts redundant
+# DAG-parse/startup overhead and the number of concurrent --nolock processes
+# hitting shared .snakemake/ metadata. Note ld_window/ld_window_pruned are
+# threads:4 (== $SLURM_CPUS_PER_TASK), so unlike build_windows.sh this won't
+# let multiple LD-stat jobs run concurrently within one array task -- the
+# win here is purely the removed per-target startup overhead.
+TARGETS=()
+PRUNED_VCF_CLEANUP=()   # leftover-pruned-VCF safety-net cleanup, done after the batch
 
 for IDX in $(seq "$START" "$END"); do
     SID=$(( IDX / NUM_WINDOWS ))
@@ -131,13 +130,14 @@ for IDX in $(seq "$START" "$END"); do
                 echo "SKIP: pruned ($tag) exists  SID=$SID WIN=$WIN"
                 continue
             fi
-            echo "RUN: pruned ($tag)  SID=$SID WIN=$WIN"
+            echo "QUEUE: pruned ($tag)  SID=$SID WIN=$WIN"
             # prune_window (temp pruned VCF) → ld_window_pruned; both inherit
-            # r_bins from the Snakefile. || true: don't kill the batch on one failure.
-            run_target "${MLD_REL}/pruning/${tag}/LD_stats/LD_stats_window_${WIN}.pkl" || true
-            # Pruned VCF is temp() and cleaned inside the Snakemake run; remove any
-            # leftover explicitly in case ld_window_pruned failed mid-way.
-            rm -f "${MLD_ABS}/pruning/${tag}/windows/window_${WIN}.vcf.gz"
+            # r_bins from the Snakefile.
+            TARGETS+=("${MLD_REL}/pruning/${tag}/LD_stats/LD_stats_window_${WIN}.pkl")
+            # Pruned VCF is temp() and normally cleaned inside the Snakemake run;
+            # queue it for an explicit leftover-cleanup pass in case
+            # ld_window_pruned fails mid-way for this specific target.
+            PRUNED_VCF_CLEANUP+=("${MLD_ABS}/pruning/${tag}/windows/window_${WIN}.vcf.gz")
         done
         # TEMPORARILY DISABLED (comparing prune_keep_fractions across separate
         # reruns -- keep the base window VCF so it doesn't need to be
@@ -153,11 +153,32 @@ for IDX in $(seq "$START" "$END"); do
             # rm -f "$RAW_VCF"
             continue
         fi
-        echo "RUN: unpruned  SID=$SID WIN=$WIN"
-        run_target "${MLD_REL}/LD_stats/LD_stats_window_${WIN}.pkl" || true
+        echo "QUEUE: unpruned  SID=$SID WIN=$WIN"
+        TARGETS+=("${MLD_REL}/LD_stats/LD_stats_window_${WIN}.pkl")
         # TEMPORARILY DISABLED -- see comment above in the pruning branch.
         # [[ -f "$UNPRUNED_PKL" ]] && rm -f "$RAW_VCF"
     fi
 done
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    echo "Nothing to build for this array task (all skipped)."
+else
+    echo "Building ${#TARGETS[@]} targets in one Snakemake call (-j $SLURM_CPUS_PER_TASK)..."
+    # --keep-going: one bad target shouldn't abort the whole batch and strand
+    # the rest of this array task's otherwise-good work.
+    snakemake --snakefile "$SNAKEFILE" \
+              --directory  "$ROOT"      \
+              --nolock                  \
+              --keep-going              \
+              --latency-wait 120        \
+              --rerun-incomplete        \
+              --rerun-triggers mtime    \
+              -j "$SLURM_CPUS_PER_TASK" \
+              "${TARGETS[@]}" || true
+
+    for leftover in "${PRUNED_VCF_CLEANUP[@]}"; do
+        rm -f "$leftover"
+    done
+fi
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."

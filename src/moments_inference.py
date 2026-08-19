@@ -248,7 +248,10 @@ def fit_model(
 
     grad_fn = nd.Gradient(loglikelihood, n=1, step=1e-4)
 
+    last_eval: Dict[str, Any] = {"log10_params": None}
+
     def objective(log10_params: np.ndarray, grad: np.ndarray) -> float:
+        last_eval["log10_params"] = np.array(log10_params, copy=True)
         ll = loglikelihood(log10_params)
         if grad.size > 0:
             grad[:] = grad_fn(log10_params)
@@ -285,9 +288,41 @@ def fit_model(
     if maxtime is not None:
         opt.set_maxtime(float(maxtime))
 
-    # ---- run optimization ----
+    # ---- run optimization: primary algorithm with roundoff + runtime fallback ----
+    # (mirrors dadi_inference.py's guard -- nlopt's own runtime_error/roundoff_limited
+    # exceptions do NOT inherit from Python's builtin RuntimeError, so they must be
+    # caught by their actual nlopt classes or they propagate uncaught and crash the job.)
     x0 = np.log10(start_vec)
-    xhat = opt.optimize(x0)
+    try:
+        xhat = opt.optimize(x0)
+
+    except nlopt.RoundoffLimited:
+        x_best = last_eval.get("log10_params", None)
+        xhat = np.asarray(x_best if x_best is not None else x0, float)
+        print(f"[MOMENTS DEBUG] {algo_name} roundoff-limited; returning best point so far")
+
+    except (RuntimeError, nlopt.runtime_error):
+        print(
+            f"[MOMENTS DEBUG] {algo_name} runtime_error; falling back to LN_COBYLA"
+        )
+        x_start = last_eval.get("log10_params", None)
+        if x_start is None:
+            x_start = x0
+
+        opt_fb = nlopt.opt(nlopt.LN_COBYLA, start_vec.size)
+        opt_fb.set_lower_bounds(np.log10(lb_full))
+        opt_fb.set_upper_bounds(np.log10(ub_full))
+        opt_fb.set_max_objective(objective)
+        opt_fb.set_ftol_rel(rtol)
+        opt_fb.set_maxeval(maxeval)
+        if maxtime is not None:
+            opt_fb.set_maxtime(float(maxtime))
+        try:
+            xhat = opt_fb.optimize(np.asarray(x_start, float))
+        except (RuntimeError, nlopt.runtime_error, nlopt.RoundoffLimited):
+            x_best = last_eval.get("log10_params", None)
+            xhat = np.asarray(x_best if x_best is not None else x_start, float)
+            print("[MOMENTS DEBUG] LN_COBYLA also failed; returning best point so far")
 
     ll_hat = loglikelihood(xhat)
     fitted_real = 10**xhat
