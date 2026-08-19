@@ -111,8 +111,13 @@ def aggregate_ld_statistics(
     means_file = ld_root / "means.varcovs.pkl"
     boots_file = ld_root / "bootstrap_sets.pkl"
 
-    # Return cached results if available
-    if means_file.exists() and boots_file.exists():
+    # Return cached results if available. Only means_file is actually required:
+    # it's the sole optimization target consumed downstream (bootstrap_sets.pkl
+    # is written for variance-estimation bookkeeping but nothing in this codebase
+    # ever reads it back in). Requiring both here previously meant any means_file
+    # created while boots_file was still temp() (and got cleaned up right after)
+    # would silently force a full re-aggregation on every subsequent call.
+    if means_file.exists():
         with means_file.open("rb") as f:
             return pickle.load(f)
 
