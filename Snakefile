@@ -842,7 +842,13 @@ rule aggregate_ld_stats:
         cfg = EXP_CFG,
     output:
         mv   = f"{LD_ROOT}/means.varcovs.pkl",
-        boot = temp(f"{LD_ROOT}/bootstrap_sets.pkl"),
+        # Not temp(): aggregate_ld_statistics() checks for this file (alongside
+        # means.varcovs.pkl) to short-circuit re-aggregating LD_stats/*.pkl on
+        # every downstream infer_momentsld restart. Deleting it right after this
+        # rule finished (former temp()) silently broke that cache -- every one
+        # of the num_optimizations restarts was re-reading and re-aggregating
+        # all window LD_stats from scratch instead of reusing this.
+        boot = f"{LD_ROOT}/bootstrap_sets.pkl",
         pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
@@ -960,7 +966,8 @@ rule aggregate_ld_stats_pruned:
         cfg = EXP_CFG,
     output:
         mv   = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl",
-        boot = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl"),
+        # Not temp() -- see aggregate_ld_stats's identical note above.
+        boot = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl",
         pdf  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/empirical_vs_theoretical_comparison.pdf",
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
