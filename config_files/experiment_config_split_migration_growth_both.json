@@ -118,7 +118,7 @@
   "engine": "slim",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
-  "pts_base": [30, 60, 100],
+  "pts_base": [10, 20, 30],
   "generate_profiles": false,
   "profile_points": 41,
   "profile_widen": 0.5,
@@ -126,7 +126,7 @@
   "start_jitter_sigma": 0.05,
   "optimizer_algorithm": "LD_LBFGS",
   "optimizer_maxeval": 300,
-  "optimizer_maxtime": 600,
+  "optimizer_maxtime": 1800,
   "prune_keep_fractions": [
     0.15
   ],
