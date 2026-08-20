@@ -1,5 +1,5 @@
 {
-  "sequence_length": 100000000,
+  "sequence_length": 1e8,
   "chunk_sequence_length": 1e7,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
@@ -15,7 +15,7 @@
   "start_strategy": "lhs",
   "aggregate_min_replicates": 5,
   "top_k": 5,
-  "num_draws": 5000,
+  "num_draws": 1000,
   "priors": {
     "N_ANC": [
       3162,
@@ -115,7 +115,7 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "slim",
+  "engine": "msprime",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [10, 20, 30],
@@ -128,7 +128,6 @@
   "optimizer_maxeval": 300,
   "optimizer_maxtime": 1800,
   "prune_keep_fractions": [
-    0.15
   ],
   "gram_schmidt": false,
   "gram_schmidt_k": 10
