@@ -87,6 +87,7 @@ def run_cli_real(
     outdir: Path,
     mode: str = "moments",  # "moments" or "dadi"
     opt_seed: Optional[int] = None,
+    real_sequence_length: Optional[float] = None,
     verbose: bool = False,
 ) -> None:
     with open(sfs_file, "rb") as f:
@@ -97,6 +98,8 @@ def run_cli_real(
 
     if opt_seed is not None:
         config["opt_seed"] = int(opt_seed)
+    if real_sequence_length is not None:
+        config["real_sequence_length"] = float(real_sequence_length)
 
     module_name, func_name = model_py.split(":")
     module = importlib.import_module(module_name)

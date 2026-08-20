@@ -23,12 +23,36 @@ Usage:
 
 import argparse
 import gzip
+import json
+import re
 import pickle
 from collections import defaultdict
 from pathlib import Path
+from typing import Tuple
 
 import numpy as np
 import moments
+
+_CONTIG_RE = re.compile(r"^##contig=<ID=([^,]+),length=(\d+)>")
+
+
+def parse_contig_length(vcf_path: Path, opener) -> Tuple[str, int]:
+    """Read the VCF header and return the (chrom, length) from its ##contig line.
+
+    This is the actual physical sequence length the VCF's own header claims
+    for this contig -- used downstream as the L in theta = 4*mu*L*N_ANC for
+    real-data inference, so it stays in sync with whichever VCF actually
+    produced the SFS instead of a hand-maintained config value. Per-chromosome
+    VCFs in this pipeline carry exactly one ##contig line.
+    """
+    with opener(str(vcf_path), "rt") as f:
+        for line in f:
+            if line.startswith("#CHROM"):
+                break
+            m = _CONTIG_RE.match(line)
+            if m:
+                return m.group(1), int(m.group(2))
+    raise ValueError(f"No ##contig header found in {vcf_path}")
 
 
 def parse_popfile(path: Path):
@@ -55,6 +79,9 @@ def main():
     p.add_argument("--popfile",     type=Path, required=True,
                    help="Two-column file: sample  population")
     p.add_argument("--output-sfs",  type=Path, required=True)
+    p.add_argument("--output-meta", type=Path, default=None,
+                   help="Optional: write {chrom, sequence_length, n_sites_*} JSON here, "
+                        "sequence_length taken from the VCF's own ##contig header.")
     p.add_argument("--project-to",  type=int, default=None,
                    help="Project each population down to this many haplotypes.")
     args = p.parse_args()
@@ -65,6 +92,9 @@ def main():
     print(f"Populations: {pop_names}")
 
     opener = gzip.open if str(args.input_vcf).endswith(".gz") else open
+
+    chrom, sequence_length = parse_contig_length(args.input_vcf, opener)
+    print(f"Contig from VCF header: {chrom}  length={sequence_length:,}")
 
     # We'll accumulate a raw count array of shape (n_pop0+1, n_pop1+1, ...)
     # First pass: read header to get sample indices per pop
@@ -175,6 +205,22 @@ def main():
         pickle.dump(sfs, fh)
 
     print(f"\nSaved -> {args.output_sfs}")
+
+    if args.output_meta is not None:
+        args.output_meta.parent.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "chrom": chrom,
+            "sequence_length": sequence_length,
+            "source_vcf": str(args.input_vcf),
+            "n_sites_total": total,
+            "n_sites_kept": kept,
+            "n_sites_skipped_missing_gt": skipped_missing,
+            "n_sites_skipped_no_aa": skipped_no_aa,
+            "n_sites_skipped_aa_mismatch": skipped_no_match,
+        }
+        with open(args.output_meta, "w") as fh:
+            json.dump(meta, fh, indent=2)
+        print(f"Saved -> {args.output_meta}")
 
 
 if __name__ == "__main__":

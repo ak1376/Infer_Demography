@@ -1,5 +1,5 @@
 {
-  "sequence_length": 24000000,
+  "sequence_length": 100000000,
   "chunk_sequence_length": 1e7,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,

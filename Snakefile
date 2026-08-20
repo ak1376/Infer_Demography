@@ -66,6 +66,7 @@ REAL_VCF         = f"{DROSO_DIR}/Chr2L/polarized.diploidGT.vcf.gz"        # dipl
 POLARIZED_VCF    = f"{DROSO_DIR}/Chr2L/polarized.vcf.gz"                  # haploid + AA (Chr2L); legacy alias
 UNFOLDED_SFS     = f"{DROSO_DIR}/Chr2L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr2L); legacy alias
 COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl"     # summed autosomal SFS; used by SFS inference
+COMBINED_SFS_META = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.meta.json"  # summed sequence_length across AUTOSOMES
 ANCESTRAL_FASTA  = f"{ANCESTRAL_DIR}/chr2L.q30.fa"                        # legacy Chr2L alias
 
 # Per-chromosome path helpers (by-chromosome layout)
@@ -179,6 +180,13 @@ COMERON_XLSX       = f"{DROSO_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"
 REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis/runs"
 REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences"
 REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
+
+# Single-chromosome variants of REAL_RUN_ROOT/REAL_INF_ROOT (as opposed to the
+# combined-autosome COMBINED_SFS used by infer_engine_real above). {chrom} is
+# a real Snakemake wildcard here (double-braced so the f-string leaves it
+# literal), constrained below to Chr(2L|2R|3L|3R).
+REAL_RUN_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis/{{chrom}}/runs"
+REAL_INF_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis/{{chrom}}/inferences"
 
 # Number of top replicates the real moments/dadi aggregation keeps.
 # Must match the rep count the trained model was built with (moments_*_rep_0..N-1).
@@ -1154,18 +1162,21 @@ rule combine_results:
                     if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl") else [],
         momentsLD = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl")
                     if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl") else [],
+        # FIM/residuals are always computed (see FIM_ENGINES/RESIDUAL_ENGINES
+        # above); use_fim_features/use_residuals only control whether
+        # feature_extraction.py later uses them as modeling features.
         fims      = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/fim/{eng}.fim.npy"
             for eng in FIM_ENGINES
-        ] if CFG.get("use_fim_features", False) else [],
+        ],
         resid_vecs = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/{_resid_vector_fname()}"
             for eng in RESIDUAL_ENGINES
-        ] if CFG.get("use_residuals", False) else [],
+        ],
         resid_meta = lambda w: [
             f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{eng}/meta.json"
             for eng in RESIDUAL_ENGINES
-        ] if CFG.get("use_residuals", False) else [],
+        ],
     output:
         combo = f"experiments/{MODEL}/inferences/sim_{{sid}}/all_inferences.pkl"
     run:
@@ -1503,16 +1514,22 @@ rule compute_unfolded_sfs:
         tbi     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
         popfile = REAL_POPFILE,
     output:
-        sfs = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
+        sfs  = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
+        # sequence_length here comes straight from this VCF's own ##contig
+        # header -- the real-data inference rules read it back out so theta/
+        # N_ANC scaling always matches whichever VCF actually built the SFS,
+        # instead of a hand-maintained config value that can drift out of sync.
+        meta = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json",
     threads: 1
     shell:
         r"""
         set -euo pipefail
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/compute_unfolded_sfs.py \
-          --input-vcf  "{input.vcf}" \
-          --popfile    "{input.popfile}" \
-          --output-sfs "{output.sfs}"
+          --input-vcf   "{input.vcf}" \
+          --popfile     "{input.popfile}" \
+          --output-sfs  "{output.sfs}" \
+          --output-meta "{output.meta}"
         """
 
 ##############################################################################
@@ -1522,9 +1539,11 @@ rule compute_unfolded_sfs:
 ##############################################################################
 rule combine_autosomal_sfs:
     input:
-        per_chrom = expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl", chrom=AUTOSOMES),
+        per_chrom      = expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl", chrom=AUTOSOMES),
+        per_chrom_meta = expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json", chrom=AUTOSOMES),
     output:
-        sfs = COMBINED_SFS,
+        sfs  = COMBINED_SFS,
+        meta = COMBINED_SFS_META,
     threads: 1
     shell:
         r"""
@@ -1533,7 +1552,9 @@ rule combine_autosomal_sfs:
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/combine_sfs.py \
           --in-sfs {input.per_chrom} \
-          --output-sfs "{output.sfs}"
+          --output-sfs "{output.sfs}" \
+          --in-meta {input.per_chrom_meta} \
+          --output-meta "{output.meta}"
         """
 
 ##############################################################################
@@ -1554,7 +1575,8 @@ rule all_unfolded_sfs:
 ##############################################################################
 rule infer_engine_real:
     input:
-        sfs = COMBINED_SFS,
+        sfs  = COMBINED_SFS,
+        meta = COMBINED_SFS_META,
     output:
         pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl")
     params:
@@ -1569,6 +1591,7 @@ rule infer_engine_real:
     shell:
         r"""
         set -euo pipefail
+        seq_len=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['sequence_length'])" "{input.meta}")
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/moments_dadi_inference_real.py \
           --mode {wildcards.engine} \
@@ -1577,6 +1600,7 @@ rule infer_engine_real:
           --model-py "{params.model_py}" \
           --outdir "{params.run_dir}/inferences" \
           --opt-seed {wildcards.opt} \
+          --real-sequence-length "$seq_len" \
           -v
         """
 
@@ -1603,6 +1627,68 @@ rule aggregate_opts_engine_real:
         pickle.dump(best, open(output.pkl, "wb"))
 
         print(f"✅ [REAL] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
+
+
+##############################################################################
+# REAL DATA (single chromosome) – NLopt Poisson SFS optimisation             #
+# (moments / dadi), fit against one chromosome's SFS instead of the         #
+# combined-autosome COMBINED_SFS used by infer_engine_real above.           #
+##############################################################################
+rule infer_engine_real_chrom:
+    input:
+        sfs  = lambda w: per_chrom_sfs(w.chrom),
+        meta = lambda w: f"{DROSO_DIR}/{w.chrom}/unfolded.sfs.meta.json",
+    output:
+        pkl = temp(f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl")
+    params:
+        run_dir  = lambda w: f"experiments/{MODEL}/real_data_analysis/{w.chrom}/runs/run_{w.opt}",
+        cfg      = EXP_CFG,
+        model_py = (
+            f"demes_models:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "demes_models:drosophila_three_epoch"
+        ),
+    threads: 2
+    shell:
+        r"""
+        set -euo pipefail
+        seq_len=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['sequence_length'])" "{input.meta}")
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/moments_dadi_inference_real.py \
+          --mode {wildcards.engine} \
+          --sfs-file "{input.sfs}" \
+          --config "{params.cfg}" \
+          --model-py "{params.model_py}" \
+          --outdir "{params.run_dir}/inferences" \
+          --opt-seed {wildcards.opt} \
+          --real-sequence-length "$seq_len" \
+          -v
+        """
+
+rule aggregate_opts_engine_real_chrom:
+    input:
+        runs = lambda w: [
+            f"experiments/{MODEL}/real_data_analysis/{w.chrom}/runs/run_{o}/inferences/{w.engine}/best_fit.pkl"
+            for o in range(NUM_REAL_OPTIMS)
+        ]
+    output:
+        pkl = f"{REAL_INF_ROOT_CHROM}/{{engine}}/best_fit.pkl"
+    run:
+        import pickle, pathlib
+        from src.aggregate_utils import aggregate_top_k
+
+        records = [(p, i) for i, p in enumerate(input.runs)]
+
+        best, diag = aggregate_top_k(
+            records, REAL_TOP_K,
+            extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
+        )
+        best = {"mode": wildcards.engine, "chrom": wildcards.chrom, **best}
+
+        pathlib.Path(output.pkl).parent.mkdir(parents=True, exist_ok=True)
+        pickle.dump(best, open(output.pkl, "wb"))
+
+        print(f"✅ [REAL/{wildcards.chrom}] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
 
 
 ##############################################################################

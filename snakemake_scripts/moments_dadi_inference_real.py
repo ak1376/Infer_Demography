@@ -67,6 +67,14 @@ def _parse_args():
         default=None,
         help="Override config opt_seed (use wildcard opt index to vary starting point across parallel runs).",
     )
+    p.add_argument(
+        "--real-sequence-length",
+        type=float,
+        default=None,
+        help="Override config real_sequence_length/sequence_length for the theta -> "
+             "N_ANC_implied conversion (typically the ##contig length from the VCF "
+             "that produced --sfs-file; see unfolded.sfs.meta.json).",
+    )
     p.add_argument("-v", "--verbose", action="count", default=1)
     return p.parse_args()
 
@@ -91,6 +99,7 @@ def main() -> None:
                 outdir=args.outdir,
                 mode=m,
                 opt_seed=args.opt_seed,
+                real_sequence_length=args.real_sequence_length,
                 verbose=bool(args.verbose),
             )
     else:
@@ -101,6 +110,7 @@ def main() -> None:
             outdir=args.outdir,
             mode=args.mode,
             opt_seed=args.opt_seed,
+            real_sequence_length=args.real_sequence_length,
             verbose=bool(args.verbose),
         )
 

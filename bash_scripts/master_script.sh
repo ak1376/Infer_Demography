@@ -109,10 +109,19 @@ export BATCH_SIZE=1
 agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
   --dependency=afterany:$mom_id:$dadi_id bash_scripts/aggregate_moments_dadi.sh); [[ -n "$agg_id" ]]
 
+# --- 8b/8c. FIM + SFS-residuals (always computed, regardless of
+#            use_fim_features/use_residuals -- those flags only control
+#            whether feature_extraction.py later uses them as features) ---
+export BATCH_SIZE=1
+fim_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
+  $(dep_afterany "$agg_id") bash_scripts/compute_fim.sh); [[ -n "$fim_id" ]]
+resid_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
+  $(dep_afterany "$agg_id") bash_scripts/compute_residuals.sh); [[ -n "$resid_id" ]]
+
 # --- 9. combine_results ---
 export BATCH_SIZE=1
 comb_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  --dependency=afterany:$momLD_id:$agg_id bash_scripts/run_combine.sh); [[ -n "$comb_id" ]]
+  --dependency=afterany:$momLD_id:$agg_id:$fim_id:$resid_id bash_scripts/run_combine.sh); [[ -n "$comb_id" ]]
 
 # --- 10. build modeling dataset (single job, no array) ---
 feat_id=$(submit --dependency=afterany:$comb_id bash_scripts/aggregate_features.sh); [[ -n "$feat_id" ]]
