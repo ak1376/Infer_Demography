@@ -78,7 +78,16 @@ SFS_CFG = {
     "simple":  "config_files/experiment_config_split_migration_growth.json",
     "complex": "config_files/experiment_config_split_migration_growth_both.json",
 }
-SFS_N_STARTS = 10
+SFS_N_STARTS = 100
+
+# Godambe-adjusted LRT for CO growth (scripts/godambe_lrt_growth.py), generalized
+# from the original Chr3L-only bootstrapping_for_LRT_Chr3L.py so any arm in
+# SFS_ARMS can be requested directly. ~100 kb is the LD-justified recommendation
+# from bootstrap_window_size.py (set by the slow-decaying Chr2R-FR curve in the
+# pooled analysis); the arm-specific, LD-decay-validated block size from
+# rule validated_blocks is reported alongside this sweep, not instead of it.
+GODAMBE_GROWTH_BLOCK_SIZES_KB = [50, 75, 100, 150, 200, 300, 500]
+GODAMBE_GROWTH_NUM_BOOT_REPS = 10_000
 
 ACTIVE_ARMS = ["Chr3L"]                           # restricted to Chr3L for now
 
@@ -493,3 +502,68 @@ rule sfs_fim_all:
     input:
         expand(f"{OUT}/{{arm}}/sfs_fit_{{fit}}/fim_summary.json",
                arm=SFS_ARMS, fit=["simple", "complex"]),
+
+
+# ===========================================================================
+# Godambe-adjusted LRT for CO growth (per arm) -- NOT in `rule all`, run
+# explicitly, e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores 8 \
+#       godambe_correction_LRT/real_arms/Chr3L/godambe_lrt/block_sensitivity.csv
+# or `snakemake -s godambe_correction_LRT/Snakefile --cores N godambe_lrt_all`
+#
+# Generalized from scripts/bootstrapping_for_LRT_Chr3L.py: reparameterizes CO
+# growth as growth_CO = log(N_CO0/N_CO1) (null: growth_CO=0, i.e. N_CO0=N_CO1)
+# so the test doesn't depend on N_CO0's separate identifiability from N_ANC --
+# H comes from moments.Godambe.get_hess restricted to growth_CO at the
+# null-embedded point; J comes from a block-bootstrap over this arm's own
+# non-overlapping blocks. Swept across GODAMBE_GROWTH_BLOCK_SIZES_KB and
+# reported once more at the arm's own LD-decay-validated block size (from
+# rule validated_blocks) for a size that isn't arbitrarily chosen.
+# ===========================================================================
+rule godambe_lrt_growth:
+    input:
+        simple_fit       = f"{OUT}/{{arm}}/sfs_fit_simple/best_fit.pkl",
+        complex_fit      = f"{OUT}/{{arm}}/sfs_fit_complex/best_fit.pkl",
+        sfs              = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+        # NOTE: the haploid polarized VCF (ploidy=1, matches how unfolded.sfs.pkl
+        # was built), NOT arm_vcf()'s diploidGT VCF used by the LD-side rules.
+        vcf              = f"{DROSO}/{{arm}}/polarized.vcf.gz",
+        popfile          = POPFILE,
+        validated_blocks = f"{OUT}/{{arm}}/validated_blocks.bed",
+    output:
+        csv         = f"{OUT}/{{arm}}/godambe_lrt/block_sensitivity.csv",
+        sensitivity = f"{OUT}/{{arm}}/godambe_lrt/block_sensitivity.png",
+        j_plot      = f"{OUT}/{{arm}}/godambe_lrt/J_and_adjust_by_block_size.png",
+        adjust_plot = f"{OUT}/{{arm}}/godambe_lrt/adjust_by_block_size.png",
+        histograms  = expand(
+            f"{OUT}/{{{{arm}}}}/godambe_lrt/J_bootstrap_hist_{{bs}}kb.png",
+            bs=GODAMBE_GROWTH_BLOCK_SIZES_KB,
+        ),
+    params:
+        script         = f"{GODAMBE_SCR}/godambe_lrt_growth.py",
+        out_dir        = f"{OUT}/{{arm}}/godambe_lrt",
+        cache_dir      = f"{DROSO}/chunk_spectra_cache/{{arm}}",
+        block_sizes_kb = ",".join(str(b) for b in GODAMBE_GROWTH_BLOCK_SIZES_KB),
+        num_boot_reps  = GODAMBE_GROWTH_NUM_BOOT_REPS,
+    threads: 8
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --arm {wildcards.arm} \
+            --simple-fit "{input.simple_fit}" \
+            --complex-fit "{input.complex_fit}" \
+            --sfs "{input.sfs}" \
+            --vcf "{input.vcf}" \
+            --popfile "{input.popfile}" \
+            --validated-blocks-bed "{input.validated_blocks}" \
+            --out-dir "{params.out_dir}" \
+            --cache-dir "{params.cache_dir}" \
+            --max-workers {threads} \
+            --num-boot-reps {params.num_boot_reps} \
+            --block-sizes-kb "{params.block_sizes_kb}"
+        """
+
+rule godambe_lrt_all:
+    input:
+        expand(f"{OUT}/{{arm}}/godambe_lrt/block_sensitivity.csv", arm=SFS_ARMS),
