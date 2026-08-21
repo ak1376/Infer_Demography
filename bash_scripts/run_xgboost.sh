@@ -20,14 +20,19 @@ CFG_PATH="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 
+# Which FIM x SFS-residuals feature-set variants to run (must match
+# MODELING_VARIANTS in the Snakefile)
+VARIANTS=(w_FIM_w_SFSresids w_FIM_wo_SFSresids wo_FIM_w_SFSresids wo_FIM_wo_SFSresids)
+
 # XGBoost outputs (Snakemake will pull its inputs automatically)
-XGB_TARGETS=(
-  "experiments/${MODEL}/modeling/xgboost/xgb_mdl_obj.pkl"
-  "experiments/${MODEL}/modeling/xgboost/xgb_model_error.json"
-  "experiments/${MODEL}/modeling/xgboost/xgb_model.pkl"
-  "experiments/${MODEL}/modeling/xgboost/xgb_results.png"
-  "experiments/${MODEL}/modeling/xgboost/xgb_feature_importances.png"
-)
+XGB_TARGETS=()
+for variant in "${VARIANTS[@]}"; do
+  XGB_TARGETS+=("experiments/${MODEL}/modeling_${variant}/xgboost/xgb_mdl_obj.pkl")
+  XGB_TARGETS+=("experiments/${MODEL}/modeling_${variant}/xgboost/xgb_model_error.json")
+  XGB_TARGETS+=("experiments/${MODEL}/modeling_${variant}/xgboost/xgb_model.pkl")
+  XGB_TARGETS+=("experiments/${MODEL}/modeling_${variant}/xgboost/xgb_results.png")
+  XGB_TARGETS+=("experiments/${MODEL}/modeling_${variant}/xgboost/xgb_feature_importances.png")
+done
 
 # show targets for sanity
 printf 'XGB TARGET: %s\n' "${XGB_TARGETS[@]}"

@@ -22,14 +22,19 @@ SNAKEFILE="$ROOT/Snakefile"
 # pull model name from experiment config
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 
+# Which FIM x SFS-residuals feature-set variants to run (must match
+# MODELING_VARIANTS in the Snakefile)
+VARIANTS=(w_FIM_w_SFSresids w_FIM_wo_SFSresids wo_FIM_w_SFSresids wo_FIM_wo_SFSresids)
+
 # Random Forest outputs (Snakemake will pull required inputs automatically)
-RF_TARGETS=(
-  "experiments/${MODEL}/modeling/random_forest/random_forest_mdl_obj.pkl"
-  "experiments/${MODEL}/modeling/random_forest/random_forest_model_error.json"
-  "experiments/${MODEL}/modeling/random_forest/random_forest_model.pkl"
-  "experiments/${MODEL}/modeling/random_forest/random_forest_results.png"
-  "experiments/${MODEL}/modeling/random_forest/random_forest_feature_importances.png"
-)
+RF_TARGETS=()
+for variant in "${VARIANTS[@]}"; do
+  RF_TARGETS+=("experiments/${MODEL}/modeling_${variant}/random_forest/random_forest_mdl_obj.pkl")
+  RF_TARGETS+=("experiments/${MODEL}/modeling_${variant}/random_forest/random_forest_model_error.json")
+  RF_TARGETS+=("experiments/${MODEL}/modeling_${variant}/random_forest/random_forest_model.pkl")
+  RF_TARGETS+=("experiments/${MODEL}/modeling_${variant}/random_forest/random_forest_results.png")
+  RF_TARGETS+=("experiments/${MODEL}/modeling_${variant}/random_forest/random_forest_feature_importances.png")
+done
 
 # sanity print
 printf 'RF TARGET: %s\n' "${RF_TARGETS[@]}"

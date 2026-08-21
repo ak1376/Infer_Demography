@@ -23,16 +23,22 @@ CORES="${SLURM_CPUS_PER_TASK:-4}"
 # Model name from experiment config
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 
-# Which linear variants to run
+# Which linear regularization types to run
 REGS=(standard ridge lasso elasticnet)
 
-# Build target list for all four variants
+# Which FIM x SFS-residuals feature-set variants to run (must match
+# MODELING_VARIANTS in the Snakefile)
+VARIANTS=(w_FIM_w_SFSresids w_FIM_wo_SFSresids wo_FIM_w_SFSresids wo_FIM_wo_SFSresids)
+
+# Build target list for every variant x regularization-type combination
 targets=()
-for reg in "${REGS[@]}"; do
-  targets+=("experiments/${MODEL}/modeling/linear_${reg}/linear_mdl_obj_${reg}.pkl")
-  targets+=("experiments/${MODEL}/modeling/linear_${reg}/linear_model_error_${reg}.json")
-  targets+=("experiments/${MODEL}/modeling/linear_${reg}/linear_regression_model_${reg}.pkl")
-  targets+=("experiments/${MODEL}/modeling/linear_${reg}/linear_results_${reg}.png")
+for variant in "${VARIANTS[@]}"; do
+  for reg in "${REGS[@]}"; do
+    targets+=("experiments/${MODEL}/modeling_${variant}/linear_${reg}/linear_mdl_obj_${reg}.pkl")
+    targets+=("experiments/${MODEL}/modeling_${variant}/linear_${reg}/linear_model_error_${reg}.json")
+    targets+=("experiments/${MODEL}/modeling_${variant}/linear_${reg}/linear_regression_model_${reg}.pkl")
+    targets+=("experiments/${MODEL}/modeling_${variant}/linear_${reg}/linear_results_${reg}.png")
+  done
 done
 
 # (Optional) show targets
