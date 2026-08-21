@@ -1333,9 +1333,9 @@ rule linear_regression:
             --main_colors_file       "{input.colors}" \
             --regression_type "{wildcards.reg}" \
             --model_directory "{params.model_dir}" \
+            {params.gridflag} \
             --alpha {params.alpha} \
-            --l1_ratio {params.l1_ratio} \
-            {params.gridflag}
+            --l1_ratio {params.l1_ratio}
         """
 
 ##############################################################################
@@ -1380,8 +1380,8 @@ rule random_forest:
             --model_config_path      "{input.mdlcfg}" \
             --color_shades_file      "{input.shades}" \
             --main_colors_file       "{input.colors}" \
-            --model_directory "{params.model_dir}" \
-            {params.opt_flags}
+            {params.opt_flags} \
+            --model_directory "{params.model_dir}"
         """
 
 ##############################################################################
@@ -1426,8 +1426,8 @@ rule xgboost:
             --model_config_path      "{input.mdlcfg}" \
             --color_shades_file      "{input.shades}" \
             --main_colors_file       "{input.colors}" \
-            --model_directory "{params.model_dir}" \
-            {params.opt_flags}
+            {params.opt_flags} \
+            --model_directory "{params.model_dir}"
         """
 
 ##############################################################################
