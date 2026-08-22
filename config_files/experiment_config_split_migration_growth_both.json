@@ -1,5 +1,5 @@
 {
-  "sequence_length": 1e8,
+  "sequence_length": 24000000,
   "chunk_sequence_length": 1e7,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
@@ -9,13 +9,13 @@
     "FR": 9
   },
   "seed": 42,
-  "window_mode": "chunked",
+  "window_mode": "replicates",
   "num_windows": 100,
   "num_optimizations": 100,
   "start_strategy": "lhs",
   "aggregate_min_replicates": 5,
   "top_k": 5,
-  "num_draws": 1000,
+  "num_draws": 5000,
   "priors": {
     "N_ANC": [
       3162,
@@ -116,9 +116,9 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": true,
+  "use_gpu_ld": false,
   "use_gpu_dadi": false,
-  "pts_base": [10, 20, 30],
+  "pts_base": [20, 30, 40],
   "generate_profiles": false,
   "profile_points": 41,
   "profile_widen": 0.5,
