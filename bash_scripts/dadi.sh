@@ -3,8 +3,8 @@
 #SBATCH --output=logs/dadi_cpu_%A_%a.out
 #SBATCH --error=logs/dadi_cpu_%A_%a.err
 #SBATCH --time=15:00:00
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=4G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -17,6 +17,13 @@ set -euo pipefail
 # Overridable so master_script.sh can export the exact value it used to size
 # the --array range it submits this script with.
 BATCH_SIZE="${BATCH_SIZE:-50}"
+# cpus-per-task=8 (was 2) lets up to 8 restarts in a batch run concurrently
+# (infer_engine is threads:1 -- see Snakefile). Raising it multiplies this
+# stage's total concurrent core footprint across every array task running at
+# once. NOTE: unlike moments.sh, master_script.sh submits this stage's array
+# with NO throttle (no %N), so concurrency here is bounded only by your
+# account's actual QOS limits -- check those (sacctmgr show qos
+# format=Name,MaxTRESPU,MaxJobsPU) before running this at scale.
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 SNAKEFILE="$ROOT/Snakefile"
@@ -85,6 +92,13 @@ BATCH_END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 [[ $BATCH_END -ge $TOTAL_TASKS ]] && BATCH_END=$(( TOTAL_TASKS - 1 ))
 echo "Array $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
 
+# Collect targets, then build the whole batch in one Snakemake call (same
+# rationale as LD_stats_windows.sh/MomentsLD.sh: one call per array task
+# instead of up to BATCH_SIZE, cutting redundant DAG-parse/startup overhead.
+# infer_engine is threads:1, so this also lets up to $SLURM_CPUS_PER_TASK
+# restarts run concurrently instead of one at a time).
+TARGETS=()
+
 for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   SID=$(( IDX / NUM_OPTIMS ))
   OPT=$(( IDX % NUM_OPTIMS ))
@@ -107,16 +121,26 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
 
   # ---- what this job will build (per-run output) ----
   TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/best_fit.pkl"
-  echo "→ build $TARGET"
+  echo "QUEUE: $TARGET"
+  TARGETS+=("$TARGET")
+done
 
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+  echo "Nothing to build for this array task (all skipped)."
+else
+  echo "Building ${#TARGETS[@]} targets in one Snakemake call (-j $SLURM_CPUS_PER_TASK)..."
+  # --keep-going: one restart failing shouldn't strand the rest of this
+  # batch's otherwise-good restarts. Not wrapped in `|| true` -- a real
+  # failure should still surface as this array task's exit status.
   snakemake \
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
     --rerun-triggers mtime \
     --nolock \
+    --keep-going \
     -j "$SLURM_CPUS_PER_TASK" \
-    "$TARGET" || { echo "Snakemake failed for SID=$SID OPT=$OPT"; exit 1; }
-done
+    "${TARGETS[@]}"
+fi
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."

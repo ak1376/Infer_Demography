@@ -3,8 +3,8 @@
 #SBATCH --output=logs/optLD_%A_%a.out
 #SBATCH --error=logs/optLD_%A_%a.err
 #SBATCH --time=5:00:00
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=2G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -23,6 +23,19 @@ set -euo pipefail
 # it but never build it themselves, so concurrent opts for the same sid
 # never race on creating it). Aggregation across opts happens afterward in
 # aggregate_momentsld.sh.
+#
+# All targets in one array task's batch are collected first and built in a
+# SINGLE Snakemake call (same rationale as LD_stats_windows.sh/
+# build_windows.sh: cuts redundant per-target DAG-parse/startup overhead).
+# Each infer_momentsld[_pruned] job only needs threads:1, so passing
+# -j $SLURM_CPUS_PER_TASK (now 8, was 1) also lets up to that many restarts
+# in the batch run concurrently instead of strictly one at a time.
+# NOTE: raising cpus-per-task multiplies this stage's total concurrent core
+# footprint by the same factor across every array task running at once --
+# check your account's QOS headroom (sacctmgr show qos
+# format=Name,MaxTRESPU,MaxJobsPU) and/or lower the array throttle
+# (MAX_CONCURRENT=625 instead of the 5000 default) before submitting at
+# scale, since the throttle was originally sized assuming 1 core/task.
 # ---------------------------------------------------------------------------
 BATCH_SIZE="${BATCH_SIZE:-50}"   # number of (sid,opt) pairs per array element
 
@@ -67,6 +80,15 @@ if [[ $BATCH_START -gt $BATCH_END ]]; then
     exit 0
 fi
 
+# Collect every target this array task needs, then build them all in one
+# Snakemake call (see header comment for rationale).
+TARGETS=()
+if [[ -n "$PRUNE_FRACS" ]]; then
+    ALLOWED_RULE="infer_momentsld_pruned"
+else
+    ALLOWED_RULE="infer_momentsld"
+fi
+
 for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
     SID=$(( IDX / NUM_OPTIMS ))
     OPT=$(( IDX % NUM_OPTIMS ))
@@ -78,17 +100,8 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
                 echo "[sim_${SID} ${FRAC_TAG}] already aggregated -> skipping OPT=$OPT"
                 continue
             fi
-
-            TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/MomentsLD/pruning/${FRAC_TAG}/best_fit.pkl"
-            echo "Optimising Moments-LD (mixed, ${FRAC_TAG}) for SID=$SID OPT=$OPT → $TARGET"
-            snakemake --snakefile "$SNAKEFILE" \
-                      --directory "$ROOT" \
-                      --rerun-incomplete \
-                      --nolock \
-                      --allowed-rules infer_momentsld_pruned \
-                      -j "$SLURM_CPUS_PER_TASK" \
-                      "$TARGET" \
-                      || { echo "Snakemake failed for SID=$SID OPT=$OPT FRAC=$FRAC_TAG"; exit 1; }
+            echo "QUEUE: (mixed, ${FRAC_TAG}) SID=$SID OPT=$OPT"
+            TARGETS+=("experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/MomentsLD/pruning/${FRAC_TAG}/best_fit.pkl")
         done
     else
         CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/best_fit.pkl"
@@ -96,18 +109,26 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
             echo "[sim_${SID}] already aggregated -> skipping OPT=$OPT"
             continue
         fi
-
-        TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/MomentsLD/best_fit.pkl"
-        echo "Optimising Moments-LD for SID=$SID OPT=$OPT → $TARGET"
-        snakemake --snakefile "$SNAKEFILE" \
-                  --directory "$ROOT" \
-                  --rerun-incomplete \
-                  --nolock \
-                  --allowed-rules infer_momentsld \
-                  -j "$SLURM_CPUS_PER_TASK" \
-                  "$TARGET" \
-                  || { echo "Snakemake failed for SID=$SID OPT=$OPT"; exit 1; }
+        echo "QUEUE: SID=$SID OPT=$OPT"
+        TARGETS+=("experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/MomentsLD/best_fit.pkl")
     fi
 done
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    echo "Nothing to build for this array task (all skipped)."
+else
+    echo "Building ${#TARGETS[@]} targets in one Snakemake call (-j $SLURM_CPUS_PER_TASK, allowed-rule=$ALLOWED_RULE)..."
+    # --keep-going: one restart failing shouldn't strand the rest of this
+    # batch's otherwise-good restarts. Not wrapped in `|| true` -- a real
+    # failure should still surface as this array task's exit status.
+    snakemake --snakefile "$SNAKEFILE" \
+              --directory "$ROOT" \
+              --rerun-incomplete \
+              --nolock \
+              --keep-going \
+              --allowed-rules "$ALLOWED_RULE" \
+              -j "$SLURM_CPUS_PER_TASK" \
+              "${TARGETS[@]}"
+fi
 
 echo "Array task $SLURM_ARRAY_TASK_ID finished."

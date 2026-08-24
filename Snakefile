@@ -425,7 +425,12 @@ rule infer_engine:
             else "src.simulation:drosophila_three_epoch"
         ),
         fix      = ""     # e.g. '--fix N0=10000 --fix m12=0.0'
-    threads: 8
+    # No internal multi-threaded code path in moments_dadi_inference.py --
+    # OMP/MKL threads only apply to whatever BLAS backend numpy uses, and at
+    # this grid size (pts_base up to ~40) that overhead outweighs any benefit.
+    # threads:1 also lets moments.sh/dadi.sh run several restarts concurrently
+    # per array task (via -j) without oversubscribing cores.
+    threads: 1
     shell:
         r"""
         set -euo pipefail
