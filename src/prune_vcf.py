@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """
-Prune a VCF file at multiple keep-fractions.
+Prune a VCF file at multiple keep-fractions, and/or cap it at absolute
+keep-counts.
 
-For each fraction the original filename is preserved so that existing
+Two independent pruning modes, selected by which CLI flag is used:
+  --keep-fractions: keep a fixed % of sites, e.g. 0.15 -> keep 15% (random
+                     subsample). Same relative thinning regardless of how
+                     many sites the window started with.
+  --keep-counts:    cap at an absolute number of sites, e.g. 5000 -> keep
+                     min(n_full, 5000). A window that already has fewer
+                     sites than the cap is copied through unchanged rather
+                     than resampled -- this mode never makes a sparse
+                     window sparser.
+
+For each fraction/count the original filename is preserved so that existing
 LD-stats scripts can be pointed at each output directory unchanged.
 The original file is also copied into an 'unpruned/' directory.
 
@@ -10,9 +21,9 @@ Output layout (relative to --out-dir):
   unpruned/   <original_name>.vcf.gz     <- copy of the input
   thin10/     <original_name>.vcf.gz     <- 10% of sites kept
   thin15/     <original_name>.vcf.gz
-  thin20/     <original_name>.vcf.gz
-  thin25/     <original_name>.vcf.gz
-  thin30/     <original_name>.vcf.gz
+  ...
+  n5000/      <original_name>.vcf.gz     <- capped at 5000 sites
+  n20000/     <original_name>.vcf.gz
 
 Single VCF:
   python prune_vcf.py --vcf window_24.vcf.gz --out-dir /path/to/output
@@ -32,6 +43,7 @@ from pathlib import Path
 import numpy as np
 
 THIN_FRACTIONS = [0.10, 0.15, 0.20, 0.25, 0.30]
+KEEP_COUNTS: list[int] = []
 SEED = 42
 SUPPORT_FILES = ["samples.txt", "flat_map.txt"]
 
@@ -40,17 +52,26 @@ def _frac_tag(f: float) -> str:
     return f"thin{round(f * 100):02d}"
 
 
+def _count_tag(n: int) -> str:
+    return f"n{int(n)}"
+
+
 def _write_thinned(args):
-    """Worker function: write one thinned VCF. Called in a process pool."""
-    header, variants, n_full, frac, dest_str = args
+    """Worker function: write one thinned/capped VCF. Called in a process pool."""
+    header, variants, n_full, tag, n_keep, seed, dest_str = args
     dest = Path(dest_str)
     if dest.exists():
-        return (
-            f"  {dest.parent.parent.name}/windows/{dest.name}: already exists, skipping"
-        )
+        return f"  {tag}/windows/{dest.name}: already exists, skipping"
 
-    n_keep = max(1, round(n_full * frac))
-    rng = np.random.default_rng(SEED + round(frac * 100))
+    if n_keep >= n_full:
+        # Nothing to remove (count mode, window already at/below the cap) --
+        # copy through unchanged rather than resampling everything.
+        with gzip.open(str(dest), "wt") as fh:
+            fh.writelines(header)
+            fh.writelines(variants)
+        return f"  {tag}/windows/{dest.name}: kept all {n_full} sites (below cap)"
+
+    rng = np.random.default_rng(seed)
     keep_idx = np.sort(rng.choice(n_full, size=n_keep, replace=False))
 
     with gzip.open(str(dest), "wt") as fh:
@@ -58,7 +79,7 @@ def _write_thinned(args):
         for i in keep_idx:
             fh.write(variants[i])
 
-    return f"  {_frac_tag(frac)}/windows/{dest.name}: kept {n_keep}/{n_full} sites ({frac:.0%})"
+    return f"  {tag}/windows/{dest.name}: kept {n_keep}/{n_full} sites ({n_keep / n_full:.0%})"
 
 
 def prune_vcf(
@@ -92,9 +113,18 @@ def prune_vcf(
                     shutil.copy2(str(src_dir / sf), str(unpruned_wins / sf))
             print(f"  unpruned/windows/{fname}: copied")
 
+    # (tag, n_keep, seed) for every requested fraction and/or absolute count.
+    specs = [
+        (_frac_tag(f), max(1, round(n_full * f)), SEED + round(f * 100))
+        for f in THIN_FRACTIONS
+    ]
+    specs += [
+        (_count_tag(n), min(n_full, int(n)), SEED + int(n)) for n in KEEP_COUNTS
+    ]
+
     # Prepare output windows/ dirs and copy support files
-    for frac in THIN_FRACTIONS:
-        wins_dir = out_dir / _frac_tag(frac) / "windows"
+    for tag, _, _ in specs:
+        wins_dir = out_dir / tag / "windows"
         wins_dir.mkdir(parents=True, exist_ok=True)
         for sf in SUPPORT_FILES:
             if (src_dir / sf).exists() and not (wins_dir / sf).exists():
@@ -106,10 +136,12 @@ def prune_vcf(
             header,
             variants,
             n_full,
-            frac,
-            str(out_dir / _frac_tag(frac) / "windows" / fname),
+            tag,
+            n_keep,
+            seed,
+            str(out_dir / tag / "windows" / fname),
         )
-        for frac in THIN_FRACTIONS
+        for tag, n_keep, seed in specs
     ]
 
     if workers > 1:
@@ -143,6 +175,14 @@ def _parse_args():
         "(default: all five)",
     )
     p.add_argument(
+        "--keep-counts",
+        type=str,
+        default=None,
+        help="Comma-separated absolute site-count caps, e.g. 5000 or "
+        "5000,20000 -- each window is capped at min(n_full, N); a window "
+        "already at or below N is copied through unchanged.",
+    )
+    p.add_argument(
         "--no-unpruned",
         action="store_true",
         help="Skip copying the original VCF into unpruned/ (saves disk space)",
@@ -154,9 +194,18 @@ if __name__ == "__main__":
     args = _parse_args()
     out_dir = args.out_dir.resolve()
 
-    # Override THIN_FRACTIONS if --keep-fractions specified
-    if args.keep_fractions:
-        THIN_FRACTIONS[:] = [float(x) for x in args.keep_fractions.split(",")]
+    # Explicit-mode override: when either flag is passed, produce ONLY what was
+    # asked for (an omitted flag means none of that mode), rather than falling
+    # back to the full THIN_FRACTIONS default sweep alongside it.
+    if args.keep_fractions is not None or args.keep_counts is not None:
+        THIN_FRACTIONS[:] = (
+            [float(x) for x in args.keep_fractions.split(",")]
+            if args.keep_fractions
+            else []
+        )
+        KEEP_COUNTS[:] = (
+            [int(x) for x in args.keep_counts.split(",")] if args.keep_counts else []
+        )
 
     copy_unpruned = not args.no_unpruned
 
