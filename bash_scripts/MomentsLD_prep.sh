@@ -51,18 +51,8 @@ BATCH_END=$((   (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 echo "Array $SLURM_ARRAY_TASK_ID → sims $BATCH_START .. $BATCH_END"
 
 for SID in $(seq "$BATCH_START" "$BATCH_END"); do
-    TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/means.varcovs.pkl"
-    echo "Aggregating LD stats for SID=$SID → $TARGET"
-    snakemake --snakefile "$SNAKEFILE" \
-              --directory "$ROOT" \
-              --rerun-incomplete \
-              --nolock \
-              --allowed-rules aggregate_ld_stats \
-              -j "$SLURM_CPUS_PER_TASK" \
-              "$TARGET" \
-              || { echo "Snakemake failed for SID=$SID"; exit 1; }
-
     if [[ -n "$PRUNE_FRACS" ]]; then
+        # ---- PRUNED-ONLY: pruning enabled, so unpruned is skipped -----------
         for FRAC_TAG in $PRUNE_FRACS; do
             TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/pruning/${FRAC_TAG}/means.varcovs.pkl"
             echo "Aggregating pruned LD stats (${FRAC_TAG}) for SID=$SID → $TARGET"
@@ -75,6 +65,18 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
                       "$TARGET" \
                       || { echo "Snakemake failed for SID=$SID FRAC=$FRAC_TAG"; exit 1; }
         done
+    else
+        # ---- UNPRUNED-ONLY: no pruning configured ---------------------------
+        TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/means.varcovs.pkl"
+        echo "Aggregating LD stats for SID=$SID → $TARGET"
+        snakemake --snakefile "$SNAKEFILE" \
+                  --directory "$ROOT" \
+                  --rerun-incomplete \
+                  --nolock \
+                  --allowed-rules aggregate_ld_stats \
+                  -j "$SLURM_CPUS_PER_TASK" \
+                  "$TARGET" \
+                  || { echo "Snakemake failed for SID=$SID"; exit 1; }
     fi
 done
 
