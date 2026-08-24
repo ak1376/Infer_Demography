@@ -37,7 +37,12 @@ NUM_OPTIMS=$(jq -r '.num_optimizations' "$CFG")
 MODEL=$(jq -r    '.demographic_model'   "$CFG")
 TOTAL_TASKS=$(( NUM_DRAWS * NUM_OPTIMS ))
 
-PRUNE_FRACS=$(jq -r '(.prune_keep_fractions // [])[] | (. * 100 | round | tostring) | "thin" + .' "$CFG" 2>/dev/null || true)
+PRUNE_MODE=$(jq -r '.prune_mode // "off"' "$CFG")
+case "$PRUNE_MODE" in
+    fraction) PRUNE_FRACS=$(jq -r '(.prune_keep_values // [])[] | (. * 100 | round | tostring) | "thin" + .' "$CFG" 2>/dev/null || true) ;;
+    count)    PRUNE_FRACS=$(jq -r '(.prune_keep_values // [])[] | tostring | "n" + .'                      "$CFG" 2>/dev/null || true) ;;
+    *)        PRUNE_FRACS="" ;;
+esac
 
 echo "CFG: $CFG"
 echo "MODEL: $MODEL  NUM_DRAWS: $NUM_DRAWS  NUM_OPTIMS: $NUM_OPTIMS  TOTAL_TASKS: $TOTAL_TASKS"

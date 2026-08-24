@@ -221,16 +221,29 @@ wildcard_constraints:
     reg        = r"standard|ridge|lasso|elasticnet",
     opt        = "|".join(str(i) for i in range(NUM_OPTIMS)),
     engine     = "moments|dadi",
-    frac_tag   = r"thin\d+",
+    frac_tag   = r"thin\d+|n\d+",
     model_key  = "|".join(REAL_MODEL_OBJS.keys()),
 
 # LD r-bins
 R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
 
-# Optional pruning — set "prune_keep_fractions": [0.15] in EXP_CFG to enable
-PRUNE_FRACS = CFG.get("prune_keep_fractions", [])
+# Optional pruning — set "prune_mode": "fraction"|"count" and
+# "prune_keep_values" in EXP_CFG to enable.
+#   fraction: keep a fixed % of sites per window regardless of density
+#             (values are fractions, e.g. [0.15] -> thin15/)
+#   count:    cap each window at min(n_sites, N) -- windows already below N
+#             are left untouched (values are absolute counts, e.g.
+#             [5000, 20000] -> n5000/, n20000/)
+PRUNE_MODE   = CFG.get("prune_mode", "off")
+PRUNE_VALUES = CFG.get("prune_keep_values", [])
 def _frac_tag(f): return f"thin{round(float(f) * 100):02d}"
-PRUNE_TAGS  = [_frac_tag(f) for f in PRUNE_FRACS]
+def _count_tag(n): return f"n{int(n)}"
+if PRUNE_MODE == "fraction":
+    PRUNE_TAGS = [_frac_tag(v) for v in PRUNE_VALUES]
+elif PRUNE_MODE == "count":
+    PRUNE_TAGS = [_count_tag(v) for v in PRUNE_VALUES]
+else:
+    PRUNE_TAGS = []
 
 ##############################################################################
 # RULE all – final targets the workflow must create
@@ -709,9 +722,9 @@ else:
 
 ##############################################################################
 # RULE ld_window – LD statistics for one window
-# prune_keep_fractions unset: computes stats directly on the full window
+# prune_mode "off" (default): computes stats directly on the full window
 # (unchanged, original behavior).
-# prune_keep_fractions set (e.g. [0.15]): LD pair count scales as
+# prune_mode "fraction"/"count" set: LD pair count scales as
 # density^2, so a dense window (many variants) can make the full
 # computation prohibitively slow. This branch thins the window first
 # (reusing rule prune_window's already-existing pruned VCF) and computes
@@ -784,7 +797,14 @@ rule prune_window:
     params:
         pruning_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning",
         windows_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
-        keep_frac   = lambda w: str(int(w.frac_tag.replace("thin", "")) / 100),
+        # frac_tag encodes which pruning mode produced it: "thinNN" (keep NN%
+        # of sites) or "nNNN" (cap at NNN sites, min(n_full, NNN) -- see
+        # src/prune_vcf.py's --keep-counts mode).
+        prune_flag  = lambda w: (
+            f"--keep-counts {int(w.frac_tag[1:])}"
+            if w.frac_tag.startswith("n")
+            else f"--keep-fractions {int(w.frac_tag.replace('thin', '')) / 100}"
+        ),
     threads: 1
     shell:
         """
@@ -793,7 +813,7 @@ rule prune_window:
         python "src/prune_vcf.py" \
             --vcf            "{params.windows_dir}/window_{wildcards.win}.vcf.gz" \
             --out-dir        "{params.pruning_dir}" \
-            --keep-fractions "{params.keep_frac}"   \
+            {params.prune_flag}                     \
             --no-unpruned                           \
             --workers        1
         """

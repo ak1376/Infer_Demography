@@ -31,7 +31,12 @@ export EXP_CFG="$CFG"
 NUM_DRAWS=$(jq -r '.num_draws'         "$CFG")
 MODEL=$(jq -r    '.demographic_model'  "$CFG")
 
-PRUNE_FRACS=$(jq -r '(.prune_keep_fractions // [])[] | (. * 100 | round | tostring) | "thin" + .' "$CFG" 2>/dev/null || true)
+PRUNE_MODE=$(jq -r '.prune_mode // "off"' "$CFG")
+case "$PRUNE_MODE" in
+    fraction) PRUNE_FRACS=$(jq -r '(.prune_keep_values // [])[] | (. * 100 | round | tostring) | "thin" + .' "$CFG" 2>/dev/null || true) ;;
+    count)    PRUNE_FRACS=$(jq -r '(.prune_keep_values // [])[] | tostring | "n" + .'                      "$CFG" 2>/dev/null || true) ;;
+    *)        PRUNE_FRACS="" ;;
+esac
 
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     NUM_ARRAY=$(( (NUM_DRAWS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))

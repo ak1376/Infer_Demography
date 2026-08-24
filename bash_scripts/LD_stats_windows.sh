@@ -81,14 +81,27 @@ if [[ "$USE_GPU_LD" == "true" ]]; then
     mkdir -p "$CUPY_CACHE_DIR"
 fi
 
-# Pruning keep-fractions from config (empty => pruning disabled). We only need
-# the fraction values here; r_bins / keep_frac live in the Snakefile rules that
-# the Snakemake targets below invoke, so nothing about LD binning is hardcoded.
-mapfile -t PRUNE_FRACS < <(jq -r '(.prune_keep_fractions // [])[]' "$CFG")
-PRUNING_ENABLED=$(( ${#PRUNE_FRACS[@]} > 0 ))
+# Pruning mode + values from config (mode "off", or values empty => pruning
+# disabled). We only need the mode/values here; r_bins / keep_frac live in the
+# Snakefile rules that the Snakemake targets below invoke, so nothing about LD
+# binning is hardcoded.
+PRUNE_MODE=$(jq -r '.prune_mode // "off"' "$CFG")
+mapfile -t PRUNE_FRACS < <(jq -r '(.prune_keep_values // [])[]' "$CFG")
+if [[ "$PRUNE_MODE" != "off" && ${#PRUNE_FRACS[@]} -gt 0 ]]; then
+    PRUNING_ENABLED=1
+else
+    PRUNING_ENABLED=0
+fi
 
-# thin<NN> tag for a keep-fraction, matching src.prune_vcf._frac_tag: round(f*100), 2-digit
-frac_tag() { printf "thin%02d" "$(awk "BEGIN{printf \"%.0f\", $1 * 100}")"; }
+# tag for a keep-value, matching src.prune_vcf.{_frac_tag,_count_tag}:
+# fraction mode -> thin<NN> (round(f*100), 2-digit); count mode -> n<N>.
+frac_tag() {
+    if [[ "$PRUNE_MODE" == "count" ]]; then
+        printf "n%d" "$1"
+    else
+        printf "thin%02d" "$(awk "BEGIN{printf \"%.0f\", $1 * 100}")"
+    fi
+}
 
 START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
 END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
@@ -97,7 +110,7 @@ END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 echo "Array $SLURM_ARRAY_TASK_ID → indices $START .. $END"
 echo "MODEL=$MODEL NUM_DRAWS=$NUM_DRAWS NUM_WINDOWS=$NUM_WINDOWS"
 if (( PRUNING_ENABLED )); then
-    echo "Pruning ENABLED (keep-fractions: ${PRUNE_FRACS[*]}) — computing PRUNED LD stats only (unpruned is skipped)."
+    echo "Pruning ENABLED (mode=${PRUNE_MODE}, keep-values: ${PRUNE_FRACS[*]}) — computing PRUNED LD stats only (unpruned is skipped)."
 else
     echo "Pruning DISABLED — computing UNPRUNED LD stats only."
 fi

@@ -127,8 +127,8 @@
   "optimizer_algorithm": "LD_LBFGS",
   "optimizer_maxeval": 300,
   "optimizer_maxtime": 1800,
-  "prune_keep_fractions": [
-  ],
+  "prune_mode": "count",
+  "prune_keep_values": [2000],
   "gram_schmidt": false,
   "gram_schmidt_k": 10
 }
