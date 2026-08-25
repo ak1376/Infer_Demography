@@ -1095,6 +1095,12 @@ def run_momentsld_inference(
     maxeval = int(config.get("optimizer_maxeval", 500))
     maxtime = config.get("optimizer_maxtime")
 
+    algo_name = str(config.get("optimizer_algorithm", "LN_BOBYQA"))
+    try:
+        algorithm = getattr(nlopt, algo_name)
+    except AttributeError:
+        raise ValueError(f"Unknown nlopt algorithm name: {algo_name!r}")
+
     # Handle fixed parameters (load moments best if any entry requests it)
     moments_best_params = _load_moments_best_params(config)
     fixed_values = handle_fixed_parameters(
@@ -1120,6 +1126,7 @@ def run_momentsld_inference(
         tolerance=tolerance,
         verbose=verbose,
         fixed_values=fixed_values,
+        algorithm=algorithm,
         maxeval=maxeval,
         maxtime=maxtime,
     )
