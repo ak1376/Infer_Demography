@@ -601,8 +601,8 @@ def simulate_one_window_replicate(
       - meta_file: optional bgs.meta.json from base sim so we can reuse exact coverage
       - seed_stride: default 10000 matches your old script
 
-    Simulates at cfg["chunk_sequence_length"] bp (falls back to cfg["sequence_length"]
-    if chunk_sequence_length is unset), independently of the base simulation's own
+    Simulates at cfg["ld_sequence_length"] bp (falls back to cfg["sequence_length"]
+    if ld_sequence_length is unset), independently of the base simulation's own
     sequence_length.
 
     Writes:
@@ -638,7 +638,12 @@ def simulate_one_window_replicate(
     w_seed = window_seed_from_base(base_seed, rep_index, stride=seed_stride)
 
     window_cfg = dict(cfg)
-    window_cfg["genome_length"] = float(cfg.get("chunk_sequence_length", cfg["sequence_length"]))
+    window_cfg["genome_length"] = float(cfg.get("ld_sequence_length", cfg["sequence_length"]))
+    # _contig_from_cfg() (src/bgs_intervals.py) reads "sequence_length", not
+    # "genome_length" — without this, the window simulates the base sim's
+    # full sequence_length while flat_map.txt only covers genome_length,
+    # leaving most sites' recombination distance clamped to the map's edge.
+    window_cfg["sequence_length"] = window_cfg["genome_length"]
     if w_seed is not None:
         window_cfg["seed"] = w_seed
         print(

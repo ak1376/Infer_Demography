@@ -1,6 +1,6 @@
 {
   "sequence_length": 1e8,
-  "chunk_sequence_length": 1e7,
+  "ld_sequence_length": 1e7,
   "mutation_rate": 1.29e-8,
   "recombination_rate": 1.2e-8,
   "demographic_model": "IM_symmetric",

@@ -225,7 +225,11 @@ wildcard_constraints:
     model_key  = "|".join(REAL_MODEL_OBJS.keys()),
 
 # LD r-bins
-R_BINS_STR = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
+# 16 log-spaced edges from 1e-6 to 1e-3 (ratio ~1.58x) plus a leading 0,
+# matching the moments.LD tutorial's bin density -- finer than the old
+# 9-edge (~2-2.5x ratio) set, to reduce quadrature error in compute_theoretical_ld
+# for the short-range bins.
+R_BINS_STR = "0,1e-06,1.58489e-06,2.51189e-06,3.98107e-06,6.30957e-06,1e-05,1.58489e-05,2.51189e-05,3.98107e-05,6.30957e-05,0.0001,0.000158489,0.000251189,0.000398107,0.000630957,0.001"
 
 # Optional pruning — set "prune_mode": "fraction"|"count" and
 # "prune_keep_values" in EXP_CFG to enable.
@@ -713,7 +717,7 @@ else:
             from src.windowing import window_vcf
 
             cfg = json.loads(Path(params.cfg).read_text())
-            window_size = int(cfg.get("chunk_sequence_length", cfg["sequence_length"]))
+            window_size = int(cfg.get("ld_sequence_length", cfg["sequence_length"]))
             recomb_rate = float(cfg["recombination_rate"])
 
             window_vcf(
