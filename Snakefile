@@ -909,6 +909,7 @@ rule aggregate_ld_stats:
             f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}"
             if PRUNE_TAGS else ""
         ),
+        bins = R_BINS_STR,
         cfg = EXP_CFG,
     threads: 1
     run:
@@ -918,6 +919,7 @@ rule aggregate_ld_stats:
             "--run-dir",     params.sim_dir,
             "--output-root", params.output_root,
             "--config-file", params.cfg,
+            "--r-bins",      params.bins,
             "--skip-optimize",
         ]
         if params.pruning_dir:
@@ -940,6 +942,7 @@ rule infer_momentsld:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
         results_dir = lambda w: f"experiments/{MODEL}/runs/run_{w.sid}_{w.opt}/inferences/MomentsLD",
+        bins = R_BINS_STR,
         cfg = EXP_CFG,
     threads: 1
     shell:
@@ -953,6 +956,7 @@ rule infer_momentsld:
             --output-root "{params.output_root}" \
             --results-dir "{params.results_dir}" \
             --config-file "{params.cfg}" \
+            --r-bins      "{params.bins}" \
             --opt-seed    {wildcards.opt}
 
         test -f "{output.pkl}"
@@ -1024,6 +1028,7 @@ rule aggregate_ld_stats_pruned:
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
+        bins = R_BINS_STR,
         cfg = EXP_CFG,
     threads: 1
     run:
@@ -1038,6 +1043,7 @@ rule aggregate_ld_stats_pruned:
             "--run-dir",     params.sim_dir,
             "--output-root", params.output_root,
             "--config-file", params.cfg,
+            "--r-bins",      params.bins,
             "--skip-optimize",
         ]
         env = {**os.environ, "PYTHONPATH": workflow.basedir}
@@ -1058,6 +1064,7 @@ rule infer_momentsld_pruned:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
         output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
         results_dir = lambda w: f"experiments/{MODEL}/runs/run_{w.sid}_{w.opt}/inferences/MomentsLD/pruning/{w.frac_tag}",
+        bins = R_BINS_STR,
         cfg = EXP_CFG,
     threads: 1
     shell:
@@ -1071,6 +1078,7 @@ rule infer_momentsld_pruned:
             --output-root "{params.output_root}" \
             --results-dir "{params.results_dir}" \
             --config-file "{params.cfg}" \
+            --r-bins      "{params.bins}" \
             --opt-seed    {wildcards.opt}
 
         test -f "{output.pkl}"
