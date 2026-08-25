@@ -746,9 +746,15 @@ if PRUNE_TAGS:
             sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}",
             bins    = R_BINS_STR,
             cfg     = EXP_CFG,
-        threads: 4
+        # No threading/multiprocessing code in moments.LD.Parsing.compute_ld_statistics
+        # (the CPU path used when use_gpu_ld=false) -- threads:1 (was 4) so
+        # LD_stats_windows.sh's batched Snakemake call can actually run
+        # multiple windows concurrently per array task instead of one at a
+        # time (was previously exactly matching --cpus-per-task=4, so -j
+        # never had room for a second job).
+        threads: 1
         resources:
-            ld_cores = 4,
+            ld_cores = 1,
             gpu      = 1
         shell:
             """
@@ -773,9 +779,15 @@ else:
             sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
             bins    = R_BINS_STR,
             cfg     = EXP_CFG
-        threads: 4
+        # No threading/multiprocessing code in moments.LD.Parsing.compute_ld_statistics
+        # (the CPU path used when use_gpu_ld=false) -- threads:1 (was 4) so
+        # LD_stats_windows.sh's batched Snakemake call can actually run
+        # multiple windows concurrently per array task instead of one at a
+        # time (was previously exactly matching --cpus-per-task=4, so -j
+        # never had room for a second job).
+        threads: 1
         resources:
-            ld_cores = 4,
+            ld_cores = 1,
             gpu      = 1
         shell:
             """
@@ -835,9 +847,12 @@ rule ld_window_pruned:
         sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
         bins    = R_BINS_STR,
         cfg     = EXP_CFG,
-    threads: 4
+    # See rule ld_window above: no threading/multiprocessing in
+    # moments.LD.Parsing.compute_ld_statistics, so threads:1 (was 4) lets
+    # LD_stats_windows.sh's batched call run windows concurrently.
+    threads: 1
     resources:
-        ld_cores = 4,
+        ld_cores = 1,
         gpu      = 1
     shell:
         """
