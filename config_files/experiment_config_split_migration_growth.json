@@ -1,5 +1,5 @@
 {
-  "sequence_length": 1e7,
+  "sequence_length": 24000000,
   "chunk_sequence_length": 1e7,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
@@ -11,11 +11,11 @@
   "seed": 42,
   "window_mode": "replicates",
   "num_windows": 100,
-  "num_optimizations": 1,
+  "num_optimizations": 100,
   "start_strategy": "lhs",
-  "aggregate_min_replicates": 1,
+  "aggregate_min_replicates": 5,
   "top_k": 1,
-  "num_draws": 10,
+  "num_draws": 5000,
   "priors": {
     "N_ANC": [
       3162,
@@ -79,6 +79,8 @@
   "momentsld_use_scaled_units": false,
   "moments_best_fit_path": "experiments/split_migration_growth/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
+    "m_CO_FR": "sampled",
+    "m_FR_CO": "sampled"
   },
   "parameter_order": [
     "N_ANC",
@@ -115,12 +117,11 @@
   "profile_widen": 0.5,
   "profile_make_plots": true,
   "start_jitter_sigma": 0.05,
-  "optimizer_algorithm": "LN_BOBYQA",
+  "optimizer_algorithm": "LD_LBFGS",
   "optimizer_maxeval": 300,
   "optimizer_maxtime": 600,
-  "prune_keep_fractions": [
-    0.15
-  ],
+  "prune_mode": "count",
+  "prune_keep_values": [5000],
   "gram_schmidt": false,
   "gram_schmidt_k": 10
 }

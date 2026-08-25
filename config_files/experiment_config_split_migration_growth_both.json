@@ -87,6 +87,8 @@
   "momentsld_use_scaled_units": false,
   "moments_best_fit_path": "experiments/split_migration_growth_both/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
+    "m_CO_FR": "sampled",
+    "m_FR_CO": "sampled"
   },
   "parameter_order": [
     "N_ANC",
@@ -116,7 +118,7 @@
   "use_residuals": false,
   "residual_engines": "moments",
   "engine": "msprime",
-  "use_gpu_ld": false,
+  "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [20, 30, 40],
   "generate_profiles": false,
@@ -128,7 +130,7 @@
   "optimizer_maxeval": 300,
   "optimizer_maxtime": 1800,
   "prune_mode": "count",
-  "prune_keep_values": [2000],
+  "prune_keep_values": [5000],
   "gram_schmidt": false,
   "gram_schmidt_k": 10
 }
