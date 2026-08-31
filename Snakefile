@@ -1941,9 +1941,10 @@ rule compare_ld_decay_autosomes:
 rule compute_fim_real:
     input:
         fit = lambda w: f"{REAL_INF_ROOT}/{w.engine}/best_fit.pkl",
-        sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+        sfs = COMBINED_SFS,
     output:
         fim  = temp(f"{REAL_INF_ROOT}/fim/{{engine}}.fim.npy"),
+        summ = f"{REAL_INF_ROOT}/fim/{{engine}}.summary.json",
     params:
         script = "snakemake_scripts/compute_fim.py",
         cfg    = EXP_CFG,
@@ -1959,7 +1960,8 @@ rule compute_fim_real:
             --fit-pkl "{input.fit}" \
             --sfs "{input.sfs}" \
             --config "{params.cfg}" \
-            --fim-npy "{output.fim}"
+            --fim-npy "{output.fim}" \
+            --summary-json "{output.summ}"
         """
 
 ##############################################################################
@@ -2066,7 +2068,7 @@ rule aggregate_opts_momentsld_real:
 ##############################################################################
 rule sfs_residuals_real:
     input:
-        obs_sfs = "real_data_analysis/data/drosophila/drosophila.sfs.pkl",
+        obs_sfs = COMBINED_SFS,
         # (not strictly needed by the script, but keeps DAG honest)
         agg_fit = lambda w: f"{REAL_INF_ROOT}/{w.engine}/best_fit.pkl",
     output:
