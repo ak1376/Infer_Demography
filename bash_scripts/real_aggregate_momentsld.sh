@@ -18,6 +18,10 @@
 # from MomentsLD.sh for the simulated pipeline).
 #
 # Rule run: aggregate_opts_momentsld_real
+#
+# Unlike the shared REAL_LD_ROOT (windows/LD_stats/means.varcovs.pkl), this
+# output IS model-scoped (experiments/{MODEL}/...): it's the fitted MomentsLD
+# params under the active demographic model, not a property of the data.
 
 set -euo pipefail
 mkdir -p logs

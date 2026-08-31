@@ -21,7 +21,7 @@
 #   A.  real_data_prep.sh          -- polarize VCFs, per-chrom + combined SFS
 #   B1. real_sfs_inference.sh      -- moments/dadi restarts, ARRAY (engine x opt)
 #   B2. real_aggregate_sfs.sh      -- top-k moments/dadi best_fit
-#   C.  real_ld_windows.sh         -- per-window LD stats (Chr2L), ARRAY
+#   C.  real_ld_windows.sh         -- per-window LD stats (Chr3L), ARRAY
 #   D1. real_momentsld_prep.sh     -- aggregate LD windows -> means.varcovs.pkl
 #   D2. real_momentsld.sh          -- MomentsLD restarts, ARRAY (opt)
 #   D3. real_aggregate_momentsld.sh -- top-k MomentsLD best_fit
@@ -68,7 +68,7 @@ sfs_id=$(submit_array "$(array_spec "$(( 2 * NUM_REAL_OPTIMS ))" "$BATCH_SIZE")"
   $(dep_afterany "$prep_id") bash_scripts/real_sfs_inference.sh); [[ -n "$sfs_id" ]]
 sfs_agg_id=$(submit $(dep_afterany "$sfs_id") bash_scripts/real_aggregate_sfs.sh); [[ -n "$sfs_agg_id" ]]
 
-# --- C. LD windows (Chr2L), array job ---
+# --- C. LD windows (Chr3L), array job ---
 export BATCH_SIZE=20
 if [[ "$USE_GPU_LD" == "true" ]]; then
   LD_SBATCH_OPTS=(--partition=kerngpu,gpulong,gpu --gres=gpu:1)

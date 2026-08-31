@@ -17,12 +17,18 @@
 # use_gpu_ld, mirroring LD_stats_windows.sh -- flip that one key to switch
 # between GPU and CPU-only nodes, no need to edit this file.
 
-# Stage C: split the (single-chromosome, Chr2L) diploid-recoded VCF into
+# Stage C: split the (single-chromosome, Chr3L) diploid-recoded VCF into
 # windows and compute per-window LD stats for the real-data MomentsLD
-# inference (real_data_prep.sh must have already produced Chr2L's
+# inference (real_data_prep.sh must have already produced Chr3L's
 # polarized.diploidGT.vcf.gz).
 #
 # Rules run: split_real_vcf_window, compute_ld_real
+#
+# REAL_LD_ROOT is NOT model-scoped (must match the Snakefile's REAL_LD_ROOT =
+# f"{DROSO_DIR}/MomentsLD"): the window split + per-window LD stats are pure
+# functions of the VCF/window-size/r-bins, not of which demographic model
+# you're fitting, so this whole (GPU-bound) stage is computed once and reused
+# across every model instead of being redone per experiment.
 #
 # --resources gpu=1 caps concurrent GPU-resident LD jobs at one per node,
 # same fix as LD_stats_windows.sh -- without it, up to
@@ -38,11 +44,12 @@ source "$ROOT/bash_scripts/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model'    "$CFG")
 NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG")
 USE_GPU_LD=$(jq -r '.use_gpu_ld // false' "$CFG")
 
-REAL_LD_ROOT="experiments/${MODEL}/real_data_analysis/inferences/MomentsLD"
+# Must match the Snakefile's DROSO_DIR / REAL_LD_ROOT constants.
+DROSO_DIR="real_data_analysis/data/drosophila"
+REAL_LD_ROOT="${DROSO_DIR}/MomentsLD"
 
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     NUM_ARRAY=$(( (NUM_WINDOWS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
@@ -74,7 +81,7 @@ START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
 END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 [[ $END -ge $NUM_WINDOWS ]] && END=$(( NUM_WINDOWS - 1 ))
 
-echo "Array $SLURM_ARRAY_TASK_ID → windows $START .. $END  MODEL=$MODEL NUM_WINDOWS=$NUM_WINDOWS"
+echo "Array $SLURM_ARRAY_TASK_ID → windows $START .. $END  NUM_WINDOWS=$NUM_WINDOWS"
 
 TARGETS=()
 for I in $(seq "$START" "$END"); do

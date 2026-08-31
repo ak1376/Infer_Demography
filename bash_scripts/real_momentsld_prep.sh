@@ -19,6 +19,17 @@
 # have already produced every LD_stats_window_*.pkl.
 #
 # Rule run: aggregate_ld_windows_real
+#
+# REAL_LD_ROOT is NOT model-scoped (must match the Snakefile's REAL_LD_ROOT =
+# f"{DROSO_DIR}/MomentsLD") -- the aggregated means/varcovs/bootstrap are a
+# pure function of the (already model-independent) per-window LD stats, so
+# they're computed once and reused across every demographic model. The one
+# cosmetic side effect: empirical_vs_theoretical_comparison.pdf's theoretical
+# curve reflects whichever model's config was active the first time this
+# target was built -- with --rerun-triggers mtime, switching MODEL later
+# won't regenerate it (the file already exists and its declared inputs
+# haven't changed), so it may go stale as a diagnostic plot. Delete it
+# manually if you want it to reflect the current model.
 
 set -euo pipefail
 mkdir -p logs
@@ -28,11 +39,11 @@ source "$ROOT/bash_scripts/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
-REAL_LD_ROOT="experiments/${MODEL}/real_data_analysis/inferences/MomentsLD"
+# Must match the Snakefile's DROSO_DIR / REAL_LD_ROOT constants.
+DROSO_DIR="real_data_analysis/data/drosophila"
+REAL_LD_ROOT="${DROSO_DIR}/MomentsLD"
 
 TARGET="${REAL_LD_ROOT}/means.varcovs.pkl"
-echo "MODEL=$MODEL"
 echo "Target: $TARGET"
 
 snakemake \

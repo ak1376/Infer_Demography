@@ -56,18 +56,18 @@ USE_GS = bool(CFG.get("gram_schmidt", False))
 
 # Make sure these match files that actually exist in your repo
 DROSO_DIR        = "real_data_analysis/data/drosophila"
-AUTOSOMES        = ["Chr2L", "Chr3L"]                            # Chr3R dropped (In(3R)Payne); Chr2R dropped (anomalous FR diversity / long-range score correlation); X excluded
+AUTOSOMES        = ["Chr3L"]                                     # Chr2L, Chr2R, Chr3R dropped -- Chr3L only
 ANCESTRAL_DIR    = "/sietch_colab/data_share/drosophila_melanogaster/dpgp_ancestor"
 
 # Data now lives in per-chromosome subdirs: {DROSO_DIR}/{chrom}/{polarized,polarized.diploidGT,unfolded.sfs}...
-RAW_HAPLOID_VCF  = "drosophila_data/data/Chr2L.vcf.gz"                    # legacy Chr2L alias
+RAW_HAPLOID_VCF  = "drosophila_data/data/Chr3L.vcf.gz"                    # legacy Chr3L alias
 REAL_POPFILE     = f"{DROSO_DIR}/popfile.txt"
-REAL_VCF         = f"{DROSO_DIR}/Chr2L/polarized.diploidGT.vcf.gz"        # diploid polarized (Chr2L); used by MomentsLD-real
-POLARIZED_VCF    = f"{DROSO_DIR}/Chr2L/polarized.vcf.gz"                  # haploid + AA (Chr2L); legacy alias
-UNFOLDED_SFS     = f"{DROSO_DIR}/Chr2L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr2L); legacy alias
+REAL_VCF         = f"{DROSO_DIR}/Chr3L/polarized.diploidGT.vcf.gz"        # diploid polarized (Chr3L); used by MomentsLD-real
+POLARIZED_VCF    = f"{DROSO_DIR}/Chr3L/polarized.vcf.gz"                  # haploid + AA (Chr3L); legacy alias
+UNFOLDED_SFS     = f"{DROSO_DIR}/Chr3L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr3L); legacy alias
 COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl"     # summed autosomal SFS; used by SFS inference
 COMBINED_SFS_META = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.meta.json"  # summed sequence_length across AUTOSOMES
-ANCESTRAL_FASTA  = f"{ANCESTRAL_DIR}/chr2L.q30.fa"                        # legacy Chr2L alias
+ANCESTRAL_FASTA  = f"{ANCESTRAL_DIR}/chr3L.q30.fa"                        # legacy Chr3L alias
 
 # Per-chromosome path helpers (by-chromosome layout)
 def polarized_vcf(chrom):          return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
@@ -169,9 +169,15 @@ SIM_BASEDIR = f"experiments/{MODEL}/simulations"
 RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
 LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 
-# Real-data LD mirrors LD_ROOT but without sid
-REAL_LD_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD"
-# Per-autosome LD decay analysis (independent of the Chr2L inference pipeline above)
+# Real-data LD windows/LD_stats/aggregated means+varcovs are pure functions of
+# the VCF data (chrom, window size, r_bins) -- not of which demographic model
+# you're fitting -- so this lives under DROSO_DIR (shared across every model)
+# instead of experiments/{MODEL}/...: switching MODEL never re-triggers the
+# window split or the (GPU-bound) per-window LD computation. The MomentsLD
+# *fit itself* (aggregate_opts_momentsld_real's best_fit.pkl) is genuinely
+# model-specific and lives under REAL_INF_ROOT instead -- see that rule below.
+REAL_LD_ROOT = f"{DROSO_DIR}/MomentsLD"
+# Per-autosome LD decay analysis (independent of the Chr3L inference pipeline above)
 REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_by_chrom"
 # Same, but with the real Comeron (R5/dm3) recombination map and 1 Mb windows.
 REAL_LD_GENMAP     = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_genmap"
@@ -2044,7 +2050,10 @@ rule aggregate_opts_momentsld_real:
         runs = [f"{REAL_RUN_ROOT}/run_{o}/inferences/MomentsLD/best_fit.pkl"
                 for o in range(NUM_REAL_OPTIMS)],
     output:
-        best = f"{REAL_LD_ROOT}/best_fit.pkl",
+        # Model-specific (unlike REAL_LD_ROOT above) -- this is the fitted
+        # MomentsLD result under the active demographic model, so it belongs
+        # under REAL_INF_ROOT alongside the moments/dadi best_fit.pkl.
+        best = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
     run:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
@@ -2172,7 +2181,7 @@ rule build_real_prediction_dataset:
         cfg            = EXP_CFG,
         moments        = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
         dadi           = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
-        ld             = f"{REAL_LD_ROOT}/best_fit.pkl",
+        ld             = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
         train_features = REAL_TRAIN_FEATURES,
     output:
         feats = f"{REAL_PRED_ROOT}/real_features_df.pkl",

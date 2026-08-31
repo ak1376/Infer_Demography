@@ -13,7 +13,7 @@
 #SBATCH --verbose
 
 # Stage A of the real-data (Drosophila) pipeline: polarize the raw per-
-# chromosome VCFs against the DPGP ancestor, recode Chr2L to diploid GTs
+# chromosome VCFs against the DPGP ancestor, recode Chr3L to diploid GTs
 # (needed by the MomentsLD-real LD stage), build each autosome's unfolded
 # SFS, and sum them into the combined-autosome SFS that all downstream
 # real-data SFS inference (moments/dadi) fits against.
@@ -21,7 +21,7 @@
 # Rules run: annotate_ancestral_allele, recode_polarized_to_diploid,
 #            compute_unfolded_sfs, combine_autosomal_sfs
 # Autosomes are fixed by the Snakefile's AUTOSOMES list (currently
-# Chr2L, Chr3L) -- not looped here.
+# Chr3L only) -- not looped here.
 
 set -euo pipefail
 mkdir -p logs
@@ -37,11 +37,11 @@ MODEL=$(jq -r '.demographic_model' "$CFG")
 DROSO_DIR="real_data_analysis/data/drosophila"
 COMBINED_SFS="${DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl"
 COMBINED_SFS_META="${DROSO_DIR}/combined/autosomes.unfolded.sfs.meta.json"
-CHR2L_DIPLOID_VCF="${DROSO_DIR}/Chr2L/polarized.diploidGT.vcf.gz"
-CHR2L_DIPLOID_TBI="${CHR2L_DIPLOID_VCF}.tbi"
+CHR3L_DIPLOID_VCF="${DROSO_DIR}/Chr3L/polarized.diploidGT.vcf.gz"
+CHR3L_DIPLOID_TBI="${CHR3L_DIPLOID_VCF}.tbi"
 
 echo "MODEL=$MODEL"
-echo "Targets: $COMBINED_SFS $COMBINED_SFS_META $CHR2L_DIPLOID_VCF"
+echo "Targets: $COMBINED_SFS $COMBINED_SFS_META $CHR3L_DIPLOID_VCF"
 
 snakemake \
     --snakefile "$SNAKEFILE" \
@@ -52,6 +52,6 @@ snakemake \
     --rerun-triggers mtime \
     --allowed-rules annotate_ancestral_allele recode_polarized_to_diploid compute_unfolded_sfs combine_autosomal_sfs \
     -j "${SLURM_CPUS_PER_TASK:-2}" \
-    "$COMBINED_SFS" "$COMBINED_SFS_META" "$CHR2L_DIPLOID_VCF" "$CHR2L_DIPLOID_TBI"
+    "$COMBINED_SFS" "$COMBINED_SFS_META" "$CHR3L_DIPLOID_VCF" "$CHR3L_DIPLOID_TBI"
 
 echo "real_data_prep finished."
