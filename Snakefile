@@ -57,7 +57,7 @@ USE_GS = bool(CFG.get("gram_schmidt", False))
 # Make sure these match files that actually exist in your repo
 DROSO_DIR        = "real_data_analysis/data/drosophila"
 AUTOSOMES        = ["Chr3L"]                                     # Chr2L, Chr2R, Chr3R dropped -- Chr3L only
-ANCESTRAL_DIR    = "/sietch_colab/data_share/drosophila_melanogaster/dpgp_ancestor"
+ANCESTRAL_DIR    = "drosophila_data/dpgp_ancestor"                        # relative to repo root, alongside drosophila_data/data/
 
 # Data now lives in per-chromosome subdirs: {DROSO_DIR}/{chrom}/{polarized,polarized.diploidGT,unfolded.sfs}...
 RAW_HAPLOID_VCF  = "drosophila_data/data/Chr3L.vcf.gz"                    # legacy Chr3L alias
