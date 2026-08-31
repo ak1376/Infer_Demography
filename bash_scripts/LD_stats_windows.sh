@@ -190,6 +190,7 @@ else
               --latency-wait 120        \
               --rerun-incomplete        \
               --rerun-triggers mtime    \
+              --resources gpu=1         \
               -j "$SLURM_CPUS_PER_TASK" \
               "${TARGETS[@]}" || true
 
