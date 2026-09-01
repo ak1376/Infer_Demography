@@ -6,9 +6,15 @@
 # and save the tree sequence + SFS per replicate, for later posterior-
 # predictive comparison against the real observed data/summary stats.
 #
+# One invocation runs all --n-replicates replicates (sequentially, in-process)
+# so the Snakefile's calibration_simulate rule is a single job per
+# (variant, model_key) instead of one job per replicate.
+#
 # Reuses src.simulation.simulation()/create_SFS() -- the same functions the
 # sim-generation pipeline (run_one_simulation_to_dir) uses -- just fed an
-# explicit params dict instead of a prior draw.
+# explicit params dict instead of a prior draw. All physical simulation
+# parameters (sequence_length, mutation_rate, recombination_rate, num_samples,
+# engine) come from --config, same as every other pipeline stage.
 
 from __future__ import annotations
 
@@ -30,7 +36,8 @@ from src.simulation import simulation, create_SFS, sample_coverage_percent  # no
 def _parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", required=True, type=Path,
-                     help="Experiment config JSON (priors, num_samples, engine, demographic_model).")
+                     help="Experiment config JSON (priors, num_samples, engine, demographic_model, "
+                          "sequence_length, mutation_rate, recombination_rate, ...).")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--params-json", type=Path,
                       help="JSON file with fitted params. Accepts either a flat "
@@ -40,7 +47,8 @@ def _parse_args():
                       help="Fitted params as an inline JSON object string.")
     ap.add_argument("--model-type", default=None,
                      help="Defaults to config['demographic_model'].")
-    ap.add_argument("--out-dir", required=True, type=Path)
+    ap.add_argument("--out-dir", required=True, type=Path,
+                     help="Directory to hold replicate_0/, replicate_1/, ... plus fitted_params.json.")
     ap.add_argument("--n-replicates", type=int, default=1,
                      help="Independent stochastic replicates simulated at this same param point.")
     ap.add_argument("--seed", type=int, default=None,
@@ -64,6 +72,49 @@ def _load_params(args) -> dict:
     if not isinstance(raw, dict):
         raise SystemExit("Fitted params must be a JSON object of {param: value}.")
     return {k: float(v) for k, v in raw.items()}
+
+
+def _simulate_one_replicate(*, rep_dir, rep_index, params, model_type, cfg, engine,
+                             base_seed, coverage_percent):
+    rep_dir.mkdir(parents=True, exist_ok=True)
+
+    if base_seed is not None:
+        replicate_seed = base_seed + rep_index
+        rng = np.random.default_rng(replicate_seed)
+    else:
+        replicate_seed = None
+        rng = np.random.default_rng()
+
+    sim_cfg = dict(cfg)
+    if replicate_seed is not None:
+        sim_cfg["seed"] = replicate_seed
+
+    if engine == "slim":
+        sel_cfg = cfg.get("selection") or {}
+        coverage = (
+            coverage_percent
+            if coverage_percent is not None
+            else sample_coverage_percent(sel_cfg, rng=rng)
+        )
+    else:
+        coverage = None
+
+    ts, g = simulation(params, model_type, sim_cfg, sampled_coverage=coverage)
+    sfs = create_SFS(ts, pop_names=tuple(cfg["num_samples"].keys()))
+
+    ts.dump(rep_dir / "tree_sequence.trees")
+    (rep_dir / "SFS.pkl").write_bytes(pickle.dumps(sfs))
+    (rep_dir / "meta.json").write_text(json.dumps({
+        "model_type": model_type,
+        "engine": engine,
+        "replicate_index": rep_index,
+        "seed": replicate_seed,
+        "coverage_percent": coverage,
+        "params": params,
+    }, indent=2))
+
+    print(f"[replicate {rep_index}] wrote {rep_dir}/tree_sequence.trees + SFS.pkl "
+          f"(seed={replicate_seed}, sum(SFS)={float(np.asarray(sfs).sum()):.6g})")
 
 
 def main() -> None:
@@ -93,45 +144,16 @@ def main() -> None:
     (args.out_dir / "fitted_params.json").write_text(json.dumps(params, indent=2))
 
     for i in range(args.n_replicates):
-        rep_dir = args.out_dir / f"replicate_{i}"
-        rep_dir.mkdir(parents=True, exist_ok=True)
-
-        if base_seed is not None:
-            replicate_seed = base_seed + i
-            rng = np.random.default_rng(replicate_seed)
-        else:
-            replicate_seed = None
-            rng = np.random.default_rng()
-
-        sim_cfg = dict(cfg)
-        if replicate_seed is not None:
-            sim_cfg["seed"] = replicate_seed
-
-        if engine == "slim":
-            sel_cfg = cfg.get("selection") or {}
-            coverage = (
-                args.coverage_percent
-                if args.coverage_percent is not None
-                else sample_coverage_percent(sel_cfg, rng=rng)
-            )
-        else:
-            coverage = None
-
-        ts, g = simulation(params, model_type, sim_cfg, sampled_coverage=coverage)
-        sfs = create_SFS(ts, pop_names=tuple(cfg["num_samples"].keys()))
-
-        ts.dump(rep_dir / "tree_sequence.trees")
-        (rep_dir / "SFS.pkl").write_bytes(pickle.dumps(sfs))
-        (rep_dir / "meta.json").write_text(json.dumps({
-            "model_type": model_type,
-            "engine": engine,
-            "seed": replicate_seed,
-            "coverage_percent": coverage,
-            "params": params,
-        }, indent=2))
-
-        print(f"[replicate {i}] wrote {rep_dir}/tree_sequence.trees + SFS.pkl "
-              f"(seed={replicate_seed}, sum(SFS)={float(np.asarray(sfs).sum()):.6g})")
+        _simulate_one_replicate(
+            rep_dir=args.out_dir / f"replicate_{i}",
+            rep_index=i,
+            params=params,
+            model_type=model_type,
+            cfg=cfg,
+            engine=engine,
+            base_seed=base_seed,
+            coverage_percent=args.coverage_percent,
+        )
 
     print(f"✓ calibration simulation done -> {args.out_dir} ({args.n_replicates} replicate(s))")
 

@@ -228,6 +228,13 @@ def _real_model_objs(variant):
 # model_key set is the same across variants -- any variant's keys will do.
 REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
 
+# Model-calibration check (posterior-predictive): simulate at the real-data
+# fitted params, one job per (variant, model_key) that runs all replicates
+# in-process (see calibration_simulate.py --n-replicates).
+CALIBRATION_ROOT = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}"
+NUM_CALIBRATION_REPLICATES = int(CFG.get("calibration_n_replicates", 20))
+CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
+
 wildcard_constraints:
     chrom      = r"Chr(2L|2R|3L|3R)",
     # combine_features narrows this back down (raw_features has its own
@@ -2298,6 +2305,41 @@ rule predict_real_data:
             --config         "{input.cfg}" \
             --out-prefix     "{params.out_prefix}" \
             --model-key      "{wildcards.model_key}"
+        """
+
+##############################################################################
+# REAL DATA: calibration_simulate – model calibration / posterior-predictive #
+# check. Simulate at the real-data fitted params (predictions_{model_key}    #
+# from predict_real_data), calibration_n_replicates replicates in ONE job    #
+# per {variant}/{model_key} (see calibration_simulate.py --n-replicates --   #
+# each replicate is cheap, so this avoids per-replicate job/SLURM overhead). #
+# Saves the tree sequence + SFS per replicate for comparison against the     #
+# real observed SFS.                                                        #
+#                                                                             #
+#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/replicate_0/SFS.pkl
+##############################################################################
+rule calibration_simulate:
+    input:
+        cfg         = EXP_CFG,
+        predictions = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}.json",
+    output:
+        trees   = expand(f"{CALIBRATION_ROOT}/replicate_{{rep}}/tree_sequence.trees", rep=CALIBRATION_REPS, allow_missing=True),
+        sfs     = expand(f"{CALIBRATION_ROOT}/replicate_{{rep}}/SFS.pkl", rep=CALIBRATION_REPS, allow_missing=True),
+        meta    = expand(f"{CALIBRATION_ROOT}/replicate_{{rep}}/meta.json", rep=CALIBRATION_REPS, allow_missing=True),
+        fitted  = f"{CALIBRATION_ROOT}/fitted_params.json",
+    params:
+        out_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}",
+        n_reps  = NUM_CALIBRATION_REPLICATES,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/calibration_simulate.py \
+            --config        "{input.cfg}" \
+            --params-json   "{input.predictions}" \
+            --out-dir       "{params.out_dir}" \
+            --n-replicates  {params.n_reps}
         """
 
 ##############################################################################
