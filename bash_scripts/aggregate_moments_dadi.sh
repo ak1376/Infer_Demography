@@ -139,7 +139,7 @@ SMK_ARGS=(
   --rerun-incomplete
   --nolock
   --rerun-triggers mtime
-  --allowed-rules aggregate_opts_engine aggregate_opts_momentsld cleanup_optimization_runs
+  --allowed-rules aggregate_opts_engine aggregate_opts_momentsld aggregate_opts_momentsld_pruned cleanup_optimization_runs
   --keep-going
 )
 (( DRYRUN )) && SMK_ARGS+=(-n)

@@ -255,6 +255,18 @@ elif PRUNE_MODE == "count":
 else:
     PRUNE_TAGS = []
 
+# What cleanup_optimization_runs (below) waits on / reads for MomentsLD's
+# keep-set: pruned mode aggregates per frac_tag under MomentsLD/pruning/<tag>/
+# instead of directly under MomentsLD/, so there's one target per tag rather
+# than the single unpruned LD_ROOT/best_fit.pkl.
+if PRUNE_TAGS:
+    MOMENTSLD_AGG_TARGETS = [
+        f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{tag}/best_fit.pkl"
+        for tag in PRUNE_TAGS
+    ]
+else:
+    MOMENTSLD_AGG_TARGETS = [f"{LD_ROOT}/best_fit.pkl"]
+
 ##############################################################################
 # RULE all – final targets the workflow must create
 ##############################################################################
@@ -529,7 +541,7 @@ rule cleanup_optimization_runs:
     input:
         dadi       = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
         moments    = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
-        momentsld  = f"{LD_ROOT}/best_fit.pkl",
+        momentsld  = MOMENTSLD_AGG_TARGETS,
     output:
         cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
     run:
@@ -551,13 +563,15 @@ rule cleanup_optimization_runs:
             dadi_data = pickle.load(f)
         with open(input.moments, "rb") as f:
             moments_data = pickle.load(f)
-        with open(input.momentsld, "rb") as f:
-            momentsld_data = pickle.load(f)
+        momentsld_keep = set()
+        for momentsld_path in input.momentsld:
+            with open(momentsld_path, "rb") as f:
+                momentsld_data = pickle.load(f)
+            momentsld_keep |= set((momentsld_data.get("opt_index") or [])[:TOP_K])
 
-        dadi_keep      = set((dadi_data.get("opt_index") or [])[:TOP_K])
-        moments_keep   = set((moments_data.get("opt_index") or [])[:TOP_K])
-        momentsld_keep = set((momentsld_data.get("opt_index") or [])[:TOP_K])
-        keep_indices   = dadi_keep | moments_keep | momentsld_keep
+        dadi_keep    = set((dadi_data.get("opt_index") or [])[:TOP_K])
+        moments_keep = set((moments_data.get("opt_index") or [])[:TOP_K])
+        keep_indices = dadi_keep | moments_keep | momentsld_keep
 
         run_root = pathlib.Path(f"experiments/{MODEL}/runs")
         prefix = f"run_{sid}_"
