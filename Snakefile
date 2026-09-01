@@ -200,23 +200,33 @@ REAL_INF_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis/{{chrom}}/inferen
 REAL_TOP_K    = int(CFG.get("real_top_k", NUM_REAL_OPTIMS))
 
 # ── Real-data prediction (push real fits through a trained model) ───────────
-REAL_PRED_ROOT     = f"experiments/{MODEL}/real_data_analysis/prediction"
-# Which trained-model directory to use as the source of models + feature template.
-REAL_MODELING_DIR  = CFG.get(
-    "real_predict_modeling_dir",
-    f"experiments/{MODEL}/modeling_wo_FIM_wo_SFSresids",
-)
-REAL_TRAIN_FEATURES = f"{REAL_MODELING_DIR}/datasets/features_df.pkl"
+# Generalized over {variant} (the same MODELING_VARIANTS the sim pipeline
+# trains) instead of pinning to a single modeling dir via a
+# real_predict_modeling_dir config override -- so real-data predictions can
+# be compared with/without FIM and SFS-residual features. Each variant's
+# outputs live under their own prediction_{variant}/ dir.
+REAL_PRED_ROOT = f"experiments/{MODEL}/real_data_analysis/prediction_{{variant}}"
 
-# model_key wildcard -> trained *_mdl_obj.pkl path
-REAL_MODEL_OBJS = {
-    "random_forest":    f"{REAL_MODELING_DIR}/random_forest/random_forest_mdl_obj.pkl",
-    "xgboost":          f"{REAL_MODELING_DIR}/xgboost/xgb_mdl_obj.pkl",
-    "linear_standard":  f"{REAL_MODELING_DIR}/linear_standard/linear_mdl_obj_standard.pkl",
-    "linear_ridge":     f"{REAL_MODELING_DIR}/linear_ridge/linear_mdl_obj_ridge.pkl",
-    "linear_lasso":     f"{REAL_MODELING_DIR}/linear_lasso/linear_mdl_obj_lasso.pkl",
-    "linear_elasticnet":f"{REAL_MODELING_DIR}/linear_elasticnet/linear_mdl_obj_elasticnet.pkl",
-}
+def _real_modeling_dir(variant):
+    return f"experiments/{MODEL}/modeling_{variant}"
+
+def _real_train_features(variant):
+    return f"{_real_modeling_dir(variant)}/datasets/features_df.pkl"
+
+# model_key wildcard -> trained *_mdl_obj.pkl path, for a given variant
+def _real_model_objs(variant):
+    d = _real_modeling_dir(variant)
+    return {
+        "random_forest":     f"{d}/random_forest/random_forest_mdl_obj.pkl",
+        "xgboost":           f"{d}/xgboost/xgb_mdl_obj.pkl",
+        "linear_standard":   f"{d}/linear_standard/linear_mdl_obj_standard.pkl",
+        "linear_ridge":      f"{d}/linear_ridge/linear_mdl_obj_ridge.pkl",
+        "linear_lasso":      f"{d}/linear_lasso/linear_mdl_obj_lasso.pkl",
+        "linear_elasticnet": f"{d}/linear_elasticnet/linear_mdl_obj_elasticnet.pkl",
+    }
+
+# model_key set is the same across variants -- any variant's keys will do.
+REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
 
 wildcard_constraints:
     chrom      = r"Chr(2L|2R|3L|3R)",
@@ -228,7 +238,7 @@ wildcard_constraints:
     opt        = "|".join(str(i) for i in range(NUM_OPTIMS)),
     engine     = "moments|dadi",
     frac_tag   = r"thin\d+|n\d+",
-    model_key  = "|".join(REAL_MODEL_OBJS.keys()),
+    model_key  = "|".join(REAL_MODEL_KEYS),
 
 # LD r-bins
 # 16 log-spaced edges from 1e-6 to 1e-3 (ratio ~1.58x) plus a leading 0,
@@ -2205,9 +2215,11 @@ rule combine_results_real:
 # REAL DATA: build_real_prediction_dataset                                   #
 # Assemble the real dadi / moments / MomentsLD fits into a single feature     #
 # row formatted exactly like the training features_df, then z-score normalize #
-# by the priors so it can be pushed through a trained model.                  #
+# by the priors so it can be pushed through a trained model. One dataset per  #
+# {variant} (matches MODELING_VARIANTS) since features differ by whether FIM  #
+# / SFS-residual columns are included.                                       #
 #                                                                             #
-#   snakemake build_real_prediction_dataset                                   #
+#   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/real_features_df.pkl
 ##############################################################################
 rule build_real_prediction_dataset:
     input:
@@ -2215,14 +2227,18 @@ rule build_real_prediction_dataset:
         moments        = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
         dadi           = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
         ld             = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
-        train_features = REAL_TRAIN_FEATURES,
+        train_features = lambda w: _real_train_features(w.variant),
     output:
         feats = f"{REAL_PRED_ROOT}/real_features_df.pkl",
         raw   = f"{REAL_PRED_ROOT}/real_features_raw_df.pkl",
         meta  = f"{REAL_PRED_ROOT}/real_dataset_meta.json",
     params:
         real_inf_dir = REAL_INF_ROOT,
-        out_dir      = REAL_PRED_ROOT,
+        # NOT the REAL_PRED_ROOT constant -- that still holds the literal,
+        # unsubstituted "{variant}" text; params (unlike input/output) don't
+        # get auto-filled from wildcards, so this must build the real path
+        # from w.variant directly.
+        out_dir      = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}",
     threads: 1
     shell:
         r"""
@@ -2239,20 +2255,22 @@ rule build_real_prediction_dataset:
 # REAL DATA: predict_real_data – push real features through a trained model  #
 # {model_key} ∈ random_forest | xgboost | linear_standard | linear_ridge |    #
 #              linear_lasso | linear_elasticnet                               #
+# {variant} selects which modeling_{variant}-trained model to use (matches   #
+# MODELING_VARIANTS) -- outputs land under the matching prediction_{variant}/ #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/prediction/predictions_random_forest.json
+#   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/predictions_random_forest.json
 ##############################################################################
 rule predict_real_data:
     input:
         feats          = f"{REAL_PRED_ROOT}/real_features_df.pkl",
-        model          = lambda w: REAL_MODEL_OBJS[w.model_key],
-        train_features = REAL_TRAIN_FEATURES,
+        model          = lambda w: _real_model_objs(w.variant)[w.model_key],
+        train_features = lambda w: _real_train_features(w.variant),
         cfg            = EXP_CFG,
     output:
         json = f"{REAL_PRED_ROOT}/predictions_{{model_key}}.json",
         csv  = f"{REAL_PRED_ROOT}/predictions_{{model_key}}.csv",
     params:
-        out_prefix = lambda w: f"{REAL_PRED_ROOT}/predictions_{w.model_key}",
+        out_prefix = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}",
     threads: 1
     shell:
         r"""
