@@ -2178,8 +2178,9 @@ rule combine_results_real:
     input:
         cfg     = EXP_CFG,
 
-        moments = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
-        dadi    = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
+        moments   = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
+        dadi      = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
+        momentsLD = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
 
         # FIMs (upper-tri flattened) for whatever engines you computed
         fims = lambda w: [
@@ -2206,8 +2207,9 @@ rule combine_results_real:
         outdir.mkdir(parents=True, exist_ok=True)
 
         summary = {}
-        summary["moments"] = pickle.load(open(input.moments, "rb"))
-        summary["dadi"]    = pickle.load(open(input.dadi, "rb"))
+        summary["moments"]   = pickle.load(open(input.moments, "rb"))
+        summary["dadi"]      = pickle.load(open(input.dadi, "rb"))
+        summary["momentsLD"] = pickle.load(open(input.momentsLD, "rb"))
 
         fim_payload = build_fim_payload(input.fims)
         if fim_payload:
@@ -2394,6 +2396,36 @@ rule calibration_ppc:
             --combined-sfs-meta  "{input.meta}" \
             --out-dir            "{params.out_dir}" \
             --title              "{params.title}"
+        """
+
+##############################################################################
+# REAL DATA: calibration_ld_ppc – model calibration / posterior-predictive   #
+# check, LD version. Does the theoretical LD decay curve at the fitted       #
+# params (predictions_{model_key} from predict_real_data) reproduce the      #
+# empirical LD decay measured directly from the real data? Purely analytic   #
+# (moments.Demes.LD at the fitted params vs REAL_LD_ROOT/means.varcovs.pkl)  #
+# -- no calibration_simulate replicates needed, so this doesn't depend on    #
+# the (SLURM-array) tree-sequence simulations at all.                        #
+#                                                                             #
+#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/ppc/calibration_ld_ppc.pdf
+##############################################################################
+rule calibration_ld_ppc:
+    input:
+        cfg         = EXP_CFG,
+        real_ld     = f"{REAL_LD_ROOT}/means.varcovs.pkl",
+        predictions = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}.json",
+    output:
+        pdf = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/ppc/calibration_ld_ppc.pdf",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/calibration_ld_ppc.py \
+            --config        "{input.cfg}" \
+            --real-ld-pkl   "{input.real_ld}" \
+            --params-json   "{input.predictions}" \
+            --out-path      "{output.pdf}"
         """
 
 ##############################################################################
