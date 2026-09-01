@@ -54,6 +54,10 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
     if [[ -n "$PRUNE_FRACS" ]]; then
         for FRAC_TAG in $PRUNE_FRACS; do
             TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/pruning/${FRAC_TAG}/best_fit.pkl"
+            if [[ -s "$ROOT/$TARGET" ]]; then
+                echo "[sim_${SID} ${FRAC_TAG}] already aggregated -> skipping"
+                continue
+            fi
             echo "Aggregating Moments-LD opts (mixed, ${FRAC_TAG}) for SID=$SID → $TARGET"
             snakemake --snakefile "$SNAKEFILE" \
                       --directory "$ROOT" \
@@ -66,6 +70,10 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
         done
     else
         TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/best_fit.pkl"
+        if [[ -s "$ROOT/$TARGET" ]]; then
+            echo "[sim_${SID}] already aggregated -> skipping"
+            continue
+        fi
         echo "Aggregating Moments-LD opts for SID=$SID → $TARGET"
         snakemake --snakefile "$SNAKEFILE" \
                   --directory "$ROOT" \
