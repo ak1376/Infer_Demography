@@ -195,9 +195,9 @@ REAL_RUN_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis/{{chrom}}/runs"
 REAL_INF_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis/{{chrom}}/inferences"
 
 # Number of top replicates the real moments/dadi aggregation keeps.
-# Must match the rep count the trained model was built with (moments_*_rep_0..N-1).
-# Defaults to keeping every optimization so re-running yields all rep_* slots.
-REAL_TOP_K    = int(CFG.get("real_top_k", NUM_REAL_OPTIMS))
+# Must match the rep count the trained model was built with (moments_*_rep_0..N-1),
+# i.e. the sim-side TOP_K -- defaults to TOP_K unless overridden.
+REAL_TOP_K    = int(CFG.get("real_top_k", TOP_K))
 
 # ── Real-data prediction (push real fits through a trained model) ───────────
 # Generalized over {variant} (the same MODELING_VARIANTS the sim pipeline
@@ -2213,11 +2213,12 @@ rule combine_results_real:
 
 ##############################################################################
 # REAL DATA: build_real_prediction_dataset                                   #
-# Assemble the real dadi / moments / MomentsLD fits into a single feature     #
-# row formatted exactly like the training features_df, then z-score normalize #
-# by the priors so it can be pushed through a trained model. One dataset per  #
-# {variant} (matches MODELING_VARIANTS) since features differ by whether FIM  #
-# / SFS-residual columns are included.                                       #
+# Assemble the real dadi / moments / MomentsLD fits -- plus the same FIM /    #
+# SFS-residual payloads combine_results_real attaches for sims -- into a      #
+# single feature row formatted exactly like the training features_df, then    #
+# z-score normalize by the priors so it can be pushed through a trained       #
+# model. One dataset per {variant} (matches MODELING_VARIANTS) since features #
+# differ by whether FIM / SFS-residual columns are included.                 #
 #                                                                             #
 #   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/real_features_df.pkl
 ##############################################################################
@@ -2228,6 +2229,18 @@ rule build_real_prediction_dataset:
         dadi           = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
         ld             = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
         train_features = lambda w: _real_train_features(w.variant),
+        fims = lambda w: [
+            f"{REAL_INF_ROOT}/fim/{eng}.fim.npy"
+            for eng in FIM_ENGINES
+        ],
+        resid_vecs = lambda w: [
+            f"{REAL_INF_ROOT}/sfs_residuals/{eng}/{_resid_vector_fname()}"
+            for eng in RESIDUAL_ENGINES
+        ],
+        resid_meta = lambda w: [
+            f"{REAL_INF_ROOT}/sfs_residuals/{eng}/meta.json"
+            for eng in RESIDUAL_ENGINES
+        ],
     output:
         feats = f"{REAL_PRED_ROOT}/real_features_df.pkl",
         raw   = f"{REAL_PRED_ROOT}/real_features_raw_df.pkl",
@@ -2248,7 +2261,9 @@ rule build_real_prediction_dataset:
             --config         "{input.cfg}" \
             --real-inf-dir   "{params.real_inf_dir}" \
             --train-features "{input.train_features}" \
-            --out-dir        "{params.out_dir}"
+            --out-dir        "{params.out_dir}" \
+            --fim-paths      {input.fims} \
+            --resid-vec-paths {input.resid_vecs}
         """
 
 ##############################################################################

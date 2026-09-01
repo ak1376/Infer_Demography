@@ -15,6 +15,7 @@
   "start_strategy": "lhs",
   "aggregate_min_replicates": 5,
   "top_k": 5,
+  "real_top_k": 5,
   "num_draws": 5000,
   "priors": {
     "N_ANC": [

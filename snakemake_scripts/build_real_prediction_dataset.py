@@ -2,14 +2,18 @@
 # snakemake_scripts/build_real_prediction_dataset.py
 #
 # Build a single-row feature frame from the REAL-data dadi / moments / MomentsLD
-# fits, formatted *identically* to the training features_df so it can be pushed
-# through a trained model.
+# fits (+ FIM / SFS-residual payloads), formatted *identically* to the training
+# features_df so it can be pushed through a trained model.
 #
 # The column convention mirrors src/feature_extraction_helpers.build_feature_target_tables:
-#   dadi_{param}_rep_{i}, moments_{param}_rep_{i}, momentsLD_{param}_rep_{i}
+#   dadi_{param}_rep_{i}, moments_{param}_rep_{i}, momentsLD_{param}_rep_{i},
+#   FIM_element_{k}, SFSres_{engine}_{k}
 # All three tools' best_fit.pkl share the same aggregate_opts_* schema
 # (best_params/best_ll/opt_index, top-K by log-likelihood), so they're all
-# consumed uniformly via fx.param_dicts() below.
+# consumed uniformly via fx.param_dicts() below. FIM/residual payloads are
+# assembled the same way combine_results_real does (src/combine_payloads.py),
+# then reindexed against train_cols below so variants that don't use them
+# (wo_FIM/wo_SFSresids) simply drop the columns.
 # Values are z-score normalized by the uniform-prior stats (same as training).
 
 from __future__ import annotations
@@ -33,6 +37,10 @@ def _parse_args():
     ap.add_argument("--train-features", required=True, type=Path,
                     help="Training features_df.pkl used as the exact column template.")
     ap.add_argument("--out-dir", required=True, type=Path)
+    ap.add_argument("--fim-paths", nargs="*", default=[],
+                    help="Real fim/{engine}.fim.npy paths (same set combine_results_real attaches).")
+    ap.add_argument("--resid-vec-paths", nargs="*", default=[],
+                    help="Real sfs_residuals/{engine}/residuals_flat.npy (or _gs_coeffs.npy) paths.")
     ap.add_argument("--allow-missing", action="store_true",
                     help="Fill missing/NaN feature columns with 0 (normalized-space) "
                          "instead of erroring. Off by default.")
@@ -51,6 +59,7 @@ def main() -> None:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
     sys.path.insert(0, str(PROJECT_ROOT))
     import feature_extraction_helpers as fx  # noqa: E402
+    from combine_payloads import build_fim_payload, build_residual_payload  # noqa: E402
 
     cfg = json.loads(args.config.read_text())
     priors = cfg["priors"]
@@ -71,7 +80,15 @@ def main() -> None:
     if ld_path.exists():
         data["momentsLD"] = _load_pickle(ld_path)
 
-    # ---- build the single feature row (same logic as training) -----------
+    fim_payload = build_fim_payload(args.fim_paths)
+    if fim_payload:
+        data["FIM"] = fim_payload
+    resid_payload = build_residual_payload(args.resid_vec_paths)
+    if resid_payload:
+        data["SFS_residuals"] = resid_payload
+
+    # ---- build the single feature row (same logic as training, see
+    # feature_extraction_helpers.build_feature_target_tables) --------------
     row: dict[str, float] = {}
     for tool in fx.TOOLS_DEFAULT:  # ("dadi", "moments", "momentsLD")
         blob = data.get(tool)
@@ -84,6 +101,24 @@ def main() -> None:
                 if v is None or (isinstance(v, float) and np.isnan(v)):
                     continue
                 row[f"{tool}_{k}_rep_{rep_idx}"] = float(v)
+
+    if isinstance(data.get("FIM"), dict) and data["FIM"]:
+        engines = list(data["FIM"].keys())
+        eng_pick = "moments" if "moments" in engines else engines[0]
+        tri = data["FIM"].get(eng_pick, {}).get("tri_flat", None)
+        if tri is not None:
+            for k, v in enumerate(tri):
+                row[f"FIM_element_{k}"] = float(v)
+
+    if isinstance(data.get("SFS_residuals"), dict):
+        for eng, payload in data["SFS_residuals"].items():
+            if not isinstance(payload, dict):
+                continue
+            flat = payload.get("vector", payload.get("flat"))
+            if flat is None:
+                continue
+            for k, v in enumerate(flat):
+                row[f"SFSres_{eng}_{k}"] = float(v)
 
     raw_df = pd.DataFrame([row], index=["real"]).sort_index(axis=1)
 

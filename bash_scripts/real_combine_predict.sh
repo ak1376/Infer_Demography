@@ -12,17 +12,21 @@
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
 
-# Stage F (final): merge moments/dadi/MomentsLD fits + FIM + residuals into
-# all_inferences.pkl, then build a real feature row and push it through every
-# trained model, once per modeling {variant} (w/wo FIM x w/wo SFS-residuals --
-# same four variants the sim pipeline trains, see Snakefile's
-# MODELING_VARIANTS) so real-data predictions can be compared across variants
-# instead of being pinned to a single hardcoded modeling dir. Requires stages
-# A-E (real_data_prep, real_sfs_inference, real_ld_windows, real_momentsld,
-# real_fim_residuals) to have already finished.
+# Stage F (final): build a real feature row (moments/dadi/MomentsLD fits +
+# FIM + residuals, assembled directly by build_real_prediction_dataset.py)
+# and push it through every trained model, once per modeling {variant} (w/wo
+# FIM x w/wo SFS-residuals -- same four variants the sim pipeline trains, see
+# Snakefile's MODELING_VARIANTS) so real-data predictions can be compared
+# across variants instead of being pinned to a single hardcoded modeling dir.
+# Requires stages A-E (real_data_prep, real_sfs_inference, real_ld_windows,
+# real_momentsld, real_fim_residuals) to have already finished.
 #
-# Rules run: combine_results_real, build_real_prediction_dataset,
-#            predict_real_data
+# Rules run: build_real_prediction_dataset, predict_real_data
+#
+# (combine_results_real/all_inferences.pkl is a separate, standalone
+# provenance artifact -- build_real_prediction_dataset reads the fit/FIM/
+# residual files directly, so it isn't a dependency here and isn't built by
+# this script. Run `snakemake .../all_inferences.pkl` explicitly if you want it.)
 #
 # predict_real_data needs a trained model (from the sim modeling pipeline)
 # for each (variant, model_key) -- this script silently skips any combination
@@ -57,18 +61,6 @@ MODEL_KEYS=(
 )
 
 echo "MODEL=$MODEL"
-echo "Combining results -> ${REAL_INF_ROOT}/all_inferences.pkl"
-
-snakemake \
-    --snakefile "$SNAKEFILE" \
-    --directory "$ROOT" \
-    --nolock \
-    --keep-going \
-    --rerun-incomplete \
-    --rerun-triggers mtime \
-    --allowed-rules combine_results_real \
-    -j "${SLURM_CPUS_PER_TASK:-2}" \
-    "${REAL_INF_ROOT}/all_inferences.pkl"
 
 for variant in "${MODELING_VARIANTS[@]}"; do
     REAL_PRED_ROOT="experiments/${MODEL}/real_data_analysis/prediction_${variant}"
