@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=calibration_sim
-#SBATCH --output=logs/calibration_sim_%j.out
-#SBATCH --error=logs/calibration_sim_%j.err
-#SBATCH --time=04:00:00
+#SBATCH --output=logs/calibration_sim_%A_%a.out
+#SBATCH --error=logs/calibration_sim_%A_%a.err
+#SBATCH --time=00:30:00
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=16G
+#SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -12,16 +12,16 @@
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
 
-# Model calibration check (posterior-predictive): simulate calibration_n_replicates
-# tree sequences + SFS at the real-data fitted params for one (VARIANT, MODEL_KEY),
-# all in this one job (see Snakefile's calibration_simulate rule / snakemake_scripts/
-# calibration_simulate.py --n-replicates). Requires real_combine_predict.sh to have
-# already produced predictions_${MODEL_KEY}.json for VARIANT.
+# Model calibration check (posterior-predictive): simulate one tree sequence +
+# SFS per replicate at the real-data fitted params, for one (VARIANT,
+# MODEL_KEY). Each replicate runs as its own SLURM array task (mirrors
+# running_simulation.sh's self-resubmitting array pattern) instead of one job
+# looping over all replicates sequentially. Requires real_combine_predict.sh
+# to have already produced predictions_${MODEL_KEY}.json for VARIANT.
 #
-# Rule run: calibration_simulate
+# Rule run (once per array task): calibration_simulate
 #
-# Time/mem above assume the default calibration_n_replicates=20 under engine=msprime;
-# scale --time up if you raise calibration_n_replicates in the experiment config.
+# Time/mem above are per-replicate (one msprime simulation under engine=msprime).
 
 set -euo pipefail
 mkdir -p logs
@@ -38,12 +38,19 @@ N_REPS=$(jq -r '.calibration_n_replicates // 20' "$CFG")
 VARIANT="${VARIANT:-wo_FIM_wo_SFSresids}"
 MODEL_KEY="${MODEL_KEY:-xgboost}"
 
-CALIB_DIR="experiments/${MODEL}/real_data_analysis/calibration_${VARIANT}/${MODEL_KEY}"
-# Requesting just replicate_0 pulls the whole job: the Snakefile rule declares
-# all calibration_n_replicates replicates as joint outputs of one invocation.
-TARGET="${CALIB_DIR}/replicate_0/SFS.pkl"
+# First launch (no array id yet): resubmit as an array sized from
+# calibration_n_replicates, one task per replicate.
+if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    echo "Submitting array 0..$((N_REPS - 1)) (calibration_n_replicates=${N_REPS} from ${CFG})"
+    VARIANT="$VARIANT" MODEL_KEY="$MODEL_KEY" ROOT="$ROOT" \
+        sbatch --array=0-"$((N_REPS - 1))" "$0" "$@"
+    exit 0
+fi
 
-echo "MODEL=$MODEL  VARIANT=$VARIANT  MODEL_KEY=$MODEL_KEY  N_REPS=$N_REPS"
+REP="$SLURM_ARRAY_TASK_ID"
+TARGET="experiments/${MODEL}/real_data_analysis/calibration_${VARIANT}/${MODEL_KEY}/replicate_${REP}/SFS.pkl"
+
+echo "MODEL=$MODEL  VARIANT=$VARIANT  MODEL_KEY=$MODEL_KEY  replicate=$REP"
 echo "Target: $TARGET"
 
 snakemake \
@@ -57,4 +64,4 @@ snakemake \
     -j "${SLURM_CPUS_PER_TASK:-2}" \
     "$TARGET"
 
-echo "calibration_simulate finished -> ${CALIB_DIR}"
+echo "calibration_simulate finished -> $TARGET"

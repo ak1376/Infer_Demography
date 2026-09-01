@@ -229,9 +229,10 @@ def _real_model_objs(variant):
 REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
 
 # Model-calibration check (posterior-predictive): simulate at the real-data
-# fitted params, one job per (variant, model_key) that runs all replicates
-# in-process (see calibration_simulate.py --n-replicates).
-CALIBRATION_ROOT = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}"
+# fitted params, one job per (variant, model_key, rep) so replicates can run
+# as parallel SLURM array tasks (see bash_scripts/calibration_simulate.sh) --
+# each array task builds just its own replicate_{rep} target.
+CALIBRATION_ROOT = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/replicate_{{rep}}"
 NUM_CALIBRATION_REPLICATES = int(CFG.get("calibration_n_replicates", 20))
 CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
 
@@ -246,6 +247,7 @@ wildcard_constraints:
     engine     = "moments|dadi",
     frac_tag   = r"thin\d+|n\d+",
     model_key  = "|".join(REAL_MODEL_KEYS),
+    rep        = r"\d+",
 
 # LD r-bins
 # 16 log-spaced edges from 1e-6 to 1e-3 (ratio ~1.58x) plus a leading 0,
@@ -2310,37 +2312,50 @@ rule predict_real_data:
 ##############################################################################
 # REAL DATA: calibration_simulate – model calibration / posterior-predictive #
 # check. Simulate at the real-data fitted params (predictions_{model_key}    #
-# from predict_real_data), calibration_n_replicates replicates in ONE job    #
-# per {variant}/{model_key} (see calibration_simulate.py --n-replicates --   #
-# each replicate is cheap, so this avoids per-replicate job/SLURM overhead). #
-# Saves the tree sequence + SFS per replicate for comparison against the     #
-# real observed SFS.                                                        #
+# from predict_real_data), one job per {variant}/{model_key}/{rep} so        #
+# replicates run as parallel SLURM array tasks (bash_scripts/                #
+# calibration_simulate.sh) instead of a sequential loop in one job. Saves    #
+# the tree sequence + SFS per replicate for comparison against the real      #
+# observed SFS.                                                              #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/replicate_0/SFS.pkl
+#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/replicate_<rep>/SFS.pkl
 ##############################################################################
 rule calibration_simulate:
     input:
         cfg         = EXP_CFG,
         predictions = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}.json",
     output:
-        trees   = expand(f"{CALIBRATION_ROOT}/replicate_{{rep}}/tree_sequence.trees", rep=CALIBRATION_REPS, allow_missing=True),
-        sfs     = expand(f"{CALIBRATION_ROOT}/replicate_{{rep}}/SFS.pkl", rep=CALIBRATION_REPS, allow_missing=True),
-        meta    = expand(f"{CALIBRATION_ROOT}/replicate_{{rep}}/meta.json", rep=CALIBRATION_REPS, allow_missing=True),
-        fitted  = f"{CALIBRATION_ROOT}/fitted_params.json",
+        trees  = f"{CALIBRATION_ROOT}/tree_sequence.trees",
+        sfs    = f"{CALIBRATION_ROOT}/SFS.pkl",
+        meta   = f"{CALIBRATION_ROOT}/meta.json",
     params:
         out_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}",
-        n_reps  = NUM_CALIBRATION_REPLICATES,
     threads: 1
     shell:
         r"""
         set -euo pipefail
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/calibration_simulate.py \
-            --config        "{input.cfg}" \
-            --params-json   "{input.predictions}" \
-            --out-dir       "{params.out_dir}" \
-            --n-replicates  {params.n_reps}
+            --config               "{input.cfg}" \
+            --params-json          "{input.predictions}" \
+            --out-dir              "{params.out_dir}" \
+            --n-replicates         1 \
+            --start-replicate-index {wildcards.rep}
         """
+
+# Convenience target: all calibration_n_replicates replicates for one
+# {variant}/{model_key} (reads the count from the config's calibration_n_replicates
+# key). bash_scripts/calibration_simulate.sh reads the same key itself to size its
+# SLURM --array range -- this rule is for driving the same count through plain
+# snakemake (e.g. local runs) without SLURM.
+rule calibration_simulate_all_reps:
+    input:
+        lambda w: expand(
+            f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}/replicate_{{rep}}/SFS.pkl",
+            rep=CALIBRATION_REPS,
+        )
+    output:
+        touch(f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/.all_reps_done")
 
 ##############################################################################
 # RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble          #

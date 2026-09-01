@@ -6,9 +6,12 @@
 # and save the tree sequence + SFS per replicate, for later posterior-
 # predictive comparison against the real observed data/summary stats.
 #
-# One invocation runs all --n-replicates replicates (sequentially, in-process)
-# so the Snakefile's calibration_simulate rule is a single job per
-# (variant, model_key) instead of one job per replicate.
+# One invocation runs --n-replicates replicates starting at --start-replicate-index
+# (sequentially, in-process). For SLURM job-array parallelism, call this with
+# --n-replicates 1 --start-replicate-index "$SLURM_ARRAY_TASK_ID" -- one array
+# task per replicate, run concurrently by SLURM (see bash_scripts/
+# calibration_simulate.sh). For an ad hoc multi-replicate run in one process,
+# just pass a larger --n-replicates.
 #
 # Reuses src.simulation.simulation()/create_SFS() -- the same functions the
 # sim-generation pipeline (run_one_simulation_to_dir) uses -- just fed an
@@ -51,6 +54,11 @@ def _parse_args():
                      help="Directory to hold replicate_0/, replicate_1/, ... plus fitted_params.json.")
     ap.add_argument("--n-replicates", type=int, default=1,
                      help="Independent stochastic replicates simulated at this same param point.")
+    ap.add_argument("--start-replicate-index", type=int, default=0,
+                     help="First replicate index to simulate; replicate i in "
+                          "[start, start+n_replicates) is written to replicate_{i}/ "
+                          "with seed base_seed+i. Set to $SLURM_ARRAY_TASK_ID with "
+                          "--n-replicates 1 for one array task per replicate.")
     ap.add_argument("--seed", type=int, default=None,
                      help="Base seed; replicate i uses seed+i. Defaults to config['seed'] "
                           "offset by 1_000_000 (to avoid colliding with training-sim seeds), "
@@ -141,9 +149,12 @@ def main() -> None:
         base_seed = None
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "fitted_params.json").write_text(json.dumps(params, indent=2))
+    fitted_path = args.out_dir / "fitted_params.json"
+    if not fitted_path.exists():
+        fitted_path.write_text(json.dumps(params, indent=2))
 
-    for i in range(args.n_replicates):
+    start = args.start_replicate_index
+    for i in range(start, start + args.n_replicates):
         _simulate_one_replicate(
             rep_dir=args.out_dir / f"replicate_{i}",
             rep_index=i,
@@ -155,7 +166,8 @@ def main() -> None:
             coverage_percent=args.coverage_percent,
         )
 
-    print(f"✓ calibration simulation done -> {args.out_dir} ({args.n_replicates} replicate(s))")
+    print(f"✓ calibration simulation done -> {args.out_dir} "
+          f"(replicates {start}..{start + args.n_replicates - 1})")
 
 
 if __name__ == "__main__":

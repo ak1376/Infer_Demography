@@ -17,6 +17,7 @@
   "top_k": 5,
   "real_top_k": 5,
   "num_draws": 5000,
+  "calibration_n_replicates": 100,
   "priors": {
     "N_ANC": [
       3162,
