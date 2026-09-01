@@ -2358,6 +2358,45 @@ rule calibration_simulate_all_reps:
         touch(f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/.all_reps_done")
 
 ##############################################################################
+# REAL DATA: calibration_ppc – model calibration / posterior-predictive check #
+# plots + summary. Compares SFS-derived pi/Tajima's D/FST and SFS shape       #
+# between the real observed COMBINED_SFS and all calibration_n_replicates     #
+# calibration_simulate replicates for one {variant}/{model_key}. Requires all #
+# replicates (calibration_simulate) to already exist.                        #
+#                                                                             #
+#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/ppc/calibration_ppc.png
+##############################################################################
+rule calibration_ppc:
+    input:
+        cfg  = EXP_CFG,
+        sfs  = COMBINED_SFS,
+        meta = COMBINED_SFS_META,
+        reps = lambda w: expand(
+            f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}/replicate_{{rep}}/SFS.pkl",
+            rep=CALIBRATION_REPS,
+        ),
+    output:
+        png     = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/ppc/calibration_ppc.png",
+        summary = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/ppc/calibration_ppc_summary.json",
+    params:
+        calibration_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}",
+        out_dir         = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}/ppc",
+        title           = lambda w: f"{MODEL} ({w.variant}/{w.model_key})",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/calibration_ppc.py \
+            --config             "{input.cfg}" \
+            --calibration-dir    "{params.calibration_dir}" \
+            --combined-sfs       "{input.sfs}" \
+            --combined-sfs-meta  "{input.meta}" \
+            --out-dir            "{params.out_dir}" \
+            --title              "{params.title}"
+        """
+
+##############################################################################
 # RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble          #
 # Not in rule all. Not built via combine_features/prepare_sfs_splits (see   #
 # their variant wildcard_constraints) — build_raw_features_dataset and      #
