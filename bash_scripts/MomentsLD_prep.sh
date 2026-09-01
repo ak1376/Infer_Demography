@@ -55,6 +55,10 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
         # ---- PRUNED-ONLY: pruning enabled, so unpruned is skipped -----------
         for FRAC_TAG in $PRUNE_FRACS; do
             TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/pruning/${FRAC_TAG}/means.varcovs.pkl"
+            if [[ -s "$ROOT/$TARGET" ]]; then
+                echo "[sim_${SID} ${FRAC_TAG}] means.varcovs.pkl already built -> skipping"
+                continue
+            fi
             echo "Aggregating pruned LD stats (${FRAC_TAG}) for SID=$SID → $TARGET"
             snakemake --snakefile "$SNAKEFILE" \
                       --directory "$ROOT" \
@@ -68,6 +72,10 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
     else
         # ---- UNPRUNED-ONLY: no pruning configured ---------------------------
         TARGET="experiments/${MODEL}/inferences/sim_${SID}/MomentsLD/means.varcovs.pkl"
+        if [[ -s "$ROOT/$TARGET" ]]; then
+            echo "[sim_${SID}] means.varcovs.pkl already built -> skipping"
+            continue
+        fi
         echo "Aggregating LD stats for SID=$SID → $TARGET"
         snakemake --snakefile "$SNAKEFILE" \
                   --directory "$ROOT" \

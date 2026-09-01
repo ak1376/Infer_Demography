@@ -117,10 +117,10 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
     "experiments/${MODEL}/simulations/${sid}/.done" \
     2>/dev/null || true
 
-  # if [[ -f "$TARGET_COMBO" ]]; then
-  #   echo "sim_${sid} already complete — skipping"
-  #   continue
-  # fi
+  if [[ -s "$TARGET_COMBO" ]]; then
+    echo "sim_${sid} already complete — skipping"
+    continue
+  fi
 
   snakemake \
     -j "$SLURM_CPUS_PER_TASK" \
