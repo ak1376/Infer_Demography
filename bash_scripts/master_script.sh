@@ -116,9 +116,12 @@ else
 fi
 
 # --- 8. aggregate moments+dadi top-K, cleanup ---
+# Must also wait on momLD_agg_id: cleanup_optimization_runs deletes any
+# run_{sid}_{opt} dir not in the union of dadi/moments/MomentsLD top-K, so
+# it can't run until MomentsLD has already picked its own keep-set.
 export BATCH_SIZE=1
 agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  --dependency=afterany:$mom_id:$dadi_id bash_scripts/aggregate_moments_dadi.sh); [[ -n "$agg_id" ]]
+  --dependency=afterany:$mom_id:$dadi_id:$momLD_agg_id bash_scripts/aggregate_moments_dadi.sh); [[ -n "$agg_id" ]]
 
 # --- 8b/8c. FIM + SFS-residuals (always computed, regardless of
 #            use_fim_features/use_residuals -- those flags only control

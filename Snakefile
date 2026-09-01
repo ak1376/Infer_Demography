@@ -519,11 +519,17 @@ rule aggregate_opts_engine:
         print(f"✅ {engine}: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.pkl}")
         print(f"✅ {engine}: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
-# ── CLEANUP RULE: Remove non-top-K optimization runs after both aggregations ──
+# ── CLEANUP RULE: Remove non-top-K optimization runs after all three
+#    engines (dadi, moments, MomentsLD) have finished aggregating. Must wait
+#    on MomentsLD too -- its top-K opt indices (by LD likelihood) don't
+#    necessarily overlap with dadi/moments' (by SFS likelihood), so deleting
+#    a run dir just because it wasn't in the dadi/moments keep-set can throw
+#    away a restart MomentsLD still needed. ─────────────────────────────────
 rule cleanup_optimization_runs:
     input:
-        dadi    = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
-        moments = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl"
+        dadi       = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
+        moments    = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
+        momentsld  = f"{LD_ROOT}/best_fit.pkl",
     output:
         cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
     run:
@@ -545,10 +551,13 @@ rule cleanup_optimization_runs:
             dadi_data = pickle.load(f)
         with open(input.moments, "rb") as f:
             moments_data = pickle.load(f)
+        with open(input.momentsld, "rb") as f:
+            momentsld_data = pickle.load(f)
 
-        dadi_keep    = set((dadi_data.get("opt_index") or [])[:TOP_K])
-        moments_keep = set((moments_data.get("opt_index") or [])[:TOP_K])
-        keep_indices = dadi_keep | moments_keep
+        dadi_keep      = set((dadi_data.get("opt_index") or [])[:TOP_K])
+        moments_keep   = set((moments_data.get("opt_index") or [])[:TOP_K])
+        momentsld_keep = set((momentsld_data.get("opt_index") or [])[:TOP_K])
+        keep_indices   = dadi_keep | moments_keep | momentsld_keep
 
         run_root = pathlib.Path(f"experiments/{MODEL}/runs")
         prefix = f"run_{sid}_"
