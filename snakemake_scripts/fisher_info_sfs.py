@@ -26,17 +26,22 @@ import numdifftools as nd
 
 
 def _build_sample_sizes_from_sfs(sfs) -> OrderedDict[str, int]:
+    """Haploid sample size per pop, read directly from the SFS shape
+    (dim = n_haploid + 1). Must NOT round-trip through a diploid count
+    (`(n-1)//2` then re-doubled) -- that truncates whenever a population's
+    true haploid size is odd, e.g. shape 10 (n_haploid=9) silently becomes
+    8 after (10-1)//2=4 -> 2*4, producing an expected SFS one shorter than
+    the observed one on that axis.
+    """
     if hasattr(sfs, "pop_ids") and sfs.pop_ids is not None:
-        return OrderedDict(
-            (pop, (n - 1) // 2) for pop, n in zip(sfs.pop_ids, sfs.shape)
-        )
+        return OrderedDict((pop, n - 1) for pop, n in zip(sfs.pop_ids, sfs.shape))
     pop_names = [f"pop{i}" for i in range(len(sfs.shape))]
-    return OrderedDict((pop, (n - 1) // 2) for pop, n in zip(pop_names, sfs.shape))
+    return OrderedDict((pop, n - 1) for pop, n in zip(pop_names, sfs.shape))
 
 
 def _auto_pts_from_sfs(sfs) -> List[int]:
     ss = _build_sample_sizes_from_sfs(sfs)
-    n_max_hap = max(2 * n for n in ss.values())
+    n_max_hap = max(ss.values())
     return [n_max_hap + 20, n_max_hap + 40, n_max_hap + 60]
 
 
@@ -54,7 +59,7 @@ def _expected_sfs_moments(theta_vec, param_names, model_func, mu, L, sample_size
 
     p_dict = {nm: float(v) for nm, v in zip(param_names, theta_vec)}
     graph = model_func(p_dict)
-    haploid_sizes = [2 * n for n in sample_sizes.values()]
+    haploid_sizes = list(sample_sizes.values())
     sampled_demes = list(sample_sizes.keys())
     fs = moments.Spectrum.from_demes(
         graph, sample_sizes=haploid_sizes, sampled_demes=sampled_demes
@@ -67,7 +72,7 @@ def _expected_sfs_dadi(theta_vec, param_names, model_func, mu, L, sample_sizes, 
 
     p_dict = {nm: float(v) for nm, v in zip(param_names, theta_vec)}
     graph = model_func(p_dict)
-    haploid_sizes = [2 * n for n in sample_sizes.values()]
+    haploid_sizes = list(sample_sizes.values())
     sampled_demes = list(sample_sizes.keys())
 
     def _raw(_params, ns, pts_grid):
