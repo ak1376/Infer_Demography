@@ -267,6 +267,16 @@ if PRUNE_TAGS:
 else:
     MOMENTSLD_AGG_TARGETS = [f"{LD_ROOT}/best_fit.pkl"]
 
+# The single MomentsLD result combine_results (below) folds in per sim. In
+# pruned mode there's no unpruned MomentsLD/best_fit.pkl at all -- only
+# infer_momentsld_pruned/aggregate_opts_momentsld_pruned ever run -- so this
+# must point at the pruned path; PRUNE_TAGS[0] matches the "one canonical
+# pruning variant feeds downstream" convention aggregate_ld_stats already
+# uses for its --fallback-ld-dir above.
+MOMENTSLD_BEST_FIT = (
+    MOMENTSLD_AGG_TARGETS[0] if PRUNE_TAGS else f"{LD_ROOT}/best_fit.pkl"
+)
+
 ##############################################################################
 # RULE all – final targets the workflow must create
 ##############################################################################
@@ -1241,8 +1251,8 @@ rule combine_results:
                     if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl") else [],
         moments   = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl")
                     if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl") else [],
-        momentsLD = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl")
-                    if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/best_fit.pkl") else [],
+        momentsLD = lambda w: ancient(MOMENTSLD_BEST_FIT.format(sid=w.sid))
+                    if os.path.exists(MOMENTSLD_BEST_FIT.format(sid=w.sid)) else [],
         # FIM/residuals are always computed (see FIM_ENGINES/RESIDUAL_ENGINES
         # above); use_fim_features/use_residuals only control whether
         # feature_extraction.py later uses them as modeling features.
