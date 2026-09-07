@@ -169,14 +169,43 @@ SIM_BASEDIR = f"experiments/{MODEL}/simulations"
 RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
 LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 
+# Which arm(s) the real-data Moments-LD chain runs on, and at what window
+# size/count, are config-driven so this can be flipped between e.g. Chr3L-only
+# and pooled Chr2L+Chr3L without editing the Snakefile. Deliberately a NEW,
+# separate config key from the top-level "num_windows" (used only by the
+# simulated-data windowing path above) -- the two must not be conflated.
+# num_windows accepts a fixed int (same value applied to every configured arm)
+# or the literal string "auto" (per-arm count = arm_span // window_size_bp,
+# runtime-determined since the actual VCF POS span isn't known until read --
+# mirrors godambe_correction_LRT/Snakefile's `checkpoint tile_nonoverlap`).
+# Overlap vs. non-overlap is never chosen explicitly: split_vcf_windows.py's
+# existing sliding-window formula produces whichever naturally falls out of
+# (window_size, num_windows, actual span) -- e.g. today's Chr3L defaults
+# (10 Mb, 100) yield overlapping windows because 100x10Mb can't fit
+# non-overlapping in a ~28Mb arm; "auto" at a smaller window_size yields
+# non-overlapping windows because the count is chosen to fit exactly.
+# Any experiment config JSON without this block falls back to arms=["Chr3L"],
+# window_size_bp=10_000_000, num_windows=100 -- byte-identical to the
+# pre-existing hardcoded single-arm behavior.
+REAL_DATA_CFG   = CFG.get("real_data_analysis", {})
+REAL_ARMS       = REAL_DATA_CFG.get("arms", ["Chr3L"])
+REAL_WINDOW_BP  = int(REAL_DATA_CFG.get("window_size_bp", 10_000_000))
+_raw_real_nw    = REAL_DATA_CFG.get("num_windows", 100)
+REAL_NUM_WINDOWS_MODE = "auto" if str(_raw_real_nw).lower() == "auto" else int(_raw_real_nw)
+REAL_TAG        = "_".join(REAL_ARMS)            # "Chr3L" / "Chr2L_Chr3L" / ...
+# Replaces the literal "MomentsLD" path segment as the real-data LD engine key
+# everywhere below, so every arm-set (including today's default) writes to its
+# own tagged, non-colliding directory.
+REAL_LD_ENGINE  = f"MomentsLD_{REAL_TAG}"
+
 # Real-data LD windows/LD_stats/aggregated means+varcovs are pure functions of
-# the VCF data (chrom, window size, r_bins) -- not of which demographic model
+# the VCF data (arms, window size, r_bins) -- not of which demographic model
 # you're fitting -- so this lives under DROSO_DIR (shared across every model)
 # instead of experiments/{MODEL}/...: switching MODEL never re-triggers the
 # window split or the (GPU-bound) per-window LD computation. The MomentsLD
 # *fit itself* (aggregate_opts_momentsld_real's best_fit.pkl) is genuinely
 # model-specific and lives under REAL_INF_ROOT instead -- see that rule below.
-REAL_LD_ROOT = f"{DROSO_DIR}/MomentsLD"
+REAL_LD_ROOT = f"{DROSO_DIR}/{REAL_LD_ENGINE}"
 # Per-autosome LD decay analysis (independent of the Chr3L inference pipeline above)
 REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_by_chrom"
 # Same, but with the real Comeron (R5/dm3) recombination map and 1 Mb windows.
@@ -238,6 +267,7 @@ CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
 
 wildcard_constraints:
     chrom      = r"Chr(2L|2R|3L|3R)",
+    arm        = r"Chr(2L|2R|3L|3R)",
     # combine_features narrows this back down (raw_features has its own
     # producer rules, build_raw_features_dataset/prepare_raw_features_splits).
     variant    = r"(w|wo)_FIM_(w|wo)_SFSresids|raw_features",
@@ -1805,52 +1835,124 @@ rule aggregate_opts_engine_real_chrom:
 # REAL DATA LD ANALYSIS
 ##############################################################################
 
-rule split_real_vcf_window:
+# Per-arm window split. A checkpoint because the window COUNT is only known
+# at runtime when REAL_NUM_WINDOWS_MODE == "auto" (arm_span // REAL_WINDOW_BP,
+# span read from the VCF itself) -- when it's a fixed int the count is already
+# known, but using a checkpoint uniformly for both cases means one rule body
+# serves every REAL_ARMS/REAL_NUM_WINDOWS_MODE combination without branching
+# into separate "pooled" vs. "single-arm" rules. Mirrors the proven recipe in
+# godambe_correction_LRT/Snakefile's `checkpoint tile_nonoverlap`.
+checkpoint real_vcf_windows:
     input:
-        vcf     = REAL_VCF,
+        vcf     = lambda wc: polarized_diploid_vcf(wc.arm),
         popfile = REAL_POPFILE,
     output:
-        vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
+        windir = directory(f"{REAL_LD_ROOT}/{{arm}}/windows"),
     params:
         script      = "snakemake_scripts/split_vcf_windows.py",
-        window_size = WINDOW_SIZE,
-        num_windows = NUM_WINDOWS
+        window_size = REAL_WINDOW_BP,
+        num_windows = REAL_NUM_WINDOWS_MODE,
     shell:
         r"""
         set -euo pipefail
-        mkdir -p "{REAL_LD_ROOT}/windows"
+        mkdir -p "{output.windir}"
+
+        if [ "{params.num_windows}" = "auto" ]; then
+            set +o pipefail
+            first=$(bcftools query -f '%POS\n' "{input.vcf}" | head -n1)
+            last=$(bcftools query -f '%POS\n' "{input.vcf}" | tail -n1)
+            set -o pipefail
+            span=$((last - first + 1))
+            n=$((span / {params.window_size}))
+            if [ "$n" -lt 1 ]; then n=1; fi
+        else
+            n={params.num_windows}
+        fi
 
         python "{params.script}" \
             --input-vcf "{input.vcf}" \
             --popfile "{input.popfile}" \
-            --out-dir "{REAL_LD_ROOT}/windows" \
+            --out-dir "{output.windir}" \
             --window-size "{params.window_size}" \
-            --num-windows "{params.num_windows}" \
-            --window-index "{wildcards.i}"
+            --num-windows "$n"
         """
+
+
+def _real_arm_window_idxs(arm):
+    ck = checkpoints.real_vcf_windows.get(arm=arm)
+    return sorted(
+        glob_wildcards(os.path.join(ck.output.windir, "window_{i}.vcf.gz")).i,
+        key=int,
+    )
+
+
+def gather_all_real_ld_stats(wildcards):
+    """Every configured arm's per-window LD_stats pkls, in a stable order."""
+    paths = []
+    for arm in REAL_ARMS:
+        for i in _real_arm_window_idxs(arm):
+            paths.append(f"{REAL_LD_ROOT}/{arm}/LD_stats/LD_stats_window_{i}.pkl")
+    return paths
+
+
+def real_flat_ld_stats(wildcards):
+    """Resolve materialize_real_ld_stats' checkpoint and return its actual
+    flattened file list -- must glob its directory rather than independently
+    predict filenames, since a directory() output doesn't let Snakemake match
+    individual files inside it against a producer rule."""
+    ck = checkpoints.materialize_real_ld_stats.get()
+    flat_dir = ck.output.flat_dir
+    idxs = glob_wildcards(os.path.join(flat_dir, "LD_stats_window_{j}.pkl")).j
+    return expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{j}}.pkl", j=idxs)
+
 
 rule compute_ld_real:
     input:
-        vcf_gz = f"{REAL_LD_ROOT}/windows/window_{{i}}.vcf.gz"
+        vcf_gz = f"{REAL_LD_ROOT}/{{arm}}/windows/window_{{i}}.vcf.gz"
     output:
-        pkl = f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl"
+        pkl = f"{REAL_LD_ROOT}/{{arm}}/LD_stats/LD_stats_window_{{i}}.pkl"
     resources:
         gpu = 1 if USE_GPU_LD else 0
     params:
-        script = "snakemake_scripts/compute_ld_window.py",
-        config = EXP_CFG,
+        script  = "snakemake_scripts/compute_ld_window.py",
+        config  = EXP_CFG,
+        sim_dir = lambda wc: f"{REAL_LD_ROOT}/{wc.arm}",
         r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
     shell:
         r"""
         set -euo pipefail
-        mkdir -p "{REAL_LD_ROOT}/LD_stats"
+        mkdir -p "{params.sim_dir}/LD_stats"
 
         python "{params.script}" \
-            --sim-dir "{REAL_LD_ROOT}" \
+            --sim-dir "{params.sim_dir}" \
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
             --r-bins "{params.r_bins}"
         """
+
+
+# Flatten every configured arm's LD_stats into one directory with fresh
+# sequential indices -- LD_inference.py's aggregator globs
+# "LD_stats_window_*.pkl" out of a single flat directory with no assumption
+# about count/contiguity, so windows from multiple arm subdirectories need to
+# be collected into one place first. Arm-count-agnostic: 1 arm or many, same
+# rule body. A checkpoint (not a plain rule): its own output *count* is only
+# known once gather_all_real_ld_stats resolves the upstream per-arm
+# checkpoints, so downstream consumers must glob its directory afterward
+# (real_flat_ld_stats below) rather than independently predicting filenames --
+# a directory() output alone doesn't let Snakemake match individual files
+# inside it against a rule.
+checkpoint materialize_real_ld_stats:
+    input:
+        pkls = gather_all_real_ld_stats,
+    output:
+        flat_dir = directory(f"{REAL_LD_ROOT}/LD_stats"),
+    run:
+        import shutil, pathlib
+        out = pathlib.Path(output.flat_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        for j, src in enumerate(input.pkls):
+            shutil.copyfile(src, out / f"LD_stats_window_{j}.pkl")
 
 ##############################################################################
 # PER-AUTOSOME LD DECAY ANALYSIS
@@ -2031,10 +2133,7 @@ rule aggregate_ld_windows_real:
     Runs once; the per-opt optimisation rules consume the means.varcovs.pkl output.
     """
     input:
-        pkls = lambda w: expand(
-            f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl",
-            i=WINDOWS
-        ),
+        pkls = real_flat_ld_stats,
     output:
         mv   = f"{REAL_LD_ROOT}/means.varcovs.pkl",
         boot = f"{REAL_LD_ROOT}/bootstrap_sets.pkl",
@@ -2070,9 +2169,9 @@ rule infer_momentsld_real:
         # the best (rep_0) moments params are unchanged.
         sfs_best = ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl"),
     output:
-        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/MomentsLD/best_fit.pkl"),
+        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{REAL_LD_ENGINE}/best_fit.pkl"),
     params:
-        outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/MomentsLD",
+        outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/{REAL_LD_ENGINE}",
         cfg    = EXP_CFG,
     threads: 1
     shell:
@@ -2099,13 +2198,13 @@ rule infer_momentsld_real:
 ##############################################################################
 rule aggregate_opts_momentsld_real:
     input:
-        runs = [f"{REAL_RUN_ROOT}/run_{o}/inferences/MomentsLD/best_fit.pkl"
+        runs = [f"{REAL_RUN_ROOT}/run_{o}/inferences/{REAL_LD_ENGINE}/best_fit.pkl"
                 for o in range(NUM_REAL_OPTIMS)],
     output:
         # Model-specific (unlike REAL_LD_ROOT above) -- this is the fitted
         # MomentsLD result under the active demographic model, so it belongs
         # under REAL_INF_ROOT alongside the moments/dadi best_fit.pkl.
-        best = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
+        best = f"{REAL_INF_ROOT}/{REAL_LD_ENGINE}/best_fit.pkl",
     run:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
@@ -2180,7 +2279,7 @@ rule combine_results_real:
 
         moments   = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
         dadi      = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
-        momentsLD = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
+        momentsLD = f"{REAL_INF_ROOT}/{REAL_LD_ENGINE}/best_fit.pkl",
 
         # FIMs (upper-tri flattened) for whatever engines you computed
         fims = lambda w: [
@@ -2238,7 +2337,7 @@ rule build_real_prediction_dataset:
         cfg            = EXP_CFG,
         moments        = f"{REAL_INF_ROOT}/moments/best_fit.pkl",
         dadi           = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
-        ld             = f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
+        ld             = f"{REAL_INF_ROOT}/{REAL_LD_ENGINE}/best_fit.pkl",
         train_features = lambda w: _real_train_features(w.variant),
         fims = lambda w: [
             f"{REAL_INF_ROOT}/fim/{eng}.fim.npy"

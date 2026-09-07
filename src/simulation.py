@@ -34,6 +34,7 @@ from src.demes_models import (  # noqa: E402
 )
 from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals  # noqa: E402
 from src.stdpopsim_wrappers import define_sps_model  # noqa: E402
+from src.rescaling import resolve_scaling_factor  # noqa: E402
 
 # ============================================================================
 # Sampling helpers (moved from script)
@@ -124,17 +125,26 @@ def simulation_runner(
             contig, sel, sampled_coverage=sampled_coverage
         )
 
+        # Q is resolved from this same graph every time simulation_runner()
+        # runs for a given parameter draw (base sim, then each window
+        # replicate) -- since it's a pure function of (model, sampled_params,
+        # config), every one of those calls resolves to the identical Q, so
+        # "selected once per draw and fixed throughout" holds without having
+        # to thread Q through as extra state.
+        resolved_scaling = resolve_scaling_factor(g, sel)
+
         eng = sps.get_engine("slim")
         ts = eng.simulate(
             model,
             contig,
             samples,
-            slim_scaling_factor=float(sel.get("slim_scaling", 10.0)),
+            slim_scaling_factor=resolved_scaling["slim_scaling"],
             slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
             seed=seed,
         )
 
         ts._bgs_selection_summary = sel_summary
+        ts._rescaling_resolved = resolved_scaling
     else:
 
         eng = sps.get_engine("msprime")
@@ -274,7 +284,14 @@ def write_bgs_meta_json(
     sampled_coverage: Optional[float],
 ) -> None:
     sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
+    rescaling_resolved = getattr(ts, "_rescaling_resolved", None) or {}
     is_bgs = engine == "slim"
+
+    # slim_scaling reflects the RESOLVED Q (fixed or conditional); falls back
+    # to the raw config read if simulation_runner() didn't stash a resolution
+    # (e.g. a ts produced outside simulation_runner()).
+    resolved_q = rescaling_resolved.get("slim_scaling")
+    resolved_n_min = rescaling_resolved.get("n_min")
 
     meta = dict(
         engine=str(engine),
@@ -331,8 +348,21 @@ def write_bgs_meta_json(
                 else None
             )
         ),
-        slim_scaling=(float(sel_cfg.get("slim_scaling", 10.0)) if is_bgs else None),
+        slim_scaling=(
+            float(resolved_q if resolved_q is not None else sel_cfg.get("slim_scaling", 10.0))
+            if is_bgs
+            else None
+        ),
         slim_burn_in=(float(sel_cfg.get("slim_burn_in", 5.0)) if is_bgs else None),
+        rescaling_mode=(
+            str(rescaling_resolved.get("rescaling_mode", "fixed")) if is_bgs else None
+        ),
+        n_min=(float(resolved_n_min) if is_bgs and resolved_n_min is not None else None),
+        n_min_over_q=(
+            float(resolved_n_min) / float(resolved_q)
+            if is_bgs and resolved_n_min is not None and resolved_q
+            else None
+        ),
         num_samples={k: int(v) for k, v in (cfg.get("num_samples") or {}).items()},
         base_seed=(None if cfg.get("seed") is None else int(cfg.get("seed"))),
         simulation_seed=simulation_seed,
@@ -703,14 +733,26 @@ def simulate_one_window_replicate(
     #     )
 
     sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
+    rescaling_resolved = getattr(ts, "_rescaling_resolved", None) or {}
+    resolved_q = rescaling_resolved.get("slim_scaling")
+    resolved_n_min = rescaling_resolved.get("n_min")
     window_metadata.update(
         {
             "species": str(sel_cfg.get("species", "HomSap")),
             "dfe_id": str(sel_cfg.get("dfe_id", "Gamma_K17")),
             "selected_bp": int(sel_summary.get("selected_bp", 0)),
             "selected_frac": float(sel_summary.get("selected_frac", 0.0)),
-            "slim_scaling": float(sel_cfg.get("slim_scaling", 10.0)),
+            "slim_scaling": float(
+                resolved_q if resolved_q is not None else sel_cfg.get("slim_scaling", 10.0)
+            ),
             "slim_burn_in": float(sel_cfg.get("slim_burn_in", 5.0)),
+            "rescaling_mode": str(rescaling_resolved.get("rescaling_mode", "fixed")),
+            "n_min": (float(resolved_n_min) if resolved_n_min is not None else None),
+            "n_min_over_q": (
+                float(resolved_n_min) / float(resolved_q)
+                if resolved_n_min is not None and resolved_q
+                else None
+            ),
         }
     )
 
