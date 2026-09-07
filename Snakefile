@@ -242,6 +242,9 @@ def _real_modeling_dir(variant):
 def _real_train_features(variant):
     return f"{_real_modeling_dir(variant)}/datasets/features_df.pkl"
 
+def _real_norm_train_features(variant):
+    return f"{_real_modeling_dir(variant)}/datasets/normalized_train_features.pkl"
+
 # model_key wildcard -> trained *_mdl_obj.pkl path, for a given variant
 def _real_model_objs(variant):
     d = _real_modeling_dir(variant)
@@ -2408,6 +2411,42 @@ rule predict_real_data:
             --config         "{input.cfg}" \
             --out-prefix     "{params.out_prefix}" \
             --model-key      "{wildcards.model_key}"
+        """
+
+##############################################################################
+# REAL DATA: shap_real_data -- explain a trained model's real-data prediction #
+# with SHAP, one explainer per target parameter. {variant}/{model_key} match  #
+# predict_real_data above; background = that variant's normalized training   #
+# features (normalized_train_features.pkl), same space real_features_df.pkl  #
+# is normalized into.                                                        #
+#                                                                             #
+#   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/shap_summary_random_forest.json
+##############################################################################
+rule shap_real_data:
+    input:
+        feats              = f"{REAL_PRED_ROOT}/real_features_df.pkl",
+        background_features = lambda w: _real_norm_train_features(w.variant),
+        model              = lambda w: _real_model_objs(w.variant)[w.model_key],
+        train_features     = lambda w: _real_train_features(w.variant),
+    output:
+        json = f"{REAL_PRED_ROOT}/shap_summary_{{model_key}}.json",
+        pkl  = f"{REAL_PRED_ROOT}/shap_values_{{model_key}}.pkl",
+        csv  = f"{REAL_PRED_ROOT}/shap_values_{{model_key}}.csv",
+        png  = f"{REAL_PRED_ROOT}/shap_summary_{{model_key}}.png",
+    params:
+        out_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/shap_real_data.py \
+            --model-obj           "{input.model}" \
+            --real-features       "{input.feats}" \
+            --background-features "{input.background_features}" \
+            --train-features      "{input.train_features}" \
+            --out-dir             "{params.out_dir}" \
+            --model-key           "{wildcards.model_key}"
         """
 
 ##############################################################################
