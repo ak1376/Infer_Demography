@@ -16,6 +16,11 @@
   "aggregate_min_replicates": 5,
   "top_k": 5,
   "real_top_k": 5,
+  "real_data_analysis": {
+    "arms": ["Chr2L", "Chr3L"],
+    "window_size_bp": 920000,
+    "num_windows": "auto"
+  },
   "num_draws": 5000,
   "calibration_n_replicates": 100,
   "priors": {

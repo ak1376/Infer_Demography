@@ -366,6 +366,9 @@ def main() -> None:
         for pname, spec in fixed_cfg.items():
             if pname not in param_names:
                 continue
+            if isinstance(spec, str) and spec.lower() in {"sampled", "true"}:
+                # Not actually fixed -- leave this parameter's prior bounds alone.
+                continue
             if spec == "moments_best":
                 val_abs = sfs_best_abs.get(pname)
                 if val_abs is None:

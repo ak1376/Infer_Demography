@@ -91,8 +91,17 @@ GODAMBE_GROWTH_NUM_BOOT_REPS = 10_000
 
 ACTIVE_ARMS = ["Chr3L"]                           # restricted to Chr3L for now
 
+# Pooled-arm support for the Godambe LRT (godambe_lrt_growth_pooled below):
+# a second, additive "arm" identifier that combines multiple real arms into
+# one SFS + one block-bootstrap, without touching any existing per-arm
+# results (everything lands under real_arms/{POOLED_TAG}/, a new sibling
+# directory of real_arms/Chr3L/ etc.).
+POOLED_ARMS = ["Chr2L", "Chr3L"]
+POOLED_TAG = "_".join(POOLED_ARMS)        # "Chr2L_Chr3L" -- real_arms/{arm}/ path shape
+POOLED_ARMS_DASH = "-".join(POOLED_ARMS)  # "Chr2L-Chr3L" -- matches bootstrapping_for_LRT.py's cache-file naming
+
 wildcard_constraints:
-    arm         = r"Chr[0-9A-Za-z]+",
+    arm         = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*",
     fit         = r"simple|complex",
     opt         = r"\d+",
     i           = r"\d+",
@@ -453,6 +462,23 @@ rule sweep_plot:
 
 SFS_OPT_INDICES = range(SFS_N_STARTS)
 
+# Materializes a pooled Chr2L+Chr3L unfolded SFS at the same path shape
+# (DROSO/{arm}/unfolded.sfs.pkl) real per-arm SFS files use, so the generic
+# sfs_fit_one_start/sfs_collect_fim rules below run UNCHANGED with
+# wildcards.arm == POOLED_TAG -- no rule-body changes needed for the SFS side.
+rule combine_pooled_sfs:
+    input:
+        sfs = expand(f"{DROSO}/{{arm}}/unfolded.sfs.pkl", arm=POOLED_ARMS),
+    output:
+        sfs = f"{DROSO}/{POOLED_TAG}/unfolded.sfs.pkl",
+    params:
+        script = "snakemake_scripts/combine_sfs.py",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" --in-sfs {input.sfs} --output-sfs "{output.sfs}"
+        """
+
 # each optimizer start is its own job (mirrors fit_one_start_ld.py on the LD side)
 rule sfs_fit_one_start:
     input:
@@ -557,6 +583,55 @@ rule godambe_lrt_growth:
             --vcf "{input.vcf}" \
             --popfile "{input.popfile}" \
             --validated-blocks-bed "{input.validated_blocks}" \
+            --out-dir "{params.out_dir}" \
+            --cache-dir "{params.cache_dir}" \
+            --max-workers {threads} \
+            --num-boot-reps {params.num_boot_reps} \
+            --block-sizes-kb "{params.block_sizes_kb}"
+        """
+
+# Pooled Chr2L+Chr3L variant of godambe_lrt_growth above. Everything lands
+# under real_arms/{POOLED_TAG}/ -- a new sibling directory, never touching
+# real_arms/Chr3L/ or any other existing per-arm results. Reuses
+# godambe_lrt_growth.py's now-generalized multi-arm support (--arm/--vcf
+# nargs="+"); cache_dir is deliberately bootstrapping_for_LRT.py's own
+# chunk_spectra_multiarm/ dir so the already-computed pooled block spectra
+# (50/75/100/150/200/300/500 kb) are reused instead of recomputed. No
+# --validated-blocks-bed (dropped for the pooled case, see script docstring).
+rule godambe_lrt_growth_pooled:
+    input:
+        simple_fit  = f"{OUT}/{POOLED_TAG}/sfs_fit_simple/best_fit.pkl",
+        complex_fit = f"{OUT}/{POOLED_TAG}/sfs_fit_complex/best_fit.pkl",
+        sfs         = f"{DROSO}/{POOLED_TAG}/unfolded.sfs.pkl",
+        vcfs        = expand(f"{DROSO}/{{arm}}/polarized.vcf.gz", arm=POOLED_ARMS),
+        popfile     = POPFILE,
+    output:
+        csv         = f"{OUT}/{POOLED_TAG}/godambe_lrt/block_sensitivity.csv",
+        sensitivity = f"{OUT}/{POOLED_TAG}/godambe_lrt/block_sensitivity.png",
+        j_plot      = f"{OUT}/{POOLED_TAG}/godambe_lrt/J_and_adjust_by_block_size.png",
+        adjust_plot = f"{OUT}/{POOLED_TAG}/godambe_lrt/adjust_by_block_size.png",
+        histograms  = expand(
+            f"{OUT}/{POOLED_TAG}/godambe_lrt/J_bootstrap_hist_{{bs}}kb.png",
+            bs=GODAMBE_GROWTH_BLOCK_SIZES_KB,
+        ),
+    params:
+        script         = f"{GODAMBE_SCR}/godambe_lrt_growth.py",
+        out_dir        = f"{OUT}/{POOLED_TAG}/godambe_lrt",
+        cache_dir      = f"{DROSO}/chunk_spectra_multiarm",
+        arms           = " ".join(POOLED_ARMS),
+        block_sizes_kb = ",".join(str(b) for b in GODAMBE_GROWTH_BLOCK_SIZES_KB),
+        num_boot_reps  = GODAMBE_GROWTH_NUM_BOOT_REPS,
+    threads: 8
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --arm {params.arms} \
+            --simple-fit "{input.simple_fit}" \
+            --complex-fit "{input.complex_fit}" \
+            --sfs "{input.sfs}" \
+            --vcf {input.vcfs} \
+            --popfile "{input.popfile}" \
             --out-dir "{params.out_dir}" \
             --cache-dir "{params.cache_dir}" \
             --max-workers {threads} \

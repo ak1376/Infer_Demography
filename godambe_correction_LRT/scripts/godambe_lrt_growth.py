@@ -60,14 +60,18 @@ from src.demes_models import split_migration_growth_both_model
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--arm", required=True, help="Chromosome arm, e.g. Chr3L")
+    p.add_argument("--arm", required=True, nargs="+",
+                    help="Chromosome arm(s), e.g. Chr3L, or multiple (e.g. Chr2L Chr3L) to pool")
     p.add_argument("--simple-fit", type=Path, required=True, help="sfs_fit_simple/best_fit.pkl")
     p.add_argument("--complex-fit", type=Path, required=True, help="sfs_fit_complex/best_fit.pkl")
-    p.add_argument("--sfs", type=Path, required=True, help="This arm's own unfolded.sfs.pkl")
-    p.add_argument("--vcf", type=Path, required=True, help="This arm's polarized (haploid+AA) VCF")
+    p.add_argument("--sfs", type=Path, required=True,
+                    help="unfolded.sfs.pkl for these arm(s) -- pooled/summed already if multiple arms")
+    p.add_argument("--vcf", type=Path, required=True, nargs="+",
+                    help="Polarized (haploid+AA) VCF(s), one per --arm, same order")
     p.add_argument("--popfile", type=Path, required=True)
-    p.add_argument("--validated-blocks-bed", type=Path, required=True,
-                    help="validated_blocks.bed from rule validated_blocks")
+    p.add_argument("--validated-blocks-bed", type=Path, nargs="*", default=[],
+                    help="validated_blocks.bed from rule validated_blocks (single-arm only; "
+                         "omit to skip the bonus validated-block-size report row)")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--cache-dir", type=Path, required=True,
                     help="Per-arm cache dir for parsed per-block SFS")
@@ -168,9 +172,13 @@ def _get_vcf_sample_indices(vcf_path, popfile_path):
 
 def main():
     args = parse_args()
-    arm = args.arm
+    arms = list(args.arm)
+    vcf_paths = [str(v) for v in args.vcf]
+    if len(arms) != len(vcf_paths):
+        raise ValueError(f"--arm and --vcf must have the same count, got {len(arms)} arms "
+                          f"and {len(vcf_paths)} vcfs")
+    arm_label = "+".join(arms)  # display-only, e.g. "Chr2L+Chr3L"
     popfile = str(args.popfile)
-    vcf_path = str(args.vcf)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     args.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -219,13 +227,21 @@ def main():
 
     H = -moments.Godambe.get_hess(_ll_growth, [p0_theta[GROWTH_IDX]], eps=score_eps, args=[data_sfs])
     H_growth = float(H[0, 0])
-    print(f"[{arm}] H (growth_CO):", H_growth)
+    print(f"[{arm_label}] H (growth_CO):", H_growth)
 
     # ---- Per-block SFS (block bootstrap units) ------------------------------
-    pop_names, sample_indices = _get_vcf_sample_indices(vcf_path, popfile)
+    # Sample sizes only need to come from ONE representative VCF -- all arms
+    # share the same popfile/individuals in this dataset, and this is only
+    # used for the zero-spectrum fallback shape in _parse_chunk.
+    pop_names, sample_indices = _get_vcf_sample_indices(vcf_paths[0], popfile)
     sample_sizes = [len(sample_indices[pop]) for pop in pop_names]
-    arm_lo, arm_hi = _get_vcf_bounds(vcf_path)
-    print(f"  {arm}: {arm_lo:,}..{arm_hi:,}  ({(arm_hi - arm_lo + 1) / 1e6:.2f} Mb)")
+
+    # Per-arm bounds, used to tile each arm independently below.
+    arm_bounds = {}
+    for a, vp in zip(arms, vcf_paths):
+        lo, hi = _get_vcf_bounds(vp)
+        arm_bounds[a] = (lo, hi)
+        print(f"  {a}: {lo:,}..{hi:,}  ({(hi - lo + 1) / 1e6:.2f} Mb)")
 
     # _parse_chunk (module-level, for ProcessPoolExecutor picklability) reads
     # these instead of closing over local variables.
@@ -234,35 +250,51 @@ def main():
     _SAMPLE_SIZES = sample_sizes
 
     def _block_jobs(block_bp):
-        """List of (vcf_path, (start, end)) blocks tiling the arm at ~block_bp.
+        """List of (vcf_path, (start, end)) blocks tiling EACH arm at ~block_bp
+        independently, then pooled into one flat list (mirrors
+        bootstrapping_for_LRT.py's AUTOSOMES loop) -- a single-arm call
+        (len(arms) == 1) reduces to exactly the old single-arm tiling.
 
-        Gets floor(arm_len / block_bp) blocks, so the realised block size is
-        >= block_bp (guarantees the LD-independence target is met, never undershot).
+        Each arm gets floor(arm_len / block_bp) blocks, so the realised block
+        size is >= block_bp (guarantees the LD-independence target is met,
+        never undershot).
         """
-        arm_len = arm_hi - arm_lo + 1
-        n = max(1, int(arm_len // block_bp))
-        bounds = np.linspace(arm_lo, arm_hi + 1, n + 1).astype(int)
-        return [(vcf_path, (int(bounds[i]), int(bounds[i + 1]))) for i in range(n)]
+        jobs = []
+        for a, vp in zip(arms, vcf_paths):
+            lo, hi = arm_bounds[a]
+            arm_len = hi - lo + 1
+            n = max(1, int(arm_len // block_bp))
+            bounds = np.linspace(lo, hi + 1, n + 1).astype(int)
+            jobs.extend((vp, (int(bounds[i]), int(bounds[i + 1]))) for i in range(n))
+        return jobs
 
     def _validated_jobs():
         """(vcf_path, (start, end)) blocks from the per-population-validated,
         independence-checked tiling in --validated-blocks-bed -- same job
         format as _block_jobs, but read from disk instead of computed
         arithmetically (and already restricted to the arm's validated usable
-        range, unlike _block_jobs, which tiles the raw, unmasked arm bounds)."""
+        range, unlike _block_jobs, which tiles the raw, unmasked arm bounds).
+        Single-arm only (see --validated-blocks-bed help)."""
         jobs = []
-        with open(args.validated_blocks_bed) as f:
-            for line in f:
-                chrom, start, end = line.split()
-                jobs.append((vcf_path, (int(start), int(end))))
+        vp = vcf_paths[0]
+        for bed_path in args.validated_blocks_bed:
+            with open(bed_path) as f:
+                for line in f:
+                    chrom, start, end = line.split()
+                    jobs.append((vp, (int(start), int(end))))
         return jobs
 
     def get_chunk_spectra(block_bp, jobs=None):
         """Per-block unfolded SFS, pooled into one list. Cached to disk (keyed
         by block size, or 'validated' when `jobs` is given explicitly) so
-        re-runs skip parsing."""
+        re-runs skip parsing. Cache filename uses arms_tag (e.g. "Chr3L" for
+        one arm, "Chr2L-Chr3L" pooled) -- identical to the single-arm naming
+        when len(arms) == 1, and matching bootstrapping_for_LRT.py's pooled
+        naming convention exactly, so an already-computed pooled cache under
+        --cache-dir is reused instead of recomputed."""
+        arms_tag = "-".join(arms)
         key = "validated" if jobs is not None else f"{int(block_bp)}bp"
-        cache = args.cache_dir / f"chunk_spectra_{arm}_{key}.pkl"
+        cache = args.cache_dir / f"chunk_spectra_{arms_tag}_{key}.pkl"
         if cache.exists():
             with open(cache, "rb") as f:
                 return pickle.load(f)
@@ -396,17 +428,17 @@ def main():
     # constant offsets would then no longer cancel) -- the real "mismatched
     # SFS" signal.
     D_stored = 2.0 * (float(complex_fit["best_ll"][0]) - float(simple_fit["best_ll"][0]))
-    print(f"\n[{arm}] Consistency check (fits on the same SFS?):")
+    print(f"\n[{arm_label}] Consistency check (fits on the same SFS?):")
     print(f"  D (moments.Inference.ll) = {D:.6g}")
     print(f"  D (stored best_ll)       = {D_stored:.6g}")
     if abs(D - D_stored) > 1e-3 * max(1.0, abs(D)):
-        print(f"  *** WARNING: D differs between conventions for {arm} -- the two "
+        print(f"  *** WARNING: D differs between conventions for {arm_label} -- the two "
               f"fits were likely run on DIFFERENT SFS. Re-fit both models on the "
-              f"current {arm} SFS. ***")
+              f"current {arm_label} SFS. ***")
 
     results = []
     J_by_block = {}
-    print(f"\n[{arm}] Raw LRT: D = {D:.6g}; unadjusted p = {p_raw:.6g}")
+    print(f"\n[{arm_label}] Raw LRT: D = {D:.6g}; unadjusted p = {p_raw:.6g}")
     print(f"H (growth_CO): {H_growth:.6g}\n")
 
     for block_kb in block_sizes_kb:
@@ -429,25 +461,30 @@ def main():
 
     # ---- Validated blocks: per-population, independence-checked tiling from
     # `rule validated_blocks`, reported alongside the uniform sweep (not
-    # instead of it) -- see --validated-blocks-bed above.
-    validated_jobs = _validated_jobs()
-    _starts_ends = [job[1] for job in validated_jobs]
-    validated_block_kb = (_starts_ends[0][1] - _starts_ends[0][0]) / 1e3  # actual bp size, in kb
-    seed = rng_seed + 999_999  # distinct from every sweep seed (rng_seed + int(block_kb))
-    row, J_boot = summarize_block_size(validated_block_kb, seed, D, jobs=validated_jobs)
-    results.append(row)
-    J_by_block[validated_block_kb] = J_boot
+    # instead of it) -- see --validated-blocks-bed above. Single-arm only;
+    # skipped entirely (no bed-to-arm reconciliation attempted) when pooling
+    # multiple arms and no --validated-blocks-bed was given.
+    if args.validated_blocks_bed:
+        validated_jobs = _validated_jobs()
+        _starts_ends = [job[1] for job in validated_jobs]
+        validated_block_kb = (_starts_ends[0][1] - _starts_ends[0][0]) / 1e3  # actual bp size, in kb
+        seed = rng_seed + 999_999  # distinct from every sweep seed (rng_seed + int(block_kb))
+        row, J_boot = summarize_block_size(validated_block_kb, seed, D, jobs=validated_jobs)
+        results.append(row)
+        J_by_block[validated_block_kb] = J_boot
 
-    print(
-        f"{validated_block_kb:>5.1f} kb  "
-        f"n_blocks={row['n_blocks']:>5d}  "
-        f"mean_J={row['mean_J']:>12.3g}  "
-        f"H/J={row['adjust_H_over_J']:>10.5g}  "
-        f"D_adj={row['D_adj']:>10.5g}  "
-        f"p_adj={row['p_adj']:>10.5g}  "
-        f"SFS maxdiff={row['max_abs_sfs_diff']:.3g}  "
-        f"[validated]"
-    )
+        print(
+            f"{validated_block_kb:>5.1f} kb  "
+            f"n_blocks={row['n_blocks']:>5d}  "
+            f"mean_J={row['mean_J']:>12.3g}  "
+            f"H/J={row['adjust_H_over_J']:>10.5g}  "
+            f"D_adj={row['D_adj']:>10.5g}  "
+            f"p_adj={row['p_adj']:>10.5g}  "
+            f"SFS maxdiff={row['max_abs_sfs_diff']:.3g}  "
+            f"[validated]"
+        )
+    else:
+        print("(no --validated-blocks-bed given -- skipping the validated-block-size bonus row)")
 
     # Write CSV summary without requiring pandas.
     fieldnames = list(results[0].keys())
@@ -472,7 +509,7 @@ def main():
     ax1.axhline(0.05, ls="--", lw=1, label="p = 0.05")
     ax1.set_xlabel("Block size (kb)")
     ax1.set_ylabel("Godambe-adjusted p-value")
-    ax1.set_title(f"Block-size sensitivity of Godambe-adjusted LRT ({arm})")
+    ax1.set_title(f"Block-size sensitivity of Godambe-adjusted LRT ({arm_label})")
     ax1.set_xticks(block_kb_arr)
     for x, y, nb in zip(block_kb_arr, p_adj_vals, n_blocks_arr):
         ax1.annotate(f"{nb} blocks", (x, y), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8)
@@ -486,7 +523,7 @@ def main():
     ax.plot(block_kb_arr, mean_J_vals, marker="o", label="mean J")
     ax.set_xlabel("Block size (kb)")
     ax.set_ylabel("mean J")
-    ax.set_title(f"Score-variance estimate J across block sizes ({arm})")
+    ax.set_title(f"Score-variance estimate J across block sizes ({arm_label})")
     ax.set_xticks(block_kb_arr)
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -497,7 +534,7 @@ def main():
     ax.plot(block_kb_arr, adjust_vals, marker="o", label="H/J")
     ax.set_xlabel("Block size (kb)")
     ax.set_ylabel("Adjustment factor H/J")
-    ax.set_title(f"Godambe adjustment factor across block sizes ({arm})")
+    ax.set_title(f"Godambe adjustment factor across block sizes ({arm_label})")
     ax.set_xticks(block_kb_arr)
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -517,7 +554,7 @@ def main():
         ax.set_xlabel(r"per-bootstrap $J_b = (\partial_{\mathrm{growth\_CO}}\,\ell)^2$")
         ax.set_ylabel("count")
         ax.set_title(
-            f"{arm}: {block_kb:.0f} kb ({row['n_blocks']} blocks)   "
+            f"{arm_label}: {block_kb:.0f} kb ({row['n_blocks']} blocks)   "
             f"H/J = {row['adjust_H_over_J']:.4g}   p = {row['p_adj']:.3g}"
         )
         ax.legend(fontsize=8)
@@ -525,7 +562,7 @@ def main():
         fig.savefig(hist_path, dpi=150)
         plt.close(fig)
 
-    print(f"[{arm}] wrote per-block-size J histograms")
+    print(f"[{arm_label}] wrote per-block-size J histograms")
 
 
 if __name__ == "__main__":
