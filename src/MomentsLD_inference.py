@@ -83,6 +83,7 @@ def load_config(config_path: Path) -> Dict:
 def aggregate_ld_statistics(
     ld_root: Path,
     fallback_ld_root: Optional[Path] = None,
+    diagonal_only_varcov: bool = False,
 ) -> Dict[str, List[np.ndarray]]:
     """
     Aggregate LD statistics from multiple windows into means and covariances.
@@ -96,6 +97,13 @@ def aggregate_ld_statistics(
         ld_root/LD_stats/, the pkl is sourced from
         fallback_ld_root/LD_stats/ instead. Useful for mixing unpruned
         and pruned windows in one optimization.
+    diagonal_only_varcov
+        If True, the full covariance matrix computed by
+        moments.LD.Parsing.bootstrap_data is preserved under
+        software_mean.varcovs.pkl, and means.varcovs.pkl instead stores a
+        copy with every off-diagonal varcov entry zeroed out (variances
+        only). Downstream composite-likelihood fitting then treats each LD
+        statistic as independent.
 
     Returns
     -------
@@ -105,7 +113,10 @@ def aggregate_ld_statistics(
     Side effects
     ------------
     Creates under ld_root:
-        - means.varcovs.pkl  (aggregated statistics)
+        - means.varcovs.pkl  (aggregated statistics; diagonal-only varcovs
+          if diagonal_only_varcov is True)
+        - software_mean.varcovs.pkl (full-covariance aggregated statistics;
+          only written if diagonal_only_varcov is True)
         - bootstrap_sets.pkl (bootstrap data for variance estimation)
     """
     means_file = ld_root / "means.varcovs.pkl"
@@ -161,6 +172,16 @@ def aggregate_ld_statistics(
     # Aggregate using moments.LD
     mv = moments.LD.Parsing.bootstrap_data(ld_stats)
     bootstrap_sets = moments.LD.Parsing.get_bootstrap_sets(ld_stats)
+
+    if diagonal_only_varcov:
+        software_mean_file = ld_root / "software_mean.varcovs.pkl"
+        with software_mean_file.open("wb") as f:
+            pickle.dump(mv, f)
+
+        mv = dict(mv)
+        mv["varcovs"] = [
+            np.diag(np.diag(np.asarray(V))) for V in mv["varcovs"]
+        ]
 
     # Save results
     with means_file.open("wb") as f:

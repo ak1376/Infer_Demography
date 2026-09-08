@@ -122,10 +122,14 @@ def main():
         # Simulation mode: try to load sampled_params from the sim dir
         logging.info(f"Simulation mode: loading sampled_params from {a.run_dir}")
         sampled_params = load_sampled_params(a.run_dir, required=False)
+        diagonal_only_varcov = False
     else:
-        # Real data mode: there is no sim_dir and no sampled parameters
+        # Real data mode: there is no sim_dir and no sampled parameters.
+        # Off-diagonal empirical varcov terms are always dropped here (see
+        # aggregate_ld_statistics), regardless of any other setting.
         logging.info("Real data mode: no --run-dir given, not loading sampled_params.")
         sampled_params = None
+        diagonal_only_varcov = True
 
     # r-bins to use for both comparison PDF and optimisation
     if a.r_bins:
@@ -139,8 +143,14 @@ def main():
     # ------------------------------------------------------------------
     # 1) aggregate LD pickles → means/varcovs/bootstrap_sets
     #    (assumes LD_stats/*.pkl live under output_root/LD_stats)
+    #    Real data mode retains only the variances (diagonal) of the
+    #    empirical varcov matrix; simulation mode keeps the full covariance.
     # ------------------------------------------------------------------
-    empirical_data = aggregate_ld_statistics(a.output_root, fallback_ld_root=a.fallback_ld_dir)
+    empirical_data = aggregate_ld_statistics(
+        a.output_root,
+        fallback_ld_root=a.fallback_ld_dir,
+        diagonal_only_varcov=diagonal_only_varcov,
+    )
 
     # ------------------------------------------------------------------
     # 2) empirical vs theoretical PDF (skips if exists)
