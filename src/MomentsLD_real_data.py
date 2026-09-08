@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import moments
 import nlopt
+import numdifftools as nd
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -339,7 +340,14 @@ def main() -> None:
         raise ValueError("config['num_samples'] must specify populations")
 
     use_scaled_units = cfg.get("momentsld_use_scaled_units", True)
-    priors_key = "priors_real_data_analysis" if use_scaled_units else "priors"
+    if use_scaled_units:
+        priors_key = "priors_real_data_analysis"
+    else:
+        # Prefer a dedicated absolute-unit real-data prior block (lets N_ANC/etc.
+        # get a wider ceiling here without touching the shared "priors" block,
+        # which also sets the simulated-training-data range and simulation-mode
+        # inference bounds everywhere else in the pipeline).
+        priors_key = "priors_real_data_analysis_absolute" if "priors_real_data_analysis_absolute" in cfg else "priors"
     priors = cfg.get(priors_key)
     if priors is None:
         raise ValueError(f"Need config['{priors_key}']")
@@ -405,11 +413,23 @@ def main() -> None:
         )
         return composite_gaussian_ll(emp_means, emp_covars, theory_arrays)
 
+    # Numerical gradient for LD_* (derivative-based) nlopt algorithms -- nlopt
+    # does not finite-difference these itself, it requires the objective to
+    # fill `grad` in-place. Mirrors src/moments_inference.py's identical setup
+    # (added there after LN_BOBYQA was found to under-converge on this model's
+    # wide-dynamic-range params, e.g. T and migration rates, stopping early --
+    # often at a prior bound -- while the true likelihood was still improving).
+    grad_fn = nd.Gradient(loglik, n=1, step=1e-4)
+
     _eval = {"n": 0}
+    _last = {"x": None}
 
     def objective(x: np.ndarray, grad: np.ndarray) -> float:
         ll = float(loglik(x))
         _eval["n"] += 1
+        _last["x"] = np.array(x, copy=True)
+        if grad.size > 0:
+            grad[:] = grad_fn(x)
         vec = 10 ** np.asarray(x)
         p_dict = _build_param_dict(param_names, vec)
         p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref) if use_scaled_units else p_dict
@@ -418,15 +438,59 @@ def main() -> None:
                      _eval["n"], ll, show, N_ref)
         return ll
 
-    opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))
+    # Shares the same "optimizer_algorithm" config key as dadi_inference.py/
+    # moments_inference.py -- one setting applies to all three engines.
+    # Defaults to the old hardcoded behavior if unset.
+    algo_name = str(cfg.get("optimizer_algorithm", "LN_BOBYQA"))
+    try:
+        algo = getattr(nlopt, algo_name)
+    except AttributeError:
+        raise ValueError(f"Unknown nlopt algorithm name: {algo_name!r}")
+
+    opt = nlopt.opt(algo, len(param_names))
     opt.set_lower_bounds(np.log10(lb))
     opt.set_upper_bounds(np.log10(ub))
     opt.set_max_objective(objective)
     opt.set_ftol_rel(float(args.rtol))
+    # Noisy finite-difference gradients can prevent ftol_rel from ever
+    # triggering for LD_* algorithms (same guard as moments_inference.py) --
+    # cap evals explicitly so optimization is guaranteed to terminate.
+    maxeval = int(cfg.get("optimizer_maxeval", 500))
+    opt.set_maxeval(maxeval)
+    maxtime = cfg.get("optimizer_maxtime")
+    if maxtime is not None:
+        opt.set_maxtime(float(maxtime))
 
-    best_x = opt.optimize(x0)
-    status = opt.last_optimize_result()
-    best_ll = opt.last_optimum_value()
+    # nlopt's RoundoffLimited/runtime_error do NOT inherit from Python's builtin
+    # RuntimeError, so they must be caught by their actual nlopt classes or they
+    # propagate uncaught (mirrors dadi_inference.py/moments_inference.py's guard).
+    try:
+        best_x = opt.optimize(x0)
+        status = opt.last_optimize_result()
+    except nlopt.RoundoffLimited:
+        best_x = _last["x"] if _last["x"] is not None else x0
+        status = -1
+        logging.warning("%s roundoff-limited; returning best point so far", algo_name)
+    except (RuntimeError, nlopt.runtime_error):
+        logging.warning("%s runtime_error; falling back to LN_COBYLA", algo_name)
+        x_start = _last["x"] if _last["x"] is not None else x0
+        opt_fb = nlopt.opt(nlopt.LN_COBYLA, len(param_names))
+        opt_fb.set_lower_bounds(np.log10(lb))
+        opt_fb.set_upper_bounds(np.log10(ub))
+        opt_fb.set_max_objective(objective)
+        opt_fb.set_ftol_rel(float(args.rtol))
+        opt_fb.set_maxeval(maxeval)
+        if maxtime is not None:
+            opt_fb.set_maxtime(float(maxtime))
+        try:
+            best_x = opt_fb.optimize(np.asarray(x_start, float))
+            status = opt_fb.last_optimize_result()
+        except (RuntimeError, nlopt.runtime_error, nlopt.RoundoffLimited):
+            best_x = _last["x"] if _last["x"] is not None else x_start
+            status = -1
+            logging.warning("LN_COBYLA fallback also failed; returning best point so far")
+
+    best_ll = float(loglik(best_x))
 
     best_dict = _build_param_dict(param_names, 10 ** np.asarray(best_x))
     best_abs = scaled_to_absolute_params(best_dict, N_ref=N_ref) if use_scaled_units else best_dict

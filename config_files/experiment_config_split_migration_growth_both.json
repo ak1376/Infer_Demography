@@ -19,7 +19,8 @@
   "real_data_analysis": {
     "arms": ["Chr2L", "Chr3L"],
     "window_size_bp": 920000,
-    "num_windows": "auto"
+    "num_windows": "auto",
+    "use_genmap": true
   },
   "num_draws": 5000,
   "calibration_n_replicates": 100,

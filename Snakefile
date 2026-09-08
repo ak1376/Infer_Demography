@@ -192,7 +192,15 @@ REAL_ARMS       = REAL_DATA_CFG.get("arms", ["Chr3L"])
 REAL_WINDOW_BP  = int(REAL_DATA_CFG.get("window_size_bp", 10_000_000))
 _raw_real_nw    = REAL_DATA_CFG.get("num_windows", 100)
 REAL_NUM_WINDOWS_MODE = "auto" if str(_raw_real_nw).lower() == "auto" else int(_raw_real_nw)
+# When true, the real-data LD-fitting path (real_vcf_windows/compute_ld_real/
+# infer_momentsld_real) uses the true Comeron per-chromosome recombination map
+# instead of a single flat/average rate to convert physical -> genetic
+# distance. Folded into REAL_TAG so flat-rate and genmap results live at
+# distinct, non-colliding paths instead of one overwriting the other.
+REAL_USE_GENMAP = bool(REAL_DATA_CFG.get("use_genmap", False))
 REAL_TAG        = "_".join(REAL_ARMS)            # "Chr3L" / "Chr2L_Chr3L" / ...
+if REAL_USE_GENMAP:
+    REAL_TAG += "_genmap"
 # Replaces the literal "MomentsLD" path segment as the real-data LD engine key
 # everywhere below, so every arm-set (including today's default) writes to its
 # own tagged, non-colliding directory.
@@ -1855,6 +1863,11 @@ checkpoint real_vcf_windows:
         script      = "snakemake_scripts/split_vcf_windows.py",
         window_size = REAL_WINDOW_BP,
         num_windows = REAL_NUM_WINDOWS_MODE,
+        # Match the constant rate simulations use (chunk_window reads the same
+        # CFG["recombination_rate"] to build msprime truth + its flat map), so
+        # real and simulated MomentsLD fits share one assumed rate instead of
+        # split_vcf_windows.py's unrelated 1e-8/bp default.
+        recomb_rate = float(CFG["recombination_rate"]),
     shell:
         r"""
         set -euo pipefail
@@ -1877,7 +1890,8 @@ checkpoint real_vcf_windows:
             --popfile "{input.popfile}" \
             --out-dir "{output.windir}" \
             --window-size "{params.window_size}" \
-            --num-windows "$n"
+            --num-windows "$n" \
+            --recomb-rate "{params.recomb_rate}"
         """
 
 
@@ -1911,7 +1925,12 @@ def real_flat_ld_stats(wildcards):
 
 rule compute_ld_real:
     input:
-        vcf_gz = f"{REAL_LD_ROOT}/{{arm}}/windows/window_{{i}}.vcf.gz"
+        vcf_gz = f"{REAL_LD_ROOT}/{{arm}}/windows/window_{{i}}.vcf.gz",
+        # Only pulled in (and only required) when REAL_USE_GENMAP is set --
+        # forces build_genetic_map_real to run first for this arm.
+        gmap   = lambda wc: (
+            [f"{REAL_LD_GENMAP}/{wc.arm}/genetic_map.txt"] if REAL_USE_GENMAP else []
+        ),
     output:
         pkl = f"{REAL_LD_ROOT}/{{arm}}/LD_stats/LD_stats_window_{{i}}.pkl"
     resources:
@@ -1920,7 +1939,14 @@ rule compute_ld_real:
         script  = "snakemake_scripts/compute_ld_window.py",
         config  = EXP_CFG,
         sim_dir = lambda wc: f"{REAL_LD_ROOT}/{wc.arm}",
-        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
+        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3",
+        # Empty string (flat-map default inside compute_ld_window.py) unless
+        # REAL_USE_GENMAP, in which case point it at the real Comeron map
+        # instead of the per-arm flat/average rate.
+        rec_map_arg = lambda wc: (
+            f'--rec-map-file "{REAL_LD_GENMAP}/{wc.arm}/genetic_map.txt"'
+            if REAL_USE_GENMAP else ""
+        ),
     shell:
         r"""
         set -euo pipefail
@@ -1930,7 +1956,8 @@ rule compute_ld_real:
             --sim-dir "{params.sim_dir}" \
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
-            --r-bins "{params.r_bins}"
+            --r-bins "{params.r_bins}" \
+            {params.rec_map_arg}
         """
 
 
@@ -2172,7 +2199,10 @@ rule infer_momentsld_real:
         # the best (rep_0) moments params are unchanged.
         sfs_best = ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl"),
     output:
-        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{REAL_LD_ENGINE}/best_fit.pkl"),
+        # Not temp(): kept per-restart so per-opt N_ANC/T/etc. trends can be
+        # inspected directly (as we've been doing) without waiting on
+        # aggregate_opts_momentsld_real to finish.
+        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{REAL_LD_ENGINE}/best_fit.pkl",
     params:
         outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/{REAL_LD_ENGINE}",
         cfg    = EXP_CFG,
