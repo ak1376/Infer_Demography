@@ -32,7 +32,16 @@ CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
 MODEL=$(jq -r '.demographic_model' "$CFG")
-TARGET="experiments/${MODEL}/real_data_analysis/inferences/MomentsLD/best_fit.pkl"
+
+# Must match the Snakefile's REAL_TAG / REAL_LD_ENGINE (and every other
+# real-data script's copy of this same logic).
+readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$CFG")
+REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$CFG")
+REAL_TAG=$(IFS=_; echo "${REAL_ARMS[*]}")
+[[ "$REAL_USE_GENMAP" == "true" ]] && REAL_TAG="${REAL_TAG}_genmap"
+REAL_LD_ENGINE="MomentsLD_${REAL_TAG}"
+
+TARGET="experiments/${MODEL}/real_data_analysis/inferences/${REAL_LD_ENGINE}/best_fit.pkl"
 
 echo "MODEL=$MODEL"
 echo "Target: $TARGET"

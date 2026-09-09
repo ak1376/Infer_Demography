@@ -37,6 +37,14 @@ NUM_REAL_OPTIMS=$(jq -r '.num_optimizations // 3' "$CFG")
 
 REAL_RUN_ROOT="experiments/${MODEL}/real_data_analysis/runs"
 
+# Must match the Snakefile's REAL_TAG / REAL_LD_ENGINE (and every other
+# real-data script's copy of this same logic).
+readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$CFG")
+REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$CFG")
+REAL_TAG=$(IFS=_; echo "${REAL_ARMS[*]}")
+[[ "$REAL_USE_GENMAP" == "true" ]] && REAL_TAG="${REAL_TAG}_genmap"
+REAL_LD_ENGINE="MomentsLD_${REAL_TAG}"
+
 echo "CFG: $CFG"
 echo "MODEL: $MODEL  NUM_REAL_OPTIMS: $NUM_REAL_OPTIMS"
 echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}  SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-unset}"
@@ -56,7 +64,7 @@ echo "Array $SLURM_ARRAY_TASK_ID → opts $BATCH_START .. $BATCH_END"
 
 TARGETS=()
 for OPT in $(seq "$BATCH_START" "$BATCH_END"); do
-    TARGET="${REAL_RUN_ROOT}/run_${OPT}/inferences/MomentsLD/best_fit.pkl"
+    TARGET="${REAL_RUN_ROOT}/run_${OPT}/inferences/${REAL_LD_ENGINE}/best_fit.pkl"
     if [[ -s "$ROOT/$TARGET" ]]; then
         echo "SKIP: OPT=$OPT (already exists: $TARGET)"
         continue
