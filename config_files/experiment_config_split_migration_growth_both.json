@@ -18,8 +18,8 @@
   "real_top_k": 5,
   "real_data_analysis": {
     "arms": ["Chr3L"],
-    "window_size_bp": 1000000,
-    "num_windows": 50,
+    "window_size_bp": 920000,
+    "num_windows": "auto",
     "use_genmap": true
   },
   "num_draws": 5000,

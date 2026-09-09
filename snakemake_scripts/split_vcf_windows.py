@@ -105,6 +105,16 @@ def main():
             step_size = 0
         actual_num_windows = args.num_windows
 
+        overlap = args.window_size - step_size
+        if overlap > 0:
+            print(
+                f"Note: {actual_num_windows} windows of size {args.window_size} over a "
+                f"span of {total_span} bp gives a step size of {step_size:,.0f} bp -- "
+                f"consecutive windows overlap by {overlap:,.0f} bp "
+                f"({100 * overlap / args.window_size:.1f}% of each window). "
+                f"Windows are therefore NOT independent replicates."
+            )
+
     # Decide which windows to generate
     if args.window_index is not None:
         if args.window_index < 0 or args.window_index >= actual_num_windows:
