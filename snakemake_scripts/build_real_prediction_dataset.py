@@ -34,6 +34,10 @@ def _parse_args():
                     help="Experiment config JSON (for priors).")
     ap.add_argument("--real-inf-dir", required=True, type=Path,
                     help="REAL inferences root containing moments/, dadi/, MomentsLD/ best_fit.pkl")
+    ap.add_argument("--ld-engine-subdir", default="MomentsLD",
+                    help="Subdir name under --real-inf-dir for the MomentsLD engine "
+                         "(matches Snakefile's REAL_LD_ENGINE, e.g. "
+                         "'MomentsLD_Chr2L_Chr3L_genmap'). Default 'MomentsLD' for backward compat.")
     ap.add_argument("--train-features", required=True, type=Path,
                     help="Training features_df.pkl used as the exact column template.")
     ap.add_argument("--out-dir", required=True, type=Path)
@@ -71,7 +75,7 @@ def main() -> None:
 
     mom_path = real / "moments" / "best_fit.pkl"
     dadi_path = real / "dadi" / "best_fit.pkl"
-    ld_path = real / "MomentsLD" / "best_fit.pkl"
+    ld_path = real / args.ld_engine_subdir / "best_fit.pkl"
 
     if mom_path.exists():
         data["moments"] = _load_pickle(mom_path)

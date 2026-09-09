@@ -2396,6 +2396,7 @@ rule build_real_prediction_dataset:
         # get auto-filled from wildcards, so this must build the real path
         # from w.variant directly.
         out_dir      = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}",
+        ld_engine_subdir = REAL_LD_ENGINE,
     threads: 1
     shell:
         r"""
@@ -2404,6 +2405,7 @@ rule build_real_prediction_dataset:
         python snakemake_scripts/build_real_prediction_dataset.py \
             --config         "{input.cfg}" \
             --real-inf-dir   "{params.real_inf_dir}" \
+            --ld-engine-subdir "{params.ld_engine_subdir}" \
             --train-features "{input.train_features}" \
             --out-dir        "{params.out_dir}" \
             --fim-paths      {input.fims} \
