@@ -2183,6 +2183,7 @@ rule aggregate_ld_windows_real:
             --run-dir       "{params.run_dir}" \
             --output-root   "{params.output_root}" \
             --config-file   "{params.cfg}" \
+            --real-data \
             --skip-optimize
         """
 

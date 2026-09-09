@@ -71,6 +71,19 @@ def _parse_args():
         help="Stop after aggregation + comparison PDF; do not run the NLopt optimisation.",
     )
     p.add_argument(
+        "--real-data",
+        action="store_true",
+        help=(
+            "Explicitly mark this as a real-data (not simulation) run. Real-data "
+            "rules pass --run-dir pointing at a stable 'run context' directory "
+            "purely so load_sampled_params(required=False) fails gracefully -- "
+            "--run-dir being set is NOT a reliable simulation-vs-real-data signal "
+            "on its own, so this flag is required to correctly gate "
+            "diagonal_only_varcov (real data drops off-diagonal empirical varcov "
+            "terms; simulation keeps the full covariance)."
+        ),
+    )
+    p.add_argument(
         "--results-dir",
         type=Path,
         default=None,
@@ -116,20 +129,28 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Decide whether we're in "simulation mode" or "real data mode"
+    # Decide whether we're in "simulation mode" or "real data mode".
+    # --real-data is the authoritative signal (see its help text) -- --run-dir
+    # being non-None does NOT imply simulation mode, since real-data rules
+    # also pass --run-dir (pointing at a stable "run context" directory)
+    # purely so load_sampled_params(required=False) below fails gracefully.
     # ------------------------------------------------------------------
-    if a.run_dir is not None:
-        # Simulation mode: try to load sampled_params from the sim dir
-        logging.info(f"Simulation mode: loading sampled_params from {a.run_dir}")
-        sampled_params = load_sampled_params(a.run_dir, required=False)
-        diagonal_only_varcov = False
-    else:
-        # Real data mode: there is no sim_dir and no sampled parameters.
+    if a.real_data:
+        # Real data mode: no sampled parameters exist.
         # Off-diagonal empirical varcov terms are always dropped here (see
         # aggregate_ld_statistics), regardless of any other setting.
-        logging.info("Real data mode: no --run-dir given, not loading sampled_params.")
+        logging.info("Real data mode (--real-data): not loading sampled_params.")
         sampled_params = None
         diagonal_only_varcov = True
+    else:
+        # Simulation mode: try to load sampled_params from the sim dir
+        logging.info(f"Simulation mode: loading sampled_params from {a.run_dir}")
+        sampled_params = (
+            load_sampled_params(a.run_dir, required=False)
+            if a.run_dir is not None
+            else None
+        )
+        diagonal_only_varcov = False
 
     # r-bins to use for both comparison PDF and optimisation
     if a.r_bins:
