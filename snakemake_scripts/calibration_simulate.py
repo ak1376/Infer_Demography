@@ -9,8 +9,8 @@
 # One invocation runs --n-replicates replicates starting at --start-replicate-index
 # (sequentially, in-process). For SLURM job-array parallelism, call this with
 # --n-replicates 1 --start-replicate-index "$SLURM_ARRAY_TASK_ID" -- one array
-# task per replicate, run concurrently by SLURM (see bash_scripts/
-# calibration_simulate.sh). For an ad hoc multi-replicate run in one process,
+# task per replicate, run concurrently by SLURM (see
+# bash_scripts/simulation/calibration_simulate.sh). For an ad hoc multi-replicate run in one process,
 # just pass a larger --n-replicates.
 #
 # Reuses src.simulation.simulation()/create_SFS() -- the same functions the

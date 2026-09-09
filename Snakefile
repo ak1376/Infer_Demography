@@ -270,7 +270,7 @@ REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
 
 # Model-calibration check (posterior-predictive): simulate at the real-data
 # fitted params, one job per (variant, model_key, rep) so replicates can run
-# as parallel SLURM array tasks (see bash_scripts/calibration_simulate.sh) --
+# as parallel SLURM array tasks (see bash_scripts/simulation/calibration_simulate.sh) --
 # each array task builds just its own replicate_{rep} target.
 CALIBRATION_ROOT = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/replicate_{{rep}}"
 NUM_CALIBRATION_REPLICATES = int(CFG.get("calibration_n_replicates", 20))
@@ -1289,7 +1289,7 @@ rule sfs_residuals:
         inf_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}",
         out_dir  = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/sfs_residuals/{w.engine}",
         n_bins   = CFG.get("sfs_n_bins", ""),  # empty string if not specified
-        script   = "bash_scripts/run_sfs_residuals.sh",
+        script   = "bash_scripts/lib/run_sfs_residuals.sh",
     threads: 1
     shell:
         r"""
@@ -2293,7 +2293,7 @@ rule sfs_residuals_real:
         inf_dir  = REAL_INF_ROOT,
         out_dir  = lambda w: f"{REAL_INF_ROOT}/sfs_residuals/{w.engine}",
         n_bins   = CFG.get("sfs_n_bins", ""),  # empty string if not specified
-        script   = "bash_scripts/run_sfs_residuals.sh",
+        script   = "bash_scripts/lib/run_sfs_residuals.sh",
     threads: 1
     shell:
         r"""
@@ -2486,10 +2486,10 @@ rule shap_real_data:
 # REAL DATA: calibration_simulate – model calibration / posterior-predictive #
 # check. Simulate at the real-data fitted params (predictions_{model_key}    #
 # from predict_real_data), one job per {variant}/{model_key}/{rep} so        #
-# replicates run as parallel SLURM array tasks (bash_scripts/                #
-# calibration_simulate.sh) instead of a sequential loop in one job. Saves    #
-# the tree sequence + SFS per replicate for comparison against the real      #
-# observed SFS.                                                              #
+# replicates run as parallel SLURM array tasks                              #
+# (bash_scripts/simulation/calibration_simulate.sh) instead of a sequential  #
+# loop in one job. Saves the tree sequence + SFS per replicate for           #
+# comparison against the real observed SFS.                                 #
 #                                                                             #
 #   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/replicate_<rep>/SFS.pkl
 ##############################################################################
@@ -2518,7 +2518,7 @@ rule calibration_simulate:
 
 # Convenience target: all calibration_n_replicates replicates for one
 # {variant}/{model_key} (reads the count from the config's calibration_n_replicates
-# key). bash_scripts/calibration_simulate.sh reads the same key itself to size its
+# key). bash_scripts/simulation/calibration_simulate.sh reads the same key itself to size its
 # SLURM --array range -- this rule is for driving the same count through plain
 # snakemake (e.g. local runs) without SLURM.
 rule calibration_simulate_all_reps:

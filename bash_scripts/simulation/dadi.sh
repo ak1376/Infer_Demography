@@ -1,0 +1,146 @@
+#!/bin/bash
+#SBATCH --job-name=dadi_infer_cpu
+#SBATCH --output=logs/dadi_cpu_%A_%a.out
+#SBATCH --error=logs/dadi_cpu_%A_%a.err
+#SBATCH --time=15:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+#SBATCH --partition=kern,preempt,kerngpu
+#SBATCH --account=kernlab
+#SBATCH --requeue
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=akapoor@uoregon.edu
+#SBATCH --verbose
+
+set -euo pipefail
+
+# Overridable so master_script.sh can export the exact value it used to size
+# the --array range it submits this script with.
+BATCH_SIZE="${BATCH_SIZE:-50}"
+# cpus-per-task=8 (was 2) lets up to 8 restarts in a batch run concurrently
+# (infer_engine is threads:1 -- see Snakefile). Raising it multiplies this
+# stage's total concurrent core footprint across every array task running at
+# once. NOTE: unlike moments.sh, master_script.sh submits this stage's array
+# with NO throttle (no %N), so concurrency here is bounded only by your
+# account's actual QOS limits -- check those (sacctmgr show qos
+# format=Name,MaxTRESPU,MaxJobsPU) before running this at scale.
+
+ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
+SNAKEFILE="$ROOT/Snakefile"
+
+source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+CFG="$(resolve_cfg_path "$ROOT")"
+export EXP_CFG="$CFG"
+
+# Hard-disable GPU visibility (belt + suspenders)
+export CUDA_VISIBLE_DEVICES=""
+export SLURM_GPUS=0
+
+NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
+NUM_OPTIMS=$(jq -r '.num_optimizations' "$CFG")
+MODEL=$(jq -r '.demographic_model'      "$CFG")
+TOTAL_TASKS=$(( NUM_DRAWS * NUM_OPTIMS ))
+
+echo "CFG: $CFG"
+echo "MODEL: $MODEL  NUM_DRAWS: $NUM_DRAWS  NUM_OPTIMS: $NUM_OPTIMS  TOTAL_TASKS: $TOTAL_TASKS"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}  SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-unset}"
+echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+
+# ----------------------------
+# Helper: decide whether canonical output is "non-empty"
+# Non-empty := pickle loads AND n_files_found>0 AND best_ll is non-empty (or best_params non-empty)
+# Empty example you showed has n_files_found=0 and lists empty.
+# Returns:
+#   0 => NON-EMPTY (skip)
+#   1 => EMPTY / missing / unreadable (do not skip; allow recompute)
+# ----------------------------
+is_nonempty_canon() {
+  local pkl="$1"
+
+  [[ -f "$pkl" ]] || return 1
+
+  python3 - <<'PY' "$pkl"
+import pickle, sys
+p = sys.argv[1]
+try:
+    d = pickle.load(open(p, "rb"))
+except Exception:
+    sys.exit(1)
+
+# tolerate missing keys
+n = d.get("n_files_found", 0)
+best_ll = d.get("best_ll", [])
+best_params = d.get("best_params", [])
+
+nonempty = (n is not None and int(n) > 0) and (len(best_ll) > 0 or len(best_params) > 0)
+sys.exit(0 if nonempty else 1)
+PY
+}
+
+# Self-submit if launched without an array task id
+if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+  NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
+  echo "Submitting array 0..${NUM_ARRAY}"
+  sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
+  exit 0
+fi
+
+# --- compute slice for this array id ---
+BATCH_START=$(( SLURM_ARRAY_TASK_ID * BATCH_SIZE ))
+BATCH_END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
+[[ $BATCH_END -ge $TOTAL_TASKS ]] && BATCH_END=$(( TOTAL_TASKS - 1 ))
+echo "Array $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
+
+# Collect targets, then build the whole batch in one Snakemake call (same
+# rationale as LD_stats_windows.sh/MomentsLD.sh: one call per array task
+# instead of up to BATCH_SIZE, cutting redundant DAG-parse/startup overhead.
+# infer_engine is threads:1, so this also lets up to $SLURM_CPUS_PER_TASK
+# restarts run concurrently instead of one at a time).
+TARGETS=()
+
+for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
+  SID=$(( IDX / NUM_OPTIMS ))
+  OPT=$(( IDX % NUM_OPTIMS ))
+
+  # ---- canonical "sim_XX" output we use to decide whether to skip ----
+  CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/dadi/fit_params.pkl"
+
+  # Skip ONLY if canonical exists AND is non-empty.
+  # If canonical missing OR "empty" (like your example) OR unreadable -> recompute.
+  if is_nonempty_canon "$CANON_OUT"; then
+    echo "SKIP: sim_${SID} has NON-EMPTY $CANON_OUT (so skipping SID=$SID OPT=$OPT)"
+    continue
+  else
+    if [[ -f "$CANON_OUT" ]]; then
+      echo "RE-RUN: sim_${SID} has EMPTY/UNREADABLE $CANON_OUT (so running SID=$SID OPT=$OPT)"
+    else
+      echo "RUN: sim_${SID} missing $CANON_OUT (so running SID=$SID OPT=$OPT)"
+    fi
+  fi
+
+  # ---- what this job will build (per-run output) ----
+  TARGET="experiments/${MODEL}/runs/run_${SID}_${OPT}/inferences/dadi/best_fit.pkl"
+  echo "QUEUE: $TARGET"
+  TARGETS+=("$TARGET")
+done
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+  echo "Nothing to build for this array task (all skipped)."
+else
+  echo "Building ${#TARGETS[@]} targets in one Snakemake call (-j $SLURM_CPUS_PER_TASK)..."
+  # --keep-going: one restart failing shouldn't strand the rest of this
+  # batch's otherwise-good restarts. Not wrapped in `|| true` -- a real
+  # failure should still surface as this array task's exit status.
+  snakemake \
+    --snakefile "$SNAKEFILE" \
+    --directory "$ROOT" \
+    --rerun-incomplete \
+    --rerun-triggers mtime \
+    --nolock \
+    --keep-going \
+    -j "$SLURM_CPUS_PER_TASK" \
+    "${TARGETS[@]}"
+fi
+
+echo "Array task $SLURM_ARRAY_TASK_ID finished."
