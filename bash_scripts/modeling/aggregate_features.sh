@@ -53,6 +53,7 @@ for variant in "${MODELING_VARIANTS[@]}"; do
     "experiments/${MODEL}/modeling_${variant}/datasets/metrics_momentsLD.json"
     "experiments/${MODEL}/modeling_${variant}/datasets/outliers_removed.tsv"
     "experiments/${MODEL}/modeling_${variant}/datasets/outliers_preview.txt"
+    "experiments/${MODEL}/modeling_${variant}/datasets/empirical_norm_stats.json"
   )
 done
 COLOR_TARGETS=(

@@ -250,6 +250,9 @@ def _real_modeling_dir(variant):
 def _real_train_features(variant):
     return f"{_real_modeling_dir(variant)}/datasets/features_df.pkl"
 
+def _real_empirical_norm_stats(variant):
+    return f"{_real_modeling_dir(variant)}/datasets/empirical_norm_stats.json"
+
 def _real_norm_train_features(variant):
     return f"{_real_modeling_dir(variant)}/datasets/normalized_train_features.pkl"
 
@@ -1398,7 +1401,8 @@ rule combine_features:
         metrics_moments = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_moments.json",
         metrics_momentsLD = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_momentsLD.json",
         outliers_tsv  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_removed.tsv",
-        outliers_txt  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_preview.txt"
+        outliers_txt  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_preview.txt",
+        empirical_norm_stats = f"experiments/{MODEL}/modeling_{{variant}}/datasets/empirical_norm_stats.json"
     params:
         script = "snakemake_scripts/feature_extraction.py",
         outdir = f"experiments/{MODEL}/modeling_{{variant}}",
@@ -2373,6 +2377,7 @@ rule build_real_prediction_dataset:
         dadi           = f"{REAL_INF_ROOT}/dadi/best_fit.pkl",
         ld             = f"{REAL_INF_ROOT}/{REAL_LD_ENGINE}/best_fit.pkl",
         train_features = lambda w: _real_train_features(w.variant),
+        empirical_norm_stats = lambda w: _real_empirical_norm_stats(w.variant),
         fims = lambda w: [
             f"{REAL_INF_ROOT}/fim/{eng}.fim.npy"
             for eng in FIM_ENGINES
@@ -2407,6 +2412,7 @@ rule build_real_prediction_dataset:
             --real-inf-dir   "{params.real_inf_dir}" \
             --ld-engine-subdir "{params.ld_engine_subdir}" \
             --train-features "{input.train_features}" \
+            --empirical-norm-stats "{input.empirical_norm_stats}" \
             --out-dir        "{params.out_dir}" \
             --fim-paths      {input.fims} \
             --resid-vec-paths {input.resid_vecs} \

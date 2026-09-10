@@ -40,6 +40,11 @@ def _parse_args():
                          "'MomentsLD_Chr2L_Chr3L_genmap'). Default 'MomentsLD' for backward compat.")
     ap.add_argument("--train-features", required=True, type=Path,
                     help="Training features_df.pkl used as the exact column template.")
+    ap.add_argument("--empirical-norm-stats", type=Path, default=None,
+                    help="datasets/empirical_norm_stats.json from the training build -- "
+                         "per-column mean/std for SFSres_*/FIM_element_* columns (never "
+                         "covered by the prior-based z-score). If omitted, those columns "
+                         "are left at their raw scale (old behavior).")
     ap.add_argument("--out-dir", required=True, type=Path)
     ap.add_argument("--fim-paths", nargs="*", default=[],
                     help="Real fim/{engine}.fim.npy paths (same set combine_results_real attaches).")
@@ -68,6 +73,11 @@ def main() -> None:
     cfg = json.loads(args.config.read_text())
     priors = cfg["priors"]
     mu, sigma = fx.prior_stats(priors)
+
+    emp_mu = emp_sigma = None
+    if args.empirical_norm_stats is not None and args.empirical_norm_stats.exists():
+        emp_stats = json.loads(args.empirical_norm_stats.read_text())
+        emp_mu, emp_sigma = emp_stats["mu"], emp_stats["sigma"]
 
     real = args.real_inf_dir
     # ---- assemble a data blob shaped like all_inferences.pkl -------------
@@ -153,11 +163,16 @@ def main() -> None:
             f"rep_* slot, or pass --allow-missing to zero-fill (not recommended)."
         )
 
-    # ---- normalize (z-score by prior stats), same as training -----------
-    norm = fx.normalise_df(aligned, mu, sigma)
+    # ---- normalize (z-score by prior stats, plus empirical stats for
+    # SFSres_*/FIM_element_* columns if provided), same as training --------
+    norm = fx.normalise_df(aligned, mu, sigma, emp_mu=emp_mu, emp_sigma=emp_sigma)
 
     if missing and args.allow_missing:
-        norm = norm.fillna(0.0)  # 0 == prior mean in normalized space
+        # 0 means prior mean for z-scored param columns (see normalise_df), and
+        # "no deviation" for SFSres_*/FIM_element_* columns, which are never
+        # z-scored -- e.g. a haploid real sample lacking the higher-frequency
+        # SFS bins a diploid-trained model expects just assumes zero residual there.
+        norm = norm.fillna(0.0)
         print(f"[warn] zero-filled {len(missing)} missing columns "
               f"(--allow-missing): {missing[:8]}")
 
@@ -180,7 +195,13 @@ def main() -> None:
         "train_features_template": str(args.train_features),
         "real_inf_dir": str(real),
         "normalized": True,
-        "normalization": "z-score by uniform-prior mean/std (matches training)",
+        "normalization": (
+            "z-score by uniform-prior mean/std for parameter columns; "
+            "empirical train-split mean/std for SFSres_*/FIM_element_* columns"
+            if emp_mu is not None
+            else "z-score by uniform-prior mean/std (matches training); "
+            "SFSres_*/FIM_element_* columns left at raw scale"
+        ),
     }
     (out / "real_dataset_meta.json").write_text(json.dumps(meta, indent=2))
 

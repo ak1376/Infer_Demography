@@ -112,10 +112,22 @@ def base_param(col: str) -> str:
 
 
 def normalise_df(
-    df: pd.DataFrame, mu: Dict[str, float], sigma: Dict[str, float]
+    df: pd.DataFrame,
+    mu: Dict[str, float],
+    sigma: Dict[str, float],
+    *,
+    emp_mu: Dict[str, float] | None = None,
+    emp_sigma: Dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
-    Z-score normalize columns whose base_param exists in mu/sigma.
+    Z-score normalize columns whose base_param exists in mu/sigma (uniform-prior
+    stats, for parameter columns like dadi_N_ANC_rep_0).
+
+    emp_mu/emp_sigma (optional) additionally z-score SFSres_*/FIM_element_*
+    columns keyed by their exact column name (not base_param, since these
+    aren't tool/param/rep columns) using empirical mean/std -- typically
+    computed once from the training split by empirical_stats_for_prefixes()
+    and reused for tune/val/real-data rows so all of them share one scale.
 
     If you want BGS coverage normalized, add:
       priors["bgs_target_coverage_frac"] = [0.0, 1.0]
@@ -126,7 +138,33 @@ def normalise_df(
         k = base_param(col)
         if k in mu:
             out[col] = (out[col] - mu[k]) / sigma[k]
+        elif emp_mu is not None and col in emp_mu:
+            out[col] = (out[col] - emp_mu[col]) / emp_sigma[col]
     return out
+
+
+def empirical_stats_for_prefixes(
+    df: pd.DataFrame,
+    prefixes: tuple[str, ...] = ("SFSres_", "FIM_element_"),
+) -> tuple[Dict[str, float], Dict[str, float]]:
+    """
+    Per-column empirical mean/std for columns starting with any of `prefixes`
+    (SFSres_*/FIM_element_* -- neither is a tool/param/rep column, so
+    normalise_df's prior-based path never touches them otherwise). Compute
+    this from the training split only, then reuse the same stats for
+    tune/val/real-data rows so everything shares one scale.
+    """
+    emp_mu: Dict[str, float] = {}
+    emp_sigma: Dict[str, float] = {}
+    for col in df.columns:
+        if not col.startswith(prefixes):
+            continue
+        vals = df[col].to_numpy(dtype=float)
+        m = float(np.mean(vals))
+        s = float(np.std(vals))
+        emp_mu[col] = m
+        emp_sigma[col] = s if s > 0 else 1.0
+    return emp_mu, emp_sigma
 
 
 # =============================================================================
@@ -943,15 +981,28 @@ def build_modeling_datasets(
     if len(feat_df) == 0:
         raise RuntimeError("All rows were dropped as outliers; nothing to write.")
 
-    feat_norm_df = normalise_df(feat_df, mu, sigma)
-    targ_norm_df = normalise_df(targ_df, mu, sigma)
-
     split = split_indices(
         feat_df.index.to_numpy(),
         seed=seed,
         train_pct=train_pct,
         tune_pct=tune_pct,
     )
+
+    # SFSres_*/FIM_element_* columns aren't tool/param/rep columns, so
+    # normalise_df's prior-based z-score never touches them (see base_param) --
+    # they'd otherwise stay at their raw, unbounded scale (residuals can run
+    # into the hundreds of thousands) right next to O(1) z-scored parameter
+    # features. Standardize them empirically instead, fit on the train split
+    # only (avoiding tune/val leakage) and reused for tune/val here and for
+    # the real-data row later.
+    emp_mu, emp_sigma = empirical_stats_for_prefixes(feat_df.loc[split["train_idx"]])
+    dump_json(
+        {"mu": emp_mu, "sigma": emp_sigma},
+        datasets_dir / "empirical_norm_stats.json",
+    )
+
+    feat_norm_df = normalise_df(feat_df, mu, sigma, emp_mu=emp_mu, emp_sigma=emp_sigma)
+    targ_norm_df = normalise_df(targ_df, mu, sigma)
 
     write_dataset_pickles(
         datasets_dir=datasets_dir,
