@@ -139,6 +139,6 @@
   "optimizer_maxtime": 1800,
   "prune_mode": "count",
   "prune_keep_values": [5000],
-  "gram_schmidt": false,
-  "gram_schmidt_k": 10
+  "gram_schmidt": true,
+  "gram_schmidt_k": 30
 }
