@@ -19,6 +19,12 @@ set -euo pipefail
 # -----------------------------
 BATCH_SIZE="${BATCH_SIZE:-1}"          # sims per array task
 SIM_RANGE="${SIM_RANGE:-}"             # optional: "5000-20000"
+FORCE_REBUILD="${FORCE_REBUILD:-0}"    # 1: bypass the already-complete fast
+                                       # path below and let Snakemake decide
+                                       # via mtime (e.g. after an upstream
+                                       # change like enabling Gram-Schmidt
+                                       # residuals, where all_inferences.pkl
+                                       # already exists but is now stale)
 
 # -----------------------------
 # Paths & config
@@ -117,7 +123,7 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
     "experiments/${MODEL}/simulations/${sid}/.done" \
     2>/dev/null || true
 
-  if [[ -s "$TARGET_COMBO" ]]; then
+  if [[ "$FORCE_REBUILD" != "1" && -s "$TARGET_COMBO" ]]; then
     echo "sim_${sid} already complete — skipping"
     continue
   fi
