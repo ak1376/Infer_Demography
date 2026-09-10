@@ -88,14 +88,17 @@ def main() -> None:
     if pred_norm.ndim == 1:
         pred_norm = pred_norm.reshape(1, -1)
 
-    # de-normalize back to physical units (bgs_target_coverage_frac has no
-    # prior, so it was never normalized in training -> leave as-is)
+    # de-normalize back to physical units. mu/sigma are in log10-space (see
+    # fx.prior_stats -- these params are sampled log-uniformly), so this is
+    # the inverse of fx.normalise_df's log10(value)-then-z-score: undo the
+    # z-score, then undo the log10. (bgs_target_coverage_frac has no prior,
+    # so it was never normalized in training -> leave as-is)
     rows = []
     for j, p in enumerate(targ_order):
         base = fx.base_param(p)
         norm_val = float(pred_norm[0, j])
         if base in mu:
-            phys_val = norm_val * sigma[base] + mu[base]
+            phys_val = 10 ** (norm_val * sigma[base] + mu[base])
         else:
             phys_val = norm_val
         rows.append({"parameter": p, "prediction": phys_val,

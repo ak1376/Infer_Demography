@@ -84,14 +84,33 @@ def read_bgs_target_coverage_frac(sim_dir: Path) -> float:
 def prior_stats(
     priors: Dict[str, List[float]],
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """Uniform priors ⇒ μ=(lo+hi)/2, σ=(hi-lo)/sqrt(12)."""
+    """
+    Priors are sampled log-uniformly (see src.simulation.sample_params:
+    10 ** rng.uniform(log10(lo), log10(hi))), so mu/sigma are computed in
+    log10-space to match: mu=(log10 lo + log10 hi)/2, sigma=(log10 hi -
+    log10 lo)/sqrt(12). normalise_df applies these to log10(value), not the
+    raw value -- linear normalization of a log-uniformly-sampled parameter
+    would compress most of its range into a narrow sliver near one end (e.g.
+    the entire bottom decade of a 3-decade prior lands within ~0.03 z-units
+    of the boundary), destroying resolution for exactly the values that
+    occur just as often as any other order of magnitude.
+    """
     mu: Dict[str, float] = {}
     sigma: Dict[str, float] = {}
     for p, (lo, hi) in priors.items():
         lo = float(lo)
         hi = float(hi)
-        mu[p] = (lo + hi) / 2.0
-        sigma[p] = (hi - lo) / np.sqrt(12.0)
+        if lo <= 0 or hi <= 0:
+            raise ValueError(
+                f"Prior bounds for '{p}' must be positive for log-uniform "
+                f"normalization; got [{lo}, {hi}]. (This mirrors "
+                f"src.simulation.sample_params's own requirement, since "
+                f"these parameters are sampled log-uniformly.)"
+            )
+        log_lo = np.log10(lo)
+        log_hi = np.log10(hi)
+        mu[p] = (log_lo + log_hi) / 2.0
+        sigma[p] = (log_hi - log_lo) / np.sqrt(12.0)
     return mu, sigma
 
 
@@ -129,15 +148,16 @@ def normalise_df(
     computed once from the training split by empirical_stats_for_prefixes()
     and reused for tune/val/real-data rows so all of them share one scale.
 
-    If you want BGS coverage normalized, add:
-      priors["bgs_target_coverage_frac"] = [0.0, 1.0]
-    so it appears in mu/sigma.
+    If you want BGS coverage normalized, add e.g.
+      priors["bgs_target_coverage_frac"] = [1e-3, 1.0]
+    so it appears in mu/sigma (bounds must be strictly positive -- see
+    prior_stats -- since this z-scores log10(value), not value itself).
     """
     out = df.copy()
     for col in out.columns:
         k = base_param(col)
         if k in mu:
-            out[col] = (out[col] - mu[k]) / sigma[k]
+            out[col] = (np.log10(out[col]) - mu[k]) / sigma[k]
         elif emp_mu is not None and col in emp_mu:
             out[col] = (out[col] - emp_mu[col]) / emp_sigma[col]
     return out
@@ -542,8 +562,14 @@ def filter_extreme_outliers(
         outside_lo = s < (lo - eps)
         outside_hi = s > (hi + eps)
 
-        z = (s - mu_k) / sg_k
-        big_z = np.abs(z) > cfg.zmax
+        # z-scored in log10-space to match prior_stats/normalise_df (these
+        # params are sampled log-uniformly). A non-positive s can't be
+        # log10'd -- treat that as maximally extreme (big_z=True) rather
+        # than silently NaN-ing out of the check (it's already outside a
+        # strictly-positive prior's bounds anyway).
+        log_s = np.log10(s.where(s > 0))
+        z = (log_s - mu_k) / sg_k
+        big_z = (~np.isfinite(z)) | (z.abs() > cfg.zmax)
 
         extreme = (outside_lo | outside_hi) & big_z
         bad = (~finite) | extreme
