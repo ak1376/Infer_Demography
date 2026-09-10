@@ -31,6 +31,17 @@ SNAKEFILE="$ROOT/Snakefile"
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
 MODEL=$(jq -r '.demographic_model'      "$CFG")
 
+# Must match the Snakefile's _resid_vector_fname(): which vector actually
+# feeds into all_inferences.pkl / the modeling features depends on whether
+# Gram-Schmidt projection is enabled -- targeting the wrong (already-built)
+# file here would make Snakemake think there's nothing to do.
+USE_GS=$(jq -r '.gram_schmidt // false' "$CFG")
+if [[ "$USE_GS" == "true" ]]; then
+  RESID_VECTOR_FNAME="residuals_gs_coeffs.npy"
+else
+  RESID_VECTOR_FNAME="residuals_flat.npy"
+fi
+
 # SFS residuals are always computed for whichever engines the config lists
 # (default: both moments+dadi) -- whether they're later used as a model
 # feature is a separate decision made downstream in feature_extraction.py
@@ -106,7 +117,7 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
   for eng in "${ENGINES[@]}"; do
     fit="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/${eng}/fit_params.pkl"
     if [[ -f "$fit" ]]; then
-      TARGETS+=("experiments/${MODEL}/inferences/sim_${sid}/sfs_residuals/${eng}/residuals_flat.npy")
+      TARGETS+=("experiments/${MODEL}/inferences/sim_${sid}/sfs_residuals/${eng}/${RESID_VECTOR_FNAME}")
     else
       echo "SKIP sim_${sid} engine=${eng} (missing fit: $fit)"
     fi
