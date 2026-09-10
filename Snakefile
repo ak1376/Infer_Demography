@@ -2409,7 +2409,8 @@ rule build_real_prediction_dataset:
             --train-features "{input.train_features}" \
             --out-dir        "{params.out_dir}" \
             --fim-paths      {input.fims} \
-            --resid-vec-paths {input.resid_vecs}
+            --resid-vec-paths {input.resid_vecs} \
+            --allow-missing
         """
 
 ##############################################################################
