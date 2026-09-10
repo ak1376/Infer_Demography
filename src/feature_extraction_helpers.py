@@ -237,13 +237,20 @@ def per_sim_mse_array(
     *,
     tool: str,
     param: str,
+    mu: Dict[str, float],
     sigma: Dict[str, float],
     normalized: bool = True,
 ) -> np.ndarray:
     """
     Per-simulation MSE for one tool/param:
       1) average all replicate columns for this tool/param
-      2) squared error vs truth (optionally normalized by prior σ)
+      2) squared error vs truth, computed in the same log10-then-z-score
+         space normalise_df uses (mu/sigma from prior_stats, which are in
+         log10-space since priors are sampled log-uniformly -- see
+         prior_stats's docstring). This makes the resulting MSE directly
+         comparable to the ML models' validation MSE, which is computed on
+         normalise_df's output. Raw-unit MSE (normalized=False) skips the
+         transform entirely.
     """
     cols = _tool_param_columns(features_df, tool, param)
     if not cols or param not in targets_df.columns:
@@ -266,10 +273,13 @@ def per_sim_mse_array(
         tru = float(targets_df.at[sid, param])
 
         if normalized:
-            s = float(sigma.get(param, 0.0))
-            if s <= 0:
+            m = mu.get(param)
+            s = sigma.get(param, 0.0)
+            if m is None or s <= 0 or pred <= 0 or tru <= 0:
                 continue
-            se = ((pred - tru) / s) ** 2
+            pred_n = (np.log10(pred) - m) / s
+            tru_n = (np.log10(tru) - m) / s
+            se = (pred_n - tru_n) ** 2
         else:
             se = (pred - tru) ** 2
 
@@ -306,6 +316,7 @@ def plot_mse_bars_with_sem(
     *,
     tools: Sequence[str],
     params: Sequence[str],
+    mu: Dict[str, float],
     sigma: Dict[str, float],
     normalized: bool,
     out_path: Path,
@@ -322,6 +333,7 @@ def plot_mse_bars_with_sem(
                 idx,
                 tool=tool,
                 param=p,
+                mu=mu,
                 sigma=sigma,
                 normalized=normalized,
             )
@@ -472,6 +484,7 @@ def compute_split_metrics_for_tool(
     *,
     tool: str,
     params: Sequence[str],
+    mu: Dict[str, float],
     sigma: Dict[str, float],
     normalized: bool = True,
 ) -> Dict[str, Any]:
@@ -484,6 +497,7 @@ def compute_split_metrics_for_tool(
                 idx,
                 tool=tool,
                 param=p,
+                mu=mu,
                 sigma=sigma,
                 normalized=normalized,
             )
@@ -859,6 +873,7 @@ def write_metrics_and_plots(
     features_df: pd.DataFrame,
     targets_df: pd.DataFrame,
     split: Dict[str, np.ndarray],
+    mu: Dict[str, float],
     sigma: Dict[str, float],
     tools: Sequence[str] = TOOLS_DEFAULT,
 ) -> None:
@@ -883,6 +898,7 @@ def write_metrics_and_plots(
             split["val_idx"],
             tool=tool,
             params=common_params,
+            mu=mu,
             sigma=sigma,
             normalized=True,
         )
@@ -900,6 +916,7 @@ def write_metrics_and_plots(
         split["val_idx"],
         tools=tools,
         params=common_params,
+        mu=mu,
         sigma=sigma,
         normalized=True,
         out_path=datasets_dir / "mse_bars_val_normalized.png",
@@ -911,6 +928,7 @@ def write_metrics_and_plots(
         split["train_idx"],
         tools=tools,
         params=common_params,
+        mu=mu,
         sigma=sigma,
         normalized=True,
         out_path=datasets_dir / "mse_bars_train_normalized.png",
@@ -1044,6 +1062,7 @@ def build_modeling_datasets(
         features_df=feat_df,
         targets_df=targ_df,
         split=split,
+        mu=mu,
         sigma=sigma,
         tools=TOOLS_DEFAULT,
     )
