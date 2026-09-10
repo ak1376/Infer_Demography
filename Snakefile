@@ -290,7 +290,12 @@ wildcard_constraints:
     opt        = "|".join(str(i) for i in range(NUM_OPTIMS)),
     engine     = "moments|dadi",
     frac_tag   = r"thin\d+|n\d+",
-    model_key  = "|".join(REAL_MODEL_KEYS),
+    # TEMPORARY: widened to also allow the raw dadi/moments/momentsLD fits
+    # (not just trained ML model keys) as calibration_simulate/calibration_ppc/
+    # calibration_ld_ppc model_key values, so those PPC checks can run against
+    # the direct SFS/LD fit for comparison against the ML surrogate's PPC.
+    # Revert to just REAL_MODEL_KEYS once that comparison is done.
+    model_key  = "|".join(REAL_MODEL_KEYS) + "|dadi|moments|momentsLD",
     rep        = r"\d+",
 
 # LD r-bins
