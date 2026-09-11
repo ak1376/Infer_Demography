@@ -54,14 +54,45 @@ USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 
 USE_GS = bool(CFG.get("gram_schmidt", False))
 
+# Optional real-data region trim (per-chrom), e.g. to drop centromere/telomere-
+# proximal ends: config_files/*.json -> "real_data_analysis": {"trim_region":
+# {"Chr3L": [447386, 18392988]}}. Keyed by chrom so multiple arms can carry
+# independent bounds. Absent/empty -> today's untagged paths, byte-identical
+# to pre-trim behavior; the new trim_raw_vcf_region rule is only ever pulled
+# in for chroms that have bounds configured (see raw_vcf_for_chrom below).
+REAL_DATA_CFG = CFG.get("real_data_analysis", {})
+REAL_TRIM_REGION = {
+    c: (int(v[0]), int(v[1]))
+    for c, v in REAL_DATA_CFG.get("trim_region", {}).items()
+}
+
+def _trim_dir_suffix():
+    if not REAL_TRIM_REGION:
+        return ""
+    bits = "_".join(f"{c}-{s}-{e}" for c, (s, e) in sorted(REAL_TRIM_REGION.items()))
+    return f"_trim_{bits}"
+
+def raw_vcf_for_chrom(chrom):
+    """Raw per-chrom VCF path: the region-trimmed copy when trim_region is
+    configured for this chrom, else the original untouched file."""
+    rng = REAL_TRIM_REGION.get(chrom)
+    if rng is None:
+        return f"drosophila_data/data/{chrom}.vcf.gz"
+    start, end = rng
+    return f"drosophila_data/data/{chrom}.trim{start}-{end}.vcf.gz"
+
 # Make sure these match files that actually exist in your repo
-DROSO_DIR        = "real_data_analysis/data/drosophila"
+DROSO_BASE_DIR   = "real_data_analysis/data/drosophila"           # untagged: region-independent shared metadata only
+DROSO_DIR        = f"{DROSO_BASE_DIR}{_trim_dir_suffix()}"        # tagged when trim_region is set: all region-derived data
 AUTOSOMES        = ["Chr3L"]                                     # Chr2L, Chr2R, Chr3R dropped -- Chr3L only
 ANCESTRAL_DIR    = "drosophila_data/dpgp_ancestor"                        # relative to repo root, alongside drosophila_data/data/
 
 # Data now lives in per-chromosome subdirs: {DROSO_DIR}/{chrom}/{polarized,polarized.diploidGT,unfolded.sfs}...
 RAW_HAPLOID_VCF  = "drosophila_data/data/Chr3L.vcf.gz"                    # legacy Chr3L alias
-REAL_POPFILE     = f"{DROSO_DIR}/popfile.txt"
+# popfile.txt (sample->population map) doesn't depend on the genomic region
+# analyzed, so it stays on the untagged base dir -- otherwise every new
+# trim_region tag would need its own copy of an identical file.
+REAL_POPFILE     = f"{DROSO_BASE_DIR}/popfile.txt"
 REAL_VCF         = f"{DROSO_DIR}/Chr3L/polarized.diploidGT.vcf.gz"        # diploid polarized (Chr3L); used by MomentsLD-real
 POLARIZED_VCF    = f"{DROSO_DIR}/Chr3L/polarized.vcf.gz"                  # haploid + AA (Chr3L); legacy alias
 UNFOLDED_SFS     = f"{DROSO_DIR}/Chr3L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr3L); legacy alias
@@ -187,7 +218,6 @@ LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 # Any experiment config JSON without this block falls back to arms=["Chr3L"],
 # window_size_bp=10_000_000, num_windows=100 -- byte-identical to the
 # pre-existing hardcoded single-arm behavior.
-REAL_DATA_CFG   = CFG.get("real_data_analysis", {})
 REAL_ARMS       = REAL_DATA_CFG.get("arms", ["Chr3L"])
 REAL_WINDOW_BP  = int(REAL_DATA_CFG.get("window_size_bp", 10_000_000))
 _raw_real_nw    = REAL_DATA_CFG.get("num_windows", 100)
@@ -219,7 +249,7 @@ REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_
 # Same, but with the real Comeron (R5/dm3) recombination map and 1 Mb windows.
 REAL_LD_GENMAP     = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_genmap"
 GENMAP_WINDOW_SIZE = 1_000_000
-COMERON_XLSX       = f"{DROSO_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"
+COMERON_XLSX       = f"{DROSO_BASE_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"  # shared reference map, region-independent
 REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis/runs"
 REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences"
 REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
@@ -282,6 +312,8 @@ CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
 wildcard_constraints:
     chrom      = r"Chr(2L|2R|3L|3R)",
     arm        = r"Chr(2L|2R|3L|3R)",
+    start      = r"\d+",
+    end        = r"\d+",
     # combine_features narrows this back down (raw_features has its own
     # producer rules, build_raw_features_dataset/prepare_raw_features_splits).
     variant    = r"(w|wo)_FIM_(w|wo)_SFSresids|raw_features",
@@ -1611,6 +1643,34 @@ rule modeling_all:
 
 
 ##############################################################################
+# RULE trim_raw_vcf_region  (per-chromosome, optional)
+# Restrict the raw haploid VCF to a sub-interval of the arm (e.g. to drop
+# centromere/telomere-proximal regions) before ancestral-allele polarization.
+# Only pulled into the DAG for chroms with bounds set in REAL_TRIM_REGION
+# (see raw_vcf_for_chrom); untrimmed chroms never touch this rule. The
+# ##contig length in the header is rewritten to the trimmed span so
+# compute_unfolded_sfs.py's L (theta = 4*mu*L*N_ANC) reflects the region
+# actually analyzed, not the full arm.
+##############################################################################
+rule trim_raw_vcf_region:
+    input:
+        vcf = "drosophila_data/data/{chrom}.vcf.gz",
+        tbi = "drosophila_data/data/{chrom}.vcf.gz.tbi",
+    output:
+        vcf = "drosophila_data/data/{chrom}.trim{start}-{end}.vcf.gz",
+        tbi = "drosophila_data/data/{chrom}.trim{start}-{end}.vcf.gz.tbi",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        span=$(( {wildcards.end} - {wildcards.start} + 1 ))
+        bcftools view -r "{wildcards.chrom}:{wildcards.start}-{wildcards.end}" "{input.vcf}" \
+          | sed -E "s/^##contig=<ID={wildcards.chrom},length=[0-9]+>/##contig=<ID={wildcards.chrom},length=${{span}}>/" \
+          | bgzip -c > "{output.vcf}"
+        tabix -f -p vcf "{output.vcf}"
+        """
+
+##############################################################################
 # RULE annotate_ancestral_allele  (per-chromosome, autosomes)
 # Polarize the raw haploid VCF using the DPGP ML-ancestor FASTA.
 # FASTA naming differs from the VCF: "Chr2L" -> "chr2L.q30.fa".
@@ -1619,8 +1679,8 @@ rule modeling_all:
 ##############################################################################
 rule annotate_ancestral_allele:
     input:
-        vcf   = "drosophila_data/data/{chrom}.vcf.gz",
-        tbi   = "drosophila_data/data/{chrom}.vcf.gz.tbi",
+        vcf   = lambda wc: raw_vcf_for_chrom(wc.chrom),
+        tbi   = lambda wc: raw_vcf_for_chrom(wc.chrom) + ".tbi",
         fasta = lambda wc: ancestral_fasta(wc.chrom),
     output:
         vcf = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",

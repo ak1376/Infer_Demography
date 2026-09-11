@@ -18,9 +18,12 @@
   "real_top_k": 5,
   "real_data_analysis": {
     "arms": ["Chr3L"],
-    "window_size_bp": 920000,
-    "num_windows": "auto",
-    "use_genmap": true
+    "window_size_bp": 1000000,
+    "num_windows": 50,
+    "use_genmap": true,
+    "trim_region": {
+      "Chr3L": [447386, 18392988]
+    }
   },
   "num_draws": 5000,
   "calibration_n_replicates": 100,
