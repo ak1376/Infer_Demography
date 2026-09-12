@@ -17,25 +17,37 @@
 # per-restart parallelism (mirrors aggregate_moments_dadi.sh being separate
 # from moments.sh/dadi.sh for the simulated pipeline).
 #
-# Rule run: aggregate_opts_engine_real
+# Rule run (pooled):     aggregate_opts_engine_real
+# Rule run (individual): aggregate_opts_engine_real_chrom, once per arm
 
 set -euo pipefail
 mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
-REAL_INF_ROOT="experiments/${MODEL}/real_data_analysis/inferences"
+load_real_data_config "$CFG"
 
-TARGETS=(
-    "${REAL_INF_ROOT}/moments/best_fit.pkl"
-    "${REAL_INF_ROOT}/dadi/best_fit.pkl"
-)
+if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
+    TARGETS=(
+        "${REAL_INF_ROOT}/moments/best_fit.pkl"
+        "${REAL_INF_ROOT}/dadi/best_fit.pkl"
+    )
+    ALLOWED_RULES=(aggregate_opts_engine_real)
+else
+    TARGETS=()
+    for arm in "${REAL_ARMS[@]}"; do
+        INF_ROOT_ARM="$(real_data_chrom_path "$REAL_INF_ROOT_CHROM_TMPL" "$arm")"
+        TARGETS+=("${INF_ROOT_ARM}/moments/best_fit.pkl")
+        TARGETS+=("${INF_ROOT_ARM}/dadi/best_fit.pkl")
+    done
+    ALLOWED_RULES=(aggregate_opts_engine_real_chrom)
+fi
 
-echo "MODEL=$MODEL"
+echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"
 echo "Targets: ${TARGETS[*]}"
 
 snakemake \
@@ -45,7 +57,7 @@ snakemake \
     --keep-going \
     --rerun-incomplete \
     --rerun-triggers mtime \
-    --allowed-rules aggregate_opts_engine_real \
+    --allowed-rules "${ALLOWED_RULES[@]}" \
     -j "${SLURM_CPUS_PER_TASK:-1}" \
     "${TARGETS[@]}"
 

@@ -17,34 +17,38 @@
 # per-restart parallelism (mirrors aggregate_momentsld.sh being separate
 # from MomentsLD.sh for the simulated pipeline).
 #
-# Rule run: aggregate_opts_momentsld_real
+# Rule run (pooled):     aggregate_opts_momentsld_real
+# Rule run (individual): aggregate_opts_momentsld_real_by_arm, once per arm
 #
-# Unlike the shared REAL_LD_ROOT (windows/LD_stats/means.varcovs.pkl), this
-# output IS model-scoped (experiments/{MODEL}/...): it's the fitted MomentsLD
-# params under the active demographic model, not a property of the data.
+# Output IS model-scoped (experiments/{MODEL}/...): it's the fitted
+# MomentsLD params under the active demographic model, not a property of
+# the data.
 
 set -euo pipefail
 mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
+load_real_data_config "$CFG"
 
-# Must match the Snakefile's REAL_TAG / REAL_LD_ENGINE (and every other
-# real-data script's copy of this same logic).
-readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$CFG")
-REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$CFG")
-REAL_TAG=$(IFS=_; echo "${REAL_ARMS[*]}")
-[[ "$REAL_USE_GENMAP" == "true" ]] && REAL_TAG="${REAL_TAG}_genmap"
-REAL_LD_ENGINE="MomentsLD_${REAL_TAG}"
+if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
+    TARGETS=("experiments/${MODEL}/real_data_analysis${TRIM_SUFFIX}/inferences/${REAL_LD_ENGINE}/best_fit.pkl")
+    ALLOWED_RULES=(aggregate_opts_momentsld_real)
+else
+    TARGETS=()
+    for arm in "${REAL_ARMS[@]}"; do
+        INF_ROOT_ARM="$(real_data_chrom_path "$REAL_INF_ROOT_CHROM_TMPL" "$arm")"
+        TARGETS+=("${INF_ROOT_ARM}/MomentsLD/best_fit.pkl")
+    done
+    ALLOWED_RULES=(aggregate_opts_momentsld_real_by_arm)
+fi
 
-TARGET="experiments/${MODEL}/real_data_analysis/inferences/${REAL_LD_ENGINE}/best_fit.pkl"
-
-echo "MODEL=$MODEL"
-echo "Target: $TARGET"
+echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"
+echo "Targets: ${TARGETS[*]}"
 
 snakemake \
     --snakefile "$SNAKEFILE" \
@@ -53,8 +57,8 @@ snakemake \
     --keep-going \
     --rerun-incomplete \
     --rerun-triggers mtime \
-    --allowed-rules aggregate_opts_momentsld_real \
+    --allowed-rules "${ALLOWED_RULES[@]}" \
     -j "${SLURM_CPUS_PER_TASK:-1}" \
-    "$TARGET"
+    "${TARGETS[@]}"
 
 echo "real_aggregate_momentsld finished."

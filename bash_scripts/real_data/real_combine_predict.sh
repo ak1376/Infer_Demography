@@ -31,18 +31,21 @@
 # predict_real_data needs a trained model (from the sim modeling pipeline)
 # for each (variant, model_key) -- this script silently skips any combination
 # whose trained *_mdl_obj.pkl doesn't exist yet rather than failing the job.
+#
+# NOTE: build_real_prediction_dataset assembles its feature row from the
+# pooled moments/dadi/MomentsLD fits + FIM + residuals regardless of
+# real_data_analysis.pooling_mode -- there is no per-arm prediction path yet.
 
 set -euo pipefail
 mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
-
-REAL_INF_ROOT="experiments/${MODEL}/real_data_analysis/inferences"
+load_real_data_config "$CFG"
 
 # Must match the Snakefile's MODELING_VARIANTS.
 MODELING_VARIANTS=(

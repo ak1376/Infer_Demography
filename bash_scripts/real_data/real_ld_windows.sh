@@ -53,18 +53,13 @@ BATCH_SIZE="${BATCH_SIZE:-20}"
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
 USE_GPU_LD=$(jq -r '.use_gpu_ld // false' "$CFG")
 
-# Must match the Snakefile's DROSO_DIR / REAL_TAG / REAL_LD_ENGINE / REAL_LD_ROOT.
-DROSO_DIR="real_data_analysis/data/drosophila"
-readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$CFG")
-REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$CFG")
-REAL_TAG=$(IFS=_; echo "${REAL_ARMS[*]}")
-[[ "$REAL_USE_GENMAP" == "true" ]] && REAL_TAG="${REAL_TAG}_genmap"
-REAL_LD_ROOT="${DROSO_DIR}/MomentsLD_${REAL_TAG}"
+load_real_data_config "$CFG"
 
 # Deterministically list every (arm, window-index) pair actually present on
 # disk, arms in config order and indices numerically sorted within each arm.

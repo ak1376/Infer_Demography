@@ -20,16 +20,23 @@
 #
 # Engine lists are config-driven (fim_engines, residual_engines), mirroring
 # compute_fim.sh / the Snakefile's FIM_ENGINES / RESIDUAL_ENGINES.
+#
+# NOTE: this stage always fits against the pooled COMBINED_SFS (moments/dadi
+# best_fit under REAL_INF_ROOT) regardless of real_data_analysis.pooling_mode
+# -- there is no per-arm FIM/residuals rule yet, so this only produces a
+# result when the pooled moments/dadi fit has actually been built (i.e. run
+# real_aggregate_sfs.sh at least once in pooled mode first).
 
 set -euo pipefail
 mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
+load_real_data_config "$CFG"
 
 mapfile -t FIM_ENGINES < <(jq -r '(.fim_engines // ["moments"]) | if type=="array" then .[] else . end' "$CFG")
 
@@ -42,7 +49,6 @@ case "$RESID_RAW" in
     *) read -ra RESIDUAL_ENGINES <<< "$RESID_RAW" ;;
 esac
 
-REAL_INF_ROOT="experiments/${MODEL}/real_data_analysis/inferences"
 USE_GS=$(jq -r '.gram_schmidt // false' "$CFG")
 RESID_FNAME="residuals_flat.npy"
 [[ "$USE_GS" == "true" ]] && RESID_FNAME="residuals_gs_coeffs.npy"

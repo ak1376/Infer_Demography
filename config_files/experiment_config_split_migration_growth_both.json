@@ -17,12 +17,17 @@
   "top_k": 5,
   "real_top_k": 5,
   "real_data_analysis": {
-    "arms": ["Chr3L"],
+    "arms": ["Chr2L", "Chr2R", "Chr3L", "Chr3R", "ChrX"],
+    "pooling_mode": "individual",
     "window_size_bp": 1000000,
-    "num_windows": 50,
+    "num_windows": 25,
     "use_genmap": true,
     "trim_region": {
-      "Chr3L": [447386, 18392988]
+      "Chr2L": [844225, 19946732],
+      "Chr2R": [6063980, 20322335],
+      "Chr3L": [447386, 18392988],
+      "Chr3R": [7940899, 27237549],
+      "ChrX": [1036552, 20902578]
     }
   },
   "num_draws": 5000,

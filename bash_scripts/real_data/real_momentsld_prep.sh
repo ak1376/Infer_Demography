@@ -18,33 +18,39 @@
 # never race on building this shared file. Requires real_ld_windows.sh to
 # have already produced every LD_stats_window_*.pkl.
 #
-# Rule run: aggregate_ld_windows_real
+# Rule run (pooled):     aggregate_ld_windows_real (one combined fit across
+#                         every configured arm)
+# Rule run (individual): aggregate_ld_windows_real_by_arm, once per arm (no
+#                         cross-arm combining)
 #
-# REAL_LD_ROOT is NOT model-scoped (must match the Snakefile's REAL_LD_ROOT =
-# f"{DROSO_DIR}/MomentsLD") -- the aggregated means/varcovs/bootstrap are a
-# pure function of the (already model-independent) per-window LD stats, so
-# they're computed once and reused across every demographic model. The one
-# cosmetic side effect: empirical_vs_theoretical_comparison.pdf's theoretical
-# curve reflects whichever model's config was active the first time this
-# target was built -- with --rerun-triggers mtime, switching MODEL later
-# won't regenerate it (the file already exists and its declared inputs
-# haven't changed), so it may go stale as a diagnostic plot. Delete it
-# manually if you want it to reflect the current model.
+# REAL_LD_ROOT is NOT model-scoped -- the aggregated means/varcovs/bootstrap
+# are a pure function of the (already model-independent) per-window LD
+# stats, so they're computed once and reused across every demographic model.
 
 set -euo pipefail
 mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-# Must match the Snakefile's DROSO_DIR / REAL_LD_ROOT constants.
-DROSO_DIR="real_data_analysis/data/drosophila"
-REAL_LD_ROOT="${DROSO_DIR}/MomentsLD"
+load_real_data_config "$CFG"
 
-TARGET="${REAL_LD_ROOT}/means.varcovs.pkl"
-echo "Target: $TARGET"
+if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
+    TARGETS=("${REAL_LD_ROOT}/means.varcovs.pkl")
+    ALLOWED_RULES=(aggregate_ld_windows_real)
+else
+    TARGETS=()
+    for arm in "${REAL_ARMS[@]}"; do
+        TARGETS+=("${REAL_LD_ROOT}/${arm}/means.varcovs.pkl")
+    done
+    ALLOWED_RULES=(aggregate_ld_windows_real_by_arm)
+fi
+
+echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"
+echo "Targets: ${TARGETS[*]}"
 
 snakemake \
     --snakefile "$SNAKEFILE" \
@@ -53,8 +59,8 @@ snakemake \
     --keep-going \
     --rerun-incomplete \
     --rerun-triggers mtime \
-    --allowed-rules aggregate_ld_windows_real \
+    --allowed-rules "${ALLOWED_RULES[@]}" \
     -j "${SLURM_CPUS_PER_TASK:-1}" \
-    "$TARGET"
+    "${TARGETS[@]}"
 
 echo "real_momentsld_prep finished."
