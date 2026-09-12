@@ -250,8 +250,13 @@ REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_
 REAL_LD_GENMAP     = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_genmap"
 GENMAP_WINDOW_SIZE = 1_000_000
 COMERON_XLSX       = f"{DROSO_BASE_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"  # shared reference map, region-independent
-REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis/runs"
-REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis/inferences"
+# infer_engine_real/aggregate_opts_engine_real fit COMBINED_SFS, which is
+# itself trim-tagged (built under DROSO_DIR) -- so these fit outputs need the
+# same tag, otherwise a trimmed run would silently overwrite the full-arm
+# moments/dadi best_fit.pkl already sitting here. Untagged when trim_region
+# is unset, matching every path above.
+REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/runs"
+REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/inferences"
 REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
 
 # Single-chromosome variants of REAL_RUN_ROOT/REAL_INF_ROOT (as opposed to the
@@ -1798,7 +1803,10 @@ rule infer_engine_real:
         sfs  = COMBINED_SFS,
         meta = COMBINED_SFS_META,
     output:
-        pkl = temp(f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl")
+        # TEMPORARY: temp() removed so per-replicate best_fit.pkl files stick
+        # around to inspect individual optimizations after the trim-region
+        # comparison run. Restore temp(...) once done inspecting.
+        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl"
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
         cfg      = EXP_CFG,
@@ -2008,7 +2016,7 @@ rule compute_ld_real:
         script  = "snakemake_scripts/compute_ld_window.py",
         config  = EXP_CFG,
         sim_dir = lambda wc: f"{REAL_LD_ROOT}/{wc.arm}",
-        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3",
+        r_bins  = R_BINS_STR,
         # Empty string (flat-map default inside compute_ld_window.py) unless
         # REAL_USE_GENMAP, in which case point it at the real Comeron map
         # instead of the per-arm flat/average rate.
@@ -2130,7 +2138,7 @@ rule compute_ld_real_chrom:
         script  = "snakemake_scripts/compute_ld_window.py",
         config  = EXP_CFG,
         sim_dir = lambda wc: ld_variant_root(wc.ld_variant, wc.chrom),
-        r_bins  = "0,1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3"
+        r_bins  = R_BINS_STR
     shell:
         r"""
         set -euo pipefail
@@ -2161,6 +2169,7 @@ rule aggregate_ld_real_chrom:
     params:
         output_root = lambda wc: ld_variant_root(wc.ld_variant, wc.chrom),
         cfg         = EXP_CFG,
+        bins        = R_BINS_STR,
     threads: 1
     shell:
         r"""
@@ -2169,6 +2178,7 @@ rule aggregate_ld_real_chrom:
         python "snakemake_scripts/LD_inference.py" \
             --output-root "{params.output_root}" \
             --config-file "{params.cfg}" \
+            --r-bins      "{params.bins}" \
             --skip-optimize
         """
 
@@ -2241,6 +2251,7 @@ rule aggregate_ld_windows_real:
         run_dir     = REAL_INF_ROOT,
         output_root = REAL_LD_ROOT,
         cfg         = EXP_CFG,
+        bins        = R_BINS_STR,
     threads: 1
     shell:
         r"""
@@ -2252,6 +2263,7 @@ rule aggregate_ld_windows_real:
             --run-dir       "{params.run_dir}" \
             --output-root   "{params.output_root}" \
             --config-file   "{params.cfg}" \
+            --r-bins        "{params.bins}" \
             --real-data \
             --skip-optimize
         """
@@ -2276,6 +2288,7 @@ rule infer_momentsld_real:
     params:
         outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/{REAL_LD_ENGINE}",
         cfg    = EXP_CFG,
+        bins   = R_BINS_STR,
     threads: 1
     shell:
         r"""
@@ -2288,6 +2301,7 @@ rule infer_momentsld_real:
             --empirical        "{input.mv}" \
             --outdir           "{params.outdir}" \
             --sfs-best-fit-pkl "{input.sfs_best}" \
+            --r-bins           "{params.bins}" \
             --normalization    0 \
             --opt-seed         {wildcards.opt} \
             --verbose
