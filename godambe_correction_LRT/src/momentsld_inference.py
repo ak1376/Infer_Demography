@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/momentsld_inference.py
+# godambe_correction_LRT/src/momentsld_inference.py
 
 """
 Moments-LD point-estimate step for the growth LRT, on the OVERLAPPING windows.

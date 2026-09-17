@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/compute_J_ld.py
+# godambe_correction_LRT/src/compute_J_ld.py
 
 """
 Hand-rolled J for the LD growth test.

@@ -32,11 +32,29 @@ from pathlib import Path
 DROSO         = "real_data_analysis/data/drosophila"
 COMERON_XLSX  = f"{DROSO}/recombination_maps/Comeron_100kb_R5_R6.xlsx"
 POPFILE       = f"{DROSO}/popfile.txt"
+
+# Optional per-arm centromere/telomere trim, mirroring the main repo Snakefile's
+# real_data_analysis.trim_region (config_files/experiment_config_split_migration_growth_both.json).
+# Tag-directory naming isn't uniform -- Chr3L was produced as a single-arm trim
+# run, ChrX only exists under the main pipeline's all-5-arm trim tag -- so we
+# point directly at each arm's actual on-disk trimmed/polarized/diploid-recoded
+# VCF rather than deriving the path from a formula.
+TRIM_REGION = {
+    "Chr3L": (447386, 18392988),
+    "ChrX":  (1036552, 20902578),
+}
+TRIMMED_VCF = {
+    "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/polarized.diploidGT.vcf.gz",
+    "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/polarized.diploidGT.vcf.gz",
+}
+
 def arm_vcf(arm):
+    if arm in TRIMMED_VCF:
+        return TRIMMED_VCF[arm]
     return f"{DROSO}/{arm}/polarized.diploidGT.vcf.gz"
 
 OUT           = "godambe_correction_LRT/real_arms"
-GODAMBE_SCR   = "godambe_correction_LRT/scripts"
+GODAMBE_SCR   = "godambe_correction_LRT/snakemake_scripts"
 SNAKE_SCR     = "snakemake_scripts"
 LD_CONFIG     = "godambe_correction_LRT/ld/ld_config.json"   # num_samples + use_gpu_ld
 
@@ -53,9 +71,24 @@ BLOCKSIZES = {arm: list(_SWEEP) for arm in ARMS}
 
 R_BINS = "0,1e-6,2e-6,5e-6,1e-5,2e-5"            # trimmed r_bins
 
-OVERLAP_WINDOW  = 1_000_000                       # step 3 overlapping windows
-OVERLAP_NWIN    = 100
-OVERLAP_WINDOWS = range(OVERLAP_NWIN)
+OVERLAP_WINDOW  = 200_000                         # step 3 overlapping windows
+# Per-arm window count for ~contiguous (no gap, negligible overlap) tiling of
+# each arm's (trimmed) span at 200kb -- span differs per arm so this can't be
+# a single global number: Chr3L trimmed span ~17.95 Mb -> 90; ChrX trimmed
+# span ~19.87 Mb -> 100.
+OVERLAP_NWIN = {
+    "Chr3L": 90,
+    "ChrX":  100,
+}
+
+# Optional pruning of step-3 windows before LD-stats (mirrors the main
+# Snakefile's prune_mode="count"): caps each window at PRUNE_KEEP SNPs,
+# random subsample when denser, copied through unchanged when already
+# sparser. Purely a compute-cost cap -- LD-stats math is unaffected, and
+# downstream (aggregate_overlap, fit_one_start, ...) doesn't need to know.
+PRUNE_MODE = "count"                              # "off" | "count"
+PRUNE_KEEP = 5000
+PRUNE_TAG  = f"n{PRUNE_KEEP}"
 
 N_OPT       = 100                                 # LHS starts for the fit
 OPT_INDICES = range(N_OPT)
@@ -80,7 +113,7 @@ SFS_CFG = {
 }
 SFS_N_STARTS = 100
 
-# Godambe-adjusted LRT for CO growth (scripts/godambe_lrt_growth.py), generalized
+# Godambe-adjusted LRT for CO growth (snakemake_scripts/godambe_lrt_growth.py), generalized
 # from the original Chr3L-only bootstrapping_for_LRT_Chr3L.py so any arm in
 # SFS_ARMS can be requested directly. ~100 kb is the LD-justified recommendation
 # from bootstrap_window_size.py (set by the slow-decaying Chr2R-FR curve in the
@@ -286,6 +319,7 @@ rule overlap_window:
         vcf_gz = f"{OUT}/{{arm}}/overlap/windows/window_{{i}}.vcf.gz",
     params:
         out_dir = f"{OUT}/{{arm}}/overlap/windows",
+        nwin    = lambda wc: OVERLAP_NWIN[wc.arm],
     shell:
         r"""
         set -euo pipefail
@@ -293,35 +327,77 @@ rule overlap_window:
         python "{SNAKE_SCR}/split_vcf_windows.py" \
             --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
             --out-dir "{params.out_dir}" \
-            --window-size {OVERLAP_WINDOW} --num-windows {OVERLAP_NWIN} \
+            --window-size {OVERLAP_WINDOW} --num-windows {params.nwin} \
             --window-index {wildcards.i}
         """
 
-rule overlap_ld_stats:
+rule prune_overlap_window:
     input:
         vcf_gz = f"{OUT}/{{arm}}/overlap/windows/window_{{i}}.vcf.gz",
-        gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
     output:
-        pkl = f"{OUT}/{{arm}}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
-    resources:
-        gpu = 1
+        pruned_vcf = temp(f"{OUT}/{{arm}}/overlap/pruning/{PRUNE_TAG}/windows/window_{{i}}.vcf.gz"),
     params:
-        sim_dir = f"{OUT}/{{arm}}/overlap",
+        pruning_dir = f"{OUT}/{{arm}}/overlap/pruning",
+    threads: 1
     shell:
         r"""
         set -euo pipefail
-        mkdir -p "{params.sim_dir}/LD_stats"
-        python "{GODAMBE_SCR}/ld_stats_safe.py" \
-            --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
-            --config-file "{LD_CONFIG}" --r-bins "{R_BINS}" \
-            --rec-map-file "{input.gmap}"
+        python "src/prune_vcf.py" \
+            --vcf "{input.vcf_gz}" \
+            --out-dir "{params.pruning_dir}" \
+            --keep-counts {PRUNE_KEEP} \
+            --no-unpruned \
+            --workers 1
         """
+
+if PRUNE_MODE != "off":
+    rule overlap_ld_stats:
+        input:
+            vcf_gz = f"{OUT}/{{arm}}/overlap/pruning/{PRUNE_TAG}/windows/window_{{i}}.vcf.gz",
+            gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+        output:
+            pkl = f"{OUT}/{{arm}}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
+        resources:
+            gpu = 1
+        params:
+            sim_dir = f"{OUT}/{{arm}}/overlap/pruning/{PRUNE_TAG}",
+        shell:
+            r"""
+            set -euo pipefail
+            mkdir -p "{params.sim_dir}/LD_stats"
+            python "{GODAMBE_SCR}/ld_stats_safe.py" \
+                --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+                --config-file "{LD_CONFIG}" --r-bins "{R_BINS}" \
+                --rec-map-file "{input.gmap}"
+
+            mv "{params.sim_dir}/LD_stats/LD_stats_window_{wildcards.i}.pkl" "{output.pkl}"
+            """
+else:
+    rule overlap_ld_stats:
+        input:
+            vcf_gz = f"{OUT}/{{arm}}/overlap/windows/window_{{i}}.vcf.gz",
+            gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+        output:
+            pkl = f"{OUT}/{{arm}}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
+        resources:
+            gpu = 1
+        params:
+            sim_dir = f"{OUT}/{{arm}}/overlap",
+        shell:
+            r"""
+            set -euo pipefail
+            mkdir -p "{params.sim_dir}/LD_stats"
+            python "{GODAMBE_SCR}/ld_stats_safe.py" \
+                --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+                --config-file "{LD_CONFIG}" --r-bins "{R_BINS}" \
+                --rec-map-file "{input.gmap}"
+            """
 
 # aggregate overlapping windows -> means.varcovs.pkl  (bootstrap_ld.py IS this)
 rule aggregate_overlap:
     input:
-        pkls = expand(f"{OUT}/{{{{arm}}}}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
-                      i=OVERLAP_WINDOWS),
+        pkls = lambda wc: expand(f"{OUT}/{wc.arm}/overlap/LD_stats/LD_stats_window_{{i}}.pkl",
+                                  i=range(OVERLAP_NWIN[wc.arm])),
     output:
         mv = f"{OUT}/{{arm}}/overlap/means.varcovs.pkl",
     shell:
@@ -537,7 +613,7 @@ rule sfs_fim_all:
 #       godambe_correction_LRT/real_arms/Chr3L/godambe_lrt/block_sensitivity.csv
 # or `snakemake -s godambe_correction_LRT/Snakefile --cores N godambe_lrt_all`
 #
-# Generalized from scripts/bootstrapping_for_LRT_Chr3L.py: reparameterizes CO
+# Generalized from archive/bootstrapping_for_LRT_Chr3L.py: reparameterizes CO
 # growth as growth_CO = log(N_CO0/N_CO1) (null: growth_CO=0, i.e. N_CO0=N_CO1)
 # so the test doesn't depend on N_CO0's separate identifiability from N_ANC --
 # H comes from moments.Godambe.get_hess restricted to growth_CO at the

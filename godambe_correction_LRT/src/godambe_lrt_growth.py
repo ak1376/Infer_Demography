@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/godambe_lrt_growth.py
+# godambe_correction_LRT/src/godambe_lrt_growth.py
 #
 # Per-arm generalization of bootstrapping_for_LRT_Chr3L.py: identical Godambe-
-# adjusted LRT for CO growth, but driven entirely by CLI arguments instead of
-# a hardcoded chromosome, so the Snakefile can request this for any arm.
+# adjusted LRT for CO growth, but driven entirely by explicit arguments instead
+# of a hardcoded chromosome, so the Snakefile can request this for any arm.
 # All bootstrap/LRT logic is unchanged from the Chr3L script.
 
 """
@@ -23,31 +23,26 @@ Single-chromosome block bootstrap
 ----------------------------------
 The demographic fits are on the requested arm's OWN SFS (not pooled with any
 other arm), so the bootstrap resamples blocks tiling that arm only. The arm is
-tiled into non-overlapping blocks of a fixed physical size (--block-sizes-kb);
+tiled into non-overlapping blocks of a fixed physical size (block_sizes_kb);
 a bootstrap replicate draws (with replacement) as many blocks as there are and
 sums their per-block SFS.
 
-Block-size sensitivity: --block-sizes-kb sweeps several candidate block sizes
+Block-size sensitivity: block_sizes_kb sweeps several candidate block sizes
 (kb). The default range's ~100 kb point comes from bootstrap_window_size.py,
 which found that ~90-100 kb is the smallest block that is still ~independent
 on the slowest-decaying arm/population (Chr2R-FR) in the pooled analysis --
 treat it as a generic starting point, not an arm-specific guarantee. The
 validated, per-population block size from `rule validated_blocks` (read from
---validated-blocks-bed) is reported alongside the sweep as the arm-specific,
+validated_blocks_bed) is reported alongside the sweep as the arm-specific,
 LD-decay-justified reference point.
+
+CLI wrapper: godambe_correction_LRT/snakemake_scripts/godambe_lrt_growth.py
 """
 
-import argparse
 import gzip
-import os
 import pickle
 import subprocess
-import sys
 from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
 
 import numpy as np
 import matplotlib
@@ -56,33 +51,6 @@ import matplotlib.pyplot as plt
 import moments
 from tqdm import tqdm
 from src.demes_models import split_migration_growth_both_model
-
-
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--arm", required=True, nargs="+",
-                    help="Chromosome arm(s), e.g. Chr3L, or multiple (e.g. Chr2L Chr3L) to pool")
-    p.add_argument("--simple-fit", type=Path, required=True, help="sfs_fit_simple/best_fit.pkl")
-    p.add_argument("--complex-fit", type=Path, required=True, help="sfs_fit_complex/best_fit.pkl")
-    p.add_argument("--sfs", type=Path, required=True,
-                    help="unfolded.sfs.pkl for these arm(s) -- pooled/summed already if multiple arms")
-    p.add_argument("--vcf", type=Path, required=True, nargs="+",
-                    help="Polarized (haploid+AA) VCF(s), one per --arm, same order")
-    p.add_argument("--popfile", type=Path, required=True)
-    p.add_argument("--validated-blocks-bed", type=Path, nargs="*", default=[],
-                    help="validated_blocks.bed from rule validated_blocks (single-arm only; "
-                         "omit to skip the bonus validated-block-size report row)")
-    p.add_argument("--out-dir", type=Path, required=True)
-    p.add_argument("--cache-dir", type=Path, required=True,
-                    help="Per-arm cache dir for parsed per-block SFS")
-    p.add_argument("--max-workers", type=int, default=8)
-    p.add_argument("--num-boot-reps", type=int, default=10_000)
-    p.add_argument("--rng-seed", type=int, default=0)
-    p.add_argument("--block-sizes-kb", type=str, default="50,75,100,150,200,300,500",
-                    help="Comma-separated candidate block sizes (kb) for the sensitivity sweep")
-    p.add_argument("--score-eps", type=float, default=0.01,
-                    help="Finite-difference step for the growth_CO score (J) and Hessian (H)")
-    return p.parse_args()
 
 
 # ---- Complex model in the growth_CO parameterization -----------------------
@@ -102,8 +70,8 @@ PARAM_NAMES = [
 GROWTH_IDX = PARAM_NAMES.index("growth_CO")
 
 # ProcessPoolExecutor pickles the mapped function by reference, so it must be a
-# module-level function, not a closure -- these two globals are set once in
-# main() (before the pool is created) and inherited by forked workers.
+# module-level function, not a closure -- these two globals are set once by
+# the caller (before the pool is created) and inherited by forked workers.
 _POPFILE = None
 _SAMPLE_SIZES = None
 
@@ -170,33 +138,41 @@ def _get_vcf_sample_indices(vcf_path, popfile_path):
     return pop_names, sample_indices
 
 
-def main():
-    args = parse_args()
-    arms = list(args.arm)
-    vcf_paths = [str(v) for v in args.vcf]
+def run_godambe_lrt_growth(arm, simple_fit, complex_fit, sfs, vcf, popfile,
+                           validated_blocks_bed, out_dir, cache_dir,
+                           max_workers, num_boot_reps, rng_seed, block_sizes_kb,
+                           score_eps):
+    """Full Godambe-adjusted CO-growth LRT for one (or several pooled) arm(s).
+
+    Parameters mirror the CLI flags of the same name in the Snakemake-invoked
+    wrapper (see snakemake_scripts/godambe_lrt_growth.py): `arm` and `vcf` are
+    lists (len 1 for a single arm, len > 1 to pool), `validated_blocks_bed` is
+    a (possibly empty) list of Path, `block_sizes_kb` is a list of floats.
+
+    Writes block_sensitivity.csv, block_sensitivity.png,
+    J_and_adjust_by_block_size.png, adjust_by_block_size.png, and one
+    J_bootstrap_hist_<kb>kb.png per block size under `out_dir`.
+    """
+    arms = list(arm)
+    vcf_paths = [str(v) for v in vcf]
     if len(arms) != len(vcf_paths):
-        raise ValueError(f"--arm and --vcf must have the same count, got {len(arms)} arms "
+        raise ValueError(f"arm and vcf must have the same count, got {len(arms)} arms "
                           f"and {len(vcf_paths)} vcfs")
     arm_label = "+".join(arms)  # display-only, e.g. "Chr2L+Chr3L"
-    popfile = str(args.popfile)
+    popfile = str(popfile)
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    args.cache_dir.mkdir(parents=True, exist_ok=True)
-    summary_csv_path = args.out_dir / "block_sensitivity.csv"
-    sensitivity_plot_path = args.out_dir / "block_sensitivity.png"
-    j_plot_path = args.out_dir / "J_and_adjust_by_block_size.png"
-    adjust_plot_path = args.out_dir / "adjust_by_block_size.png"
-    hist_template = str(args.out_dir / "J_bootstrap_hist_{block_kb}kb.png")
-
-    block_sizes_kb = [float(x) for x in args.block_sizes_kb.split(",") if x.strip()]
-    num_boot_reps = args.num_boot_reps
-    rng_seed = args.rng_seed
-    score_eps = args.score_eps
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    summary_csv_path = out_dir / "block_sensitivity.csv"
+    sensitivity_plot_path = out_dir / "block_sensitivity.png"
+    j_plot_path = out_dir / "J_and_adjust_by_block_size.png"
+    adjust_plot_path = out_dir / "adjust_by_block_size.png"
+    hist_template = str(out_dir / "J_bootstrap_hist_{block_kb}kb.png")
 
     # ---- Null point p0 and fixed theta --------------------------------------
-    with open(args.simple_fit, "rb") as f:
-        simple_fit = pickle.load(f)
-    simple_params = simple_fit["best_params"][0]
+    with open(simple_fit, "rb") as f:
+        simple_fit_blob = pickle.load(f)
+    simple_params = simple_fit_blob["best_params"][0]
 
     # H0-consistent point in the 8-param growth_CO order (growth_CO = 0).
     p0 = [
@@ -210,7 +186,7 @@ def main():
         simple_params["m_FR_CO"],
     ]
 
-    with open(args.sfs, "rb") as f:
+    with open(sfs, "rb") as f:
         data_sfs = pickle.load(f)
 
     # multinom theta: fix theta at the optimal scaling for p0, then hold it fixed.
@@ -270,14 +246,14 @@ def main():
 
     def _validated_jobs():
         """(vcf_path, (start, end)) blocks from the per-population-validated,
-        independence-checked tiling in --validated-blocks-bed -- same job
+        independence-checked tiling in validated_blocks_bed -- same job
         format as _block_jobs, but read from disk instead of computed
         arithmetically (and already restricted to the arm's validated usable
         range, unlike _block_jobs, which tiles the raw, unmasked arm bounds).
-        Single-arm only (see --validated-blocks-bed help)."""
+        Single-arm only (see validated_blocks_bed help)."""
         jobs = []
         vp = vcf_paths[0]
-        for bed_path in args.validated_blocks_bed:
+        for bed_path in validated_blocks_bed:
             with open(bed_path) as f:
                 for line in f:
                     chrom, start, end = line.split()
@@ -291,17 +267,17 @@ def main():
         one arm, "Chr2L-Chr3L" pooled) -- identical to the single-arm naming
         when len(arms) == 1, and matching bootstrapping_for_LRT.py's pooled
         naming convention exactly, so an already-computed pooled cache under
-        --cache-dir is reused instead of recomputed."""
+        cache_dir is reused instead of recomputed."""
         arms_tag = "-".join(arms)
         key = "validated" if jobs is not None else f"{int(block_bp)}bp"
-        cache = args.cache_dir / f"chunk_spectra_{arms_tag}_{key}.pkl"
+        cache = cache_dir / f"chunk_spectra_{arms_tag}_{key}.pkl"
         if cache.exists():
             with open(cache, "rb") as f:
                 return pickle.load(f)
 
         if jobs is None:
             jobs = _block_jobs(block_bp)
-        with ProcessPoolExecutor(max_workers=args.max_workers) as pool:
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
             chunk_spectra = list(tqdm(pool.map(_parse_chunk, jobs), total=len(jobs),
                                       desc=f"parse {len(jobs)} blocks @ {key}"))
         with open(cache, "wb") as f:
@@ -395,8 +371,8 @@ def main():
     # so D is identical either way -- but H and J are computed with
     # moments.Inference.ll, so we compute D with moments.Inference.ll too,
     # keeping D, H, and J in ONE consistent convention.
-    with open(args.complex_fit, "rb") as f:
-        complex_fit = pickle.load(f)
+    with open(complex_fit, "rb") as f:
+        complex_fit_blob = pickle.load(f)
 
     def _ll_moments(fit_params, growth_CO):
         """moments.Inference.ll of the (theta-profiled) complex-model SFS at a
@@ -410,14 +386,14 @@ def main():
         return moments.Inference.ll(moments.Inference.optimal_sfs_scaling(fsm, data_sfs) * fsm, data_sfs)
 
     # Simple MLE embeds as growth_CO = 0 with N_CO1 = the simple model's single N_CO.
-    _sp = simple_fit["best_params"][0]
+    _sp = simple_fit_blob["best_params"][0]
     ll_simple = _ll_moments(
         {"N_ANC": _sp["N_ANC"], "N_CO1": _sp["N_CO"], "N_FR0": _sp["N_FR0"],
          "N_FR1": _sp["N_FR1"], "T": _sp["T"], "m_CO_FR": _sp["m_CO_FR"], "m_FR_CO": _sp["m_FR_CO"]},
         0.0,
     )
     # Complex MLE: growth_CO = log(N_CO0 / N_CO1).
-    _cp = complex_fit["best_params"][0]
+    _cp = complex_fit_blob["best_params"][0]
     ll_complex = _ll_moments(_cp, float(np.log(_cp["N_CO0"] / _cp["N_CO1"])))
 
     D = 2.0 * (ll_complex - ll_simple)
@@ -427,7 +403,7 @@ def main():
     # It will differ ONLY if the two fits were run on different data (their
     # constant offsets would then no longer cancel) -- the real "mismatched
     # SFS" signal.
-    D_stored = 2.0 * (float(complex_fit["best_ll"][0]) - float(simple_fit["best_ll"][0]))
+    D_stored = 2.0 * (float(complex_fit_blob["best_ll"][0]) - float(simple_fit_blob["best_ll"][0]))
     print(f"\n[{arm_label}] Consistency check (fits on the same SFS?):")
     print(f"  D (moments.Inference.ll) = {D:.6g}")
     print(f"  D (stored best_ll)       = {D_stored:.6g}")
@@ -461,10 +437,10 @@ def main():
 
     # ---- Validated blocks: per-population, independence-checked tiling from
     # `rule validated_blocks`, reported alongside the uniform sweep (not
-    # instead of it) -- see --validated-blocks-bed above. Single-arm only;
+    # instead of it) -- see validated_blocks_bed above. Single-arm only;
     # skipped entirely (no bed-to-arm reconciliation attempted) when pooling
-    # multiple arms and no --validated-blocks-bed was given.
-    if args.validated_blocks_bed:
+    # multiple arms and no validated_blocks_bed was given.
+    if validated_blocks_bed:
         validated_jobs = _validated_jobs()
         _starts_ends = [job[1] for job in validated_jobs]
         validated_block_kb = (_starts_ends[0][1] - _starts_ends[0][0]) / 1e3  # actual bp size, in kb
@@ -484,7 +460,7 @@ def main():
             f"[validated]"
         )
     else:
-        print("(no --validated-blocks-bed given -- skipping the validated-block-size bonus row)")
+        print("(no validated_blocks_bed given -- skipping the validated-block-size bonus row)")
 
     # Write CSV summary without requiring pandas.
     fieldnames = list(results[0].keys())
@@ -563,7 +539,3 @@ def main():
         plt.close(fig)
 
     print(f"[{arm_label}] wrote per-block-size J histograms")
-
-
-if __name__ == "__main__":
-    main()

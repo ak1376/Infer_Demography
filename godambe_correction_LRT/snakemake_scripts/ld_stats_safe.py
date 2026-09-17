@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/ld_stats_safe.py
+# godambe_correction_LRT/snakemake_scripts/ld_stats_safe.py
 
 """
 Compute LD stats for ONE window, tolerating EMPTY windows. A 0-variant window

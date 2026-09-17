@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/sfs_fit_one_start.py
+# godambe_correction_LRT/snakemake_scripts/sfs_fit_one_start.py
 """
-Run ONE LHS-seeded moments SFS fit (one optimizer start) for one arm + model.
-Each --opt-index is its own Snakemake job, mirroring the LD side's
-fit_one_start_ld.py / collect_best_fit.py split. Collected + turned into the
-FIM/railing diagnostic by sfs_collect_and_fim.py.
+Thin wrapper called by Snakemake rule `sfs_fit_one_start`.
+
+Runs ONE LHS-seeded moments SFS fit (one optimizer start) for one arm + model
+and writes just that start's result.
+
+Heavy lifting lives in:
+  godambe_correction_LRT/src/sfs_fit_one_start.py
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import pickle
 import sys
@@ -18,10 +20,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import moments
 
-from src.moments_inference_real import fit_model_realdata_scaled
+from sfs_fit_one_start import run_one_sfs_start
 
 
 def main():
@@ -42,38 +45,23 @@ def main():
     with open(args.config) as f:
         cfg = json.load(f)
     param_order = list(cfg["parameter_order"])
-    model_func = getattr(
-        importlib.import_module("src.demes_models"), f"{args.model}_model"
-    )
 
     with open(args.sfs, "rb") as f:
         sfs = pickle.load(f)
     sfs = moments.Spectrum(sfs)
     sfs.pop_ids = [s.strip() for s in args.pop_ids.split(",")]
 
-    cfg_run = dict(cfg)
-    cfg_run["num_optimizations"] = args.n_starts   # size the LHS grid to match
-    cfg_run["opt_seed"] = args.opt_index
-
-    best_abs, ll_hat, theta_hat, N_anc_implied = fit_model_realdata_scaled(
-        sfs=sfs,
-        demo_model_abs=model_func,
-        experiment_config=cfg_run,
-        param_order=param_order,
-        verbose=False,
+    result = run_one_sfs_start(
+        arm=args.arm, model=args.model, sfs=sfs, cfg=cfg,
+        opt_index=args.opt_index, n_starts=args.n_starts, param_order=param_order,
     )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "wb") as f:
-        pickle.dump(dict(
-            seed=args.opt_index,
-            best_abs=best_abs,
-            ll_hat=float(ll_hat),
-            theta_hat=float(theta_hat),
-            N_anc_implied=float(N_anc_implied),
-        ), f)
+        pickle.dump(result, f)
 
-    print(f"[{args.arm}/{args.model}] start {args.opt_index}: ll={ll_hat:.6f} -> {args.out}")
+    print(f"[{args.arm}/{args.model}] start {args.opt_index}: "
+          f"ll={result['ll_hat']:.6f} -> {args.out}")
 
 
 if __name__ == "__main__":

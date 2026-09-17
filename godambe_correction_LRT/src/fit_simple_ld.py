@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/fit_simple_ld.py
+# godambe_correction_LRT/src/fit_simple_ld.py
 
 """
 STEP 2 fit: fit ONE demographic model to an arm's aggregated overlapping LD

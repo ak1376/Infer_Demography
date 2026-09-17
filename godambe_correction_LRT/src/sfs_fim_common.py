@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/sfs_fim_common.py
+# godambe_correction_LRT/src/sfs_fim_common.py
 """Shared helpers for the per-start / collect-and-fim SFS identifiability jobs."""
 
 from __future__ import annotations

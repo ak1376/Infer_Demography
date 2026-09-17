@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/collect_best_fit.py
+# godambe_correction_LRT/snakemake_scripts/collect_best_fit.py
 
 """Pick the best (highest-LL) start across the per-start fit pkls -> best_fit.pkl
 (the p0). Also saves all starts for convergence inspection."""

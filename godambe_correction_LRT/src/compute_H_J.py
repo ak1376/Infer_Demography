@@ -1,35 +1,29 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/compute_H_J.py
+# godambe_correction_LRT/src/compute_H_J.py
 """
 Raw Godambe H and J for the CO-growth test (growth_CO = log(N_CO0/N_CO1) in
 the complex model; H0 is growth_CO = 0), for one arm at one block size.
 
 Uses moments.Godambe's own internal machinery (moments.Godambe._get_godambe,
 the function LRT_adjust/score_stat/GIM_uncert all call internally) to compute
-H and J, rather than a hand-rolled score/J loop -- this script only builds the
+H and J, rather than a hand-rolled score/J loop -- this module only builds the
 one input moments.Godambe can't build for you: `all_boot`, the list of
 bootstrap-replicate spectra (resample blocks with replacement, sum).
 
 H: observed information for growth_CO on the arm's own SFS (no bootstrap).
 J: block-bootstrap score variance, from resampling the block SFS parsed out
-   of --block-vcf-dir (produced by the tile_polarized_blocks Snakemake rule).
+   of the tiled per-block VCFs.
+
+CLI wrapper: godambe_correction_LRT/snakemake_scripts/compute_H_J.py
 """
 
 from __future__ import annotations
 
-import argparse
 import glob
-import json
-import pickle
-import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-
 import moments
 import moments.Godambe as Godambe
 
@@ -72,32 +66,19 @@ def _parse_block_job(job):
     return _parse_block(vcf_path, popfile, sample_sizes)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--arm", required=True)
-    ap.add_argument("--block-vcf-dir", required=True, type=Path)
-    ap.add_argument("--popfile", required=True, type=Path)
-    ap.add_argument("--sfs", required=True, type=Path,
-                     help="arm's own unfolded SFS -- the data the fits were run on")
-    ap.add_argument("--simple-fit", required=True, type=Path)
-    ap.add_argument("--complex-fit", required=True, type=Path)
-    ap.add_argument("--n-boot-reps", type=int, default=1000)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--eps", type=float, default=0.01)
-    ap.add_argument("--pop-ids", default="CO,FR")
-    ap.add_argument("--out-json", required=True, type=Path)
-    args = ap.parse_args()
+def compute_H_J_growth(arm, block_vcf_dir: Path, popfile: Path, data_sfs,
+                       simple_fit: dict, complex_fit: dict,
+                       n_boot_reps: int = 1000, seed: int = 0, eps: float = 0.01,
+                       max_workers: int = MAX_WORKERS):
+    """Full H/J/LRT computation for one arm at one block size.
 
-    with open(args.sfs, "rb") as f:
-        data_sfs = pickle.load(f)
-    data_sfs = moments.Spectrum(data_sfs)
-    data_sfs.pop_ids = [s.strip() for s in args.pop_ids.split(",")]
+    data_sfs must already have pop_ids set (["CO", "FR"] order).
+    simple_fit / complex_fit are the loaded best_fit.pkl dicts.
+
+    Returns a summary dict (JSON-serializable) with H, J, adjust_H_over_J,
+    raw_D, D_adj, p_raw, p_adj, n_blocks, n_boot_reps.
+    """
     ns = list(data_sfs.sample_sizes)
-
-    with open(args.simple_fit, "rb") as f:
-        simple_fit = pickle.load(f)
-    with open(args.complex_fit, "rb") as f:
-        complex_fit = pickle.load(f)
 
     sp = simple_fit["best_params"][0]
     # H0-consistent point: growth_CO = 0, N_CO1 = the simple model's single N_CO.
@@ -120,27 +101,27 @@ def main():
         return func_ex(full, ns)
 
     # --- block SFS, parsed once from the pre-tiled block VCFs ---
-    block_vcfs = sorted(glob.glob(str(args.block_vcf_dir / "window_*.vcf.gz")))
+    block_vcfs = sorted(glob.glob(str(Path(block_vcf_dir) / "window_*.vcf.gz")))
     if not block_vcfs:
-        raise SystemExit(f"no block VCFs found under {args.block_vcf_dir}")
-    jobs = [(v, str(args.popfile), list(ns)) for v in block_vcfs]
-    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        raise SystemExit(f"no block VCFs found under {block_vcf_dir}")
+    jobs = [(v, str(popfile), list(ns)) for v in block_vcfs]
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
         block_spectra = list(pool.map(_parse_block_job, jobs))
     n_blocks = len(block_spectra)
-    print(f"[{args.arm}] {n_blocks} blocks parsed from {args.block_vcf_dir}")
+    print(f"[{arm}] {n_blocks} blocks parsed from {block_vcf_dir}")
 
     # --- bootstrap replicates: resample blocks with replacement, sum ---
-    rng = np.random.default_rng(args.seed)
+    rng = np.random.default_rng(seed)
     idx = np.arange(n_blocks)
     all_boot = []
-    for _ in range(args.n_boot_reps):
+    for _ in range(n_boot_reps):
         sampled = rng.choice(idx, size=n_blocks, replace=True)
         all_boot.append(moments.Spectrum(sum(block_spectra[i] for i in sampled)))
 
     # --- H and J, straight from moments.Godambe's own internals ---
     p_nested = np.array([0.0])
     godambe, hess, J, cU = Godambe._get_godambe(
-        diff_func, all_boot, p_nested, data_sfs, args.eps, log=False
+        diff_func, all_boot, p_nested, data_sfs, eps, log=False
     )
     H_growth = float(hess[0, 0])
     J_growth = float(J[0, 0])
@@ -168,19 +149,8 @@ def main():
     p_raw = float(moments.Godambe.sum_chi2_ppf(D, weights=(0, 1)))
     p_adj = float(moments.Godambe.sum_chi2_ppf(D_adj, weights=(0, 1)))
 
-    summary = dict(
-        arm=args.arm, n_blocks=n_blocks, n_boot_reps=args.n_boot_reps,
+    return dict(
+        arm=arm, n_blocks=n_blocks, n_boot_reps=n_boot_reps,
         H=H_growth, J=J_growth, adjust_H_over_J=adjust,
         raw_D=float(D), D_adj=float(D_adj), p_raw=p_raw, p_adj=p_adj,
     )
-    args.out_json.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out_json, "w") as f:
-        json.dump(summary, f, indent=2)
-
-    print(f"[{args.arm}] H={H_growth:.6g}  J={J_growth:.6g}  H/J={adjust:.6g}")
-    print(f"[{args.arm}] D={D:.6g}  D_adj={D_adj:.6g}  p_raw={p_raw:.6g}  p_adj={p_adj:.6g}")
-    print(f"wrote {args.out_json}")
-
-
-if __name__ == "__main__":
-    main()

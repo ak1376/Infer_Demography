@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/plot_arm_sweep.py
+# godambe_correction_LRT/snakemake_scripts/plot_arm_sweep.py
 
 """Plot J (var of scores) vs non-overlapping block size for one arm, from the
 per-blocksize J pkls written by arm_J_at_blocksize.py.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/fit_one_start_ld.py
+# godambe_correction_LRT/snakemake_scripts/fit_one_start_ld.py
 
 """
 ONE LHS start of an LD fit (for Snakemake per-start parallelism). Runs LHS row
@@ -21,7 +21,7 @@ import pickle
 import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from fit_simple_ld import run_one_start, resolve_model, NULL, _ALIASES
 # run_one_start((opt_index, n_opt, mv, model_name)) -> result dict
 

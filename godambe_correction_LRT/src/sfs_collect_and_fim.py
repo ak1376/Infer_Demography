@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# godambe_correction_LRT/scripts/sfs_collect_and_fim.py
+# godambe_correction_LRT/src/sfs_collect_and_fim.py
 """
-Collect per-start moments SFS fits (from sfs_fit_one_start.py), pick the best,
-then compute the identifiability diagnostic at that MLE: SLICE profile
-likelihoods (nuisance params held at the MLE while the profiled one is swept
--- reusing fit_model_realdata_scaled's built-in generate_profiles path) and
-the observed Fisher information (finite-difference Hessian in the same
-log10-scaled space the optimizer used), reporting eigenvalues / cond(H) and
-which parameters rail against a prior bound.
+Logic for collecting per-start moments SFS fits (from sfs_fit_one_start.py),
+picking the best, then computing the identifiability diagnostic at that MLE:
+SLICE profile likelihoods (nuisance params held at the MLE while the profiled
+one is swept -- reusing fit_model_realdata_scaled's built-in generate_profiles
+path) and the observed Fisher information (finite-difference Hessian in the
+same log10-scaled space the optimizer used), reporting eigenvalues / cond(H)
+and which parameters rail against a prior bound.
 
 NOTE: the slice profiles are SLICES, not re-optimized profiles -- a parameter
 redundant with another (e.g. N_CO0 vs N_ANC) can look well-peaked in a slice
@@ -16,24 +16,14 @@ eigenvalues/cond(H) below for that failure mode.
 
 cond(H) > 1e8 is flagged ILL-CONDITIONED, matching the threshold used in
 run_lrt.py for the LD-side diagnostic, so the two are directly comparable.
+
+CLI wrapper: godambe_correction_LRT/snakemake_scripts/sfs_collect_and_fim.py
 """
 
 from __future__ import annotations
 
-import argparse
-import importlib
-import json
-import pickle
-import sys
-from pathlib import Path
-
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-import moments
 import numdifftools as nd
 
 from src.inference_utils import absolute_to_scaled_params
@@ -46,43 +36,19 @@ from src.moments_inference_real import (
 from sfs_fim_common import make_safe_model_func, ILL_COND_THRESHOLD, RAIL_FRAC
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--arm", required=True)
-    ap.add_argument("--model", required=True)
-    ap.add_argument("--sfs", required=True, type=Path)
-    ap.add_argument("--config", required=True, type=Path)
-    ap.add_argument("--pop-ids", default="CO,FR")
-    ap.add_argument("--starts", required=True, type=Path, nargs="+",
-                     help="per-start pickles from sfs_fit_one_start.py")
-    ap.add_argument("--rel-step", type=float, default=1e-4)
-    ap.add_argument("--out-dir", required=True, type=Path)
-    args = ap.parse_args()
+def compute_sfs_fim_summary(arm, model_name, sfs, cfg, param_order, model_func,
+                            starts, out_dir, rel_step=1e-4):
+    """Collect the per-start fits, pick the best, and compute the slice
+    profiles + FIM/railing diagnostic at that MLE.
 
-    arm, model_name = args.arm, args.model
-
-    with open(args.config) as f:
-        cfg = json.load(f)
-    param_order = list(cfg["parameter_order"])
-    model_func = getattr(
-        importlib.import_module("src.demes_models"), f"{model_name}_model"
-    )
-
-    with open(args.sfs, "rb") as f:
-        sfs = pickle.load(f)
-    sfs = moments.Spectrum(sfs)
-    sfs.pop_ids = [s.strip() for s in args.pop_ids.split(",")]
-
-    starts = []
-    for p in args.starts:
-        with open(p, "rb") as f:
-            starts.append(pickle.load(f))
+    Returns (best_fit_blob, summary) -- the wrapper writes both to disk
+    (best_fit.pkl / fim_summary.json). `fit_model_realdata_scaled` itself
+    writes profile_<param>.{npz,png} under out_dir/likelihood_plots_scaled/
+    as a side effect of `generate_profiles=True, save_dir=out_dir`.
+    """
     per_start_ll = [s["ll_hat"] for s in starts]
     best = max(starts, key=lambda s: s["ll_hat"])
     n_starts = len(starts)
-
-    out_dir = args.out_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- 1D slice profile likelihoods at the best start (re-run that exact
     # start with save_dir set so fit_model_realdata_scaled's built-in
@@ -145,7 +111,7 @@ def main():
 
     ll_check = loglik_free(x_full[free_idx])
 
-    H_fun = nd.Hessian(loglik_free, step=args.rel_step)
+    H_fun = nd.Hessian(loglik_free, step=rel_step)
     H = H_fun(x_full[free_idx])
     info = -H
     w = np.linalg.eigvalsh(info)
@@ -170,8 +136,6 @@ def main():
         "theta_hat": [float(best["theta_hat"])],
         "N_ANC_implied_from_theta": [float(best["N_anc_implied"])],
     }
-    with open(out_dir / "best_fit.pkl", "wb") as f:
-        pickle.dump(best_fit_blob, f)
 
     # --- summarize the slice profiles just written (edge-of-window check) ---
     profile_dir = out_dir / "likelihood_plots_scaled"
@@ -214,19 +178,5 @@ def main():
         "slice_profile_report": slice_report,
         "slice_profile_dir": str(profile_dir),
     }
-    with open(out_dir / "fim_summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
 
-    print(f"[{arm}/{model_name}] best ll={best['ll_hat']:.6f} (start {best['seed']})")
-    print(f"[{arm}/{model_name}] cond(H)={cond:.3e}  "
-          f"({'ILL-CONDITIONED' if ill_conditioned else 'ok'})")
-    railed = [b["param"] for b in bounds_report if b["railed"]]
-    print(f"[{arm}/{model_name}] railed params (scaled MLE vs prior bound): {railed if railed else 'none'}")
-    edge_hit = [s["param"] for s in slice_report if s["at_window_edge"]]
-    print(f"[{arm}/{model_name}] slice profiles peaking at window edge: {edge_hit if edge_hit else 'none'}")
-    print(f"[{arm}/{model_name}] -> {out_dir}/best_fit.pkl , {out_dir}/fim_summary.json , "
-          f"{profile_dir}/profile_<param>.png")
-
-
-if __name__ == "__main__":
-    main()
+    return best_fit_blob, summary
