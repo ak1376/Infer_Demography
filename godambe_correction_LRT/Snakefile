@@ -47,11 +47,34 @@ TRIMMED_VCF = {
     "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/polarized.diploidGT.vcf.gz",
     "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/polarized.diploidGT.vcf.gz",
 }
+# Same trimmed-data directories also hold the haploid VCF (polarized.vcf.gz,
+# ploidy=1, used by the SFS side) and unfolded.sfs.pkl -- point the SFS-side
+# rules (sfs_fit_one_start, sfs_collect_fim, godambe_lrt_growth) at these too,
+# so they're consistent with the trimmed VCF the LD side already uses instead
+# of silently mixing trimmed LD data with untrimmed SFS data.
+TRIMMED_HAPLOID_VCF = {
+    "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/polarized.vcf.gz",
+    "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/polarized.vcf.gz",
+}
+TRIMMED_SFS = {
+    "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/unfolded.sfs.pkl",
+    "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/unfolded.sfs.pkl",
+}
 
 def arm_vcf(arm):
     if arm in TRIMMED_VCF:
         return TRIMMED_VCF[arm]
     return f"{DROSO}/{arm}/polarized.diploidGT.vcf.gz"
+
+def arm_haploid_vcf(arm):
+    if arm in TRIMMED_HAPLOID_VCF:
+        return TRIMMED_HAPLOID_VCF[arm]
+    return f"{DROSO}/{arm}/polarized.vcf.gz"
+
+def arm_sfs(arm):
+    if arm in TRIMMED_SFS:
+        return TRIMMED_SFS[arm]
+    return f"{DROSO}/{arm}/unfolded.sfs.pkl"
 
 OUT           = "godambe_correction_LRT/real_arms"
 GODAMBE_SCR   = "godambe_correction_LRT/snakemake_scripts"
@@ -140,6 +163,7 @@ wildcard_constraints:
     i           = r"\d+",
     blocksize   = r"\d+",
     chunk_index = r"\d+",
+    vbchunk     = r"\d+",
 
 
 def blocksizes_for(arm):
@@ -180,24 +204,96 @@ rule genetic_map:
 # usable/unusable boundary itself, so it can't be pre-restricted to a region.
 # Part of `rule all`.
 # ===========================================================================
-rule validated_blocks:
+# validated_blocks Stage 1 (per-chunk floor/crossing-distance) is
+# parallelized across chunks: chunk_bounds enumerates them cheaply (VCF span
+# only, no r2), process_one_chunk does the actual per-chunk pairwise-r2 work
+# as its own job (so ~80 chunks run concurrently, bounded by --resources
+# gpu=N, instead of one long sequential loop), and validated_blocks
+# aggregates all of them (Stage 2 percentile-combine + Stage 3 validate).
+VALIDATED_BLOCKS_CHUNK_SIZE      = 300_000
+VALIDATED_BLOCKS_FLOOR_CUTOFF_BP = 20_000
+VALIDATED_BLOCKS_TOLERANCE       = 1.10
+VALIDATED_BLOCKS_NBINS           = 60
+VALIDATED_BLOCKS_PERCENTILE      = 99
+VALIDATED_BLOCKS_GROUP_SIZE      = 4
+# Cap on SNP pairs fed into a chunk's per-bin median (random subsample above
+# this) -- a dense 300kb chunk can have tens of millions of pairs, far more
+# than needed for a stable median across 60 bins, and the per-bin binning
+# loop's cost scales with pair count.
+VALIDATED_BLOCKS_MAX_PAIRS       = 2_000_000
+
+checkpoint chunk_bounds:
+    input:
+        vcf = lambda wc: arm_vcf(wc.arm),
+    output:
+        chunk_dir = directory(f"{OUT}/{{arm}}/validated_blocks_chunks"),
+    params:
+        chunk_size      = VALIDATED_BLOCKS_CHUNK_SIZE,
+        floor_cutoff_bp = VALIDATED_BLOCKS_FLOOR_CUTOFF_BP,
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{output.chunk_dir}"
+        python "{GODAMBE_SCR}/chunk_bounds.py" \
+            --vcf "{input.vcf}" \
+            --chunk-size {params.chunk_size} --floor-cutoff-bp {params.floor_cutoff_bp} \
+            --out-dir "{output.chunk_dir}"
+        """
+
+rule process_one_chunk:
     input:
         vcf     = lambda wc: arm_vcf(wc.arm),
         popfile = POPFILE,
+        bounds  = f"{OUT}/{{arm}}/validated_blocks_chunks/chunk_{{vbchunk}}.json",
+    output:
+        result = f"{OUT}/{{arm}}/validated_blocks_chunks/result_{{vbchunk}}.json",
+    threads: 1
+    params:
+        floor_cutoff_bp = VALIDATED_BLOCKS_FLOOR_CUTOFF_BP,
+        tolerance       = VALIDATED_BLOCKS_TOLERANCE,
+        n_bins          = VALIDATED_BLOCKS_NBINS,
+        max_pairs       = VALIDATED_BLOCKS_MAX_PAIRS,
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/process_one_chunk.py" \
+            --vcf "{input.vcf}" --popfile "{input.popfile}" --arm "{wildcards.arm}" \
+            --chunk-bounds-file "{input.bounds}" \
+            --floor-cutoff-bp {params.floor_cutoff_bp} --tolerance {params.tolerance} \
+            --n-bins {params.n_bins} --max-pairs {params.max_pairs} \
+            --out "{output.result}"
+        """
+
+def gather_chunk_results(wildcards):
+    ck = checkpoints.chunk_bounds.get(arm=wildcards.arm)
+    chunk_dir = ck.output.chunk_dir
+    idxs = glob_wildcards(os.path.join(chunk_dir, "chunk_{vbchunk}.json")).vbchunk
+    pattern = OUT + "/{arm}/validated_blocks_chunks/result_{vbchunk}.json"
+    return expand(pattern, arm=wildcards.arm, vbchunk=idxs)
+
+rule validated_blocks:
+    input:
+        vcf           = lambda wc: arm_vcf(wc.arm),
+        popfile       = POPFILE,
+        chunk_results = gather_chunk_results,
     output:
         bed            = f"{OUT}/{{arm}}/validated_blocks.bed",
         report         = f"{OUT}/{{arm}}/validated_blocks_report.json",
         histogram      = f"{OUT}/{{arm}}/validated_blocks_histogram.png",
         crossr2_check  = f"{OUT}/{{arm}}/validated_blocks_crossr2_check.png",
-    resources:
-        gpu = 1
     params:
-        script = f"{GODAMBE_SCR}/compute_validated_blocks.py",
+        script              = f"{GODAMBE_SCR}/compute_validated_blocks.py",
+        tolerance           = VALIDATED_BLOCKS_TOLERANCE,
+        percentile          = VALIDATED_BLOCKS_PERCENTILE,
+        validate_group_size = VALIDATED_BLOCKS_GROUP_SIZE,
     shell:
         r"""
         set -euo pipefail
         python "{params.script}" \
             --vcf "{input.vcf}" --popfile "{input.popfile}" --arm "{wildcards.arm}" \
+            --chunk-results {input.chunk_results} \
+            --tolerance {params.tolerance} --percentile {params.percentile} \
+            --validate-group-size {params.validate_group_size} \
             --out-bed "{output.bed}" --out-report "{output.report}" \
             --out-histogram "{output.histogram}" \
             --out-crossr2-check "{output.crossr2_check}"
@@ -246,7 +342,7 @@ rule ld_chunk_zoom:
 #       godambe_correction_LRT/real_arms/Chr3L/blocks/bs20000/windows
 checkpoint tile_polarized_blocks:
     input:
-        vcf     = f"{DROSO}/{{arm}}/polarized.vcf.gz",
+        vcf     = lambda wc: arm_haploid_vcf(wc.arm),
         popfile = POPFILE,
     output:
         windir = directory(f"{OUT}/{{arm}}/blocks/bs{{blocksize}}/windows"),
@@ -285,7 +381,7 @@ def gather_block_vcfs(wildcards):
 rule compute_H_J:
     input:
         block_vcfs  = gather_block_vcfs,
-        sfs         = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+        sfs         = lambda wc: arm_sfs(wc.arm),
         simple_fit  = f"{OUT}/{{arm}}/sfs_fit_simple/best_fit.pkl",
         complex_fit = f"{OUT}/{{arm}}/sfs_fit_complex/best_fit.pkl",
         popfile     = POPFILE,
@@ -558,7 +654,7 @@ rule combine_pooled_sfs:
 # each optimizer start is its own job (mirrors fit_one_start_ld.py on the LD side)
 rule sfs_fit_one_start:
     input:
-        sfs = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+        sfs = lambda wc: arm_sfs(wc.arm),
     output:
         start = f"{OUT}/{{arm}}/sfs_fit_{{fit}}/starts/start_{{opt}}.pkl",
     params:
@@ -580,7 +676,7 @@ rule sfs_collect_fim:
     input:
         starts = expand(f"{OUT}/{{{{arm}}}}/sfs_fit_{{{{fit}}}}/starts/start_{{opt}}.pkl",
                          opt=SFS_OPT_INDICES),
-        sfs = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+        sfs = lambda wc: arm_sfs(wc.arm),
     output:
         fit = f"{OUT}/{{arm}}/sfs_fit_{{fit}}/best_fit.pkl",
         summ = f"{OUT}/{{arm}}/sfs_fit_{{fit}}/fim_summary.json",
@@ -626,10 +722,10 @@ rule godambe_lrt_growth:
     input:
         simple_fit       = f"{OUT}/{{arm}}/sfs_fit_simple/best_fit.pkl",
         complex_fit      = f"{OUT}/{{arm}}/sfs_fit_complex/best_fit.pkl",
-        sfs              = f"{DROSO}/{{arm}}/unfolded.sfs.pkl",
+        sfs              = lambda wc: arm_sfs(wc.arm),
         # NOTE: the haploid polarized VCF (ploidy=1, matches how unfolded.sfs.pkl
         # was built), NOT arm_vcf()'s diploidGT VCF used by the LD-side rules.
-        vcf              = f"{DROSO}/{{arm}}/polarized.vcf.gz",
+        vcf              = lambda wc: arm_haploid_vcf(wc.arm),
         popfile          = POPFILE,
         validated_blocks = f"{OUT}/{{arm}}/validated_blocks.bed",
     output:

@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 # godambe_correction_LRT/snakemake_scripts/compute_validated_blocks.py
 """
-Thin wrapper called by Snakemake rule `validated_blocks`.
-
-Finds a validated bootstrap block size for one chromosome arm and writes the
-block BED, a JSON report, and two diagnostic plots. See the module docstring
-in src/compute_validated_blocks.py for the method.
+Thin wrapper called by Snakemake rule `validated_blocks` -- the AGGREGATION
+step. Stage 1 (per-chunk floor/crossing-distance) now runs as separate,
+parallel Snakemake jobs (checkpoint chunk_bounds + rule process_one_chunk);
+this script consumes their already-computed result JSONs, does Stage 2
+(percentile combine) + Stage 3 (validate against the real tiling), and
+writes the block BED, a JSON report, and two diagnostic plots. See the
+module docstring in src/compute_validated_blocks.py for the method.
 
 Heavy lifting lives in:
   godambe_correction_LRT/src/compute_validated_blocks.py
 """
 
 from __future__ import annotations
+
+import os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 
 import argparse
 import json
@@ -24,7 +31,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from compute_validated_blocks import find_validated_blocks
+from compute_validated_blocks import get_chrom_span, combine_and_validate
 
 
 def main():
@@ -33,12 +40,10 @@ def main():
     ap.add_argument("--vcf", required=True, help="raw, UNMASKED diploidGT VCF for one arm")
     ap.add_argument("--popfile", required=True)
     ap.add_argument("--arm", required=True, help="chromosome name, e.g. Chr3L")
-    ap.add_argument("--chunk-size", type=int, default=300_000)
-    ap.add_argument("--floor-cutoff-bp", type=int, default=20_000,
-                     help="distance beyond which the decay curve is trusted to be flat")
+    ap.add_argument("--chunk-results", required=True, nargs="+", type=Path,
+                     help="per-chunk result JSONs from rule process_one_chunk")
     ap.add_argument("--tolerance", type=float, default=1.10,
                      help="'close enough to floor' = within this multiple of the floor")
-    ap.add_argument("--n-bins", type=int, default=60)
     ap.add_argument("--percentile", type=float, default=99,
                      help="percentile (per population) used to combine per-chunk crossing "
                           "distances into the final block size; validated default is 99")
@@ -52,19 +57,30 @@ def main():
                      help="consecutive real blocks per VCF fetch during validation "
                           "(group_size+1 blocks per window, overlapping by 1, so every "
                           "real boundary is checked exactly once)")
+    ap.add_argument("--out-boundary-detail", default=None,
+                     help="optional CSV of EVERY boundary's pop/position/cross_r2/floor/ratio "
+                          "(not just the top-10 worst offenders in the JSON report) -- lets you "
+                          "plot where bad boundaries fall along the chromosome")
     args = ap.parse_args()
 
-    result = find_validated_blocks(
+    chrom_start, chrom_end = get_chrom_span(args.vcf)
+    chunk_results = []
+    for p in args.chunk_results:
+        r = json.loads(Path(p).read_text())
+        if r.get("empty"):
+            continue
+        chunk_results.append(r)
+    print(f"{args.arm} spans {chrom_start:,}-{chrom_end:,}; "
+          f"{len(chunk_results)}/{len(args.chunk_results)} chunks usable")
+
+    result = combine_and_validate(
         vcf=args.vcf, popfile=args.popfile, arm=args.arm,
-        chunk_size=args.chunk_size, floor_cutoff_bp=args.floor_cutoff_bp,
-        tolerance=args.tolerance, n_bins=args.n_bins, percentile=args.percentile,
+        chrom_start=chrom_start, chrom_end=chrom_end, chunk_results=chunk_results,
+        tolerance=args.tolerance, percentile=args.percentile,
         validate_group_size=args.validate_group_size,
     )
 
-    chrom_start = result["chrom_start"]
-    chrom_end = result["chrom_end"]
     usable_chrom_end = result["usable_chrom_end"]
-    chunk_results = result["chunk_results"]
     blocks = result["blocks"]
     block_co_all = result["block_co_all"]
     block_fr_all = result["block_fr_all"]
@@ -76,6 +92,17 @@ def main():
     total_pairs_fr, total_bad_fr, pct_bad_fr = (
         result["total_pairs_fr"], result["total_bad_fr"], result["pct_bad_fr"])
     worst_co, worst_fr = result["worst_co"], result["worst_fr"]
+
+    if args.out_boundary_detail:
+        import csv
+        Path(args.out_boundary_detail).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out_boundary_detail, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["pop", "block_index", "boundary_bp", "cross_r2", "floor", "ratio", "bad"])
+            for r in co_rows + fr_rows:
+                w.writerow([r["pop"], r["block_index"], r["boundary_bp"],
+                            r["cross_r2"], r["floor"], r["ratio"], r["ratio"] > args.tolerance])
+        print(f"saved all {len(co_rows) + len(fr_rows)} boundary details to {args.out_boundary_detail}")
 
     # ---- save the block BED file (the exact `blocks` list just validated) ----
     Path(args.out_bed).parent.mkdir(parents=True, exist_ok=True)

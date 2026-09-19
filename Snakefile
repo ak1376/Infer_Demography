@@ -72,6 +72,8 @@ def _trim_dir_suffix():
     bits = "_".join(f"{c}-{s}-{e}" for c, (s, e) in sorted(REAL_TRIM_REGION.items()))
     return f"_trim_{bits}"
 
+RAW_TRIM_DIR = "real_data_analysis/data/trimmed_raw_vcf"  # derived output only -- never drosophila_data/data (read-only mirror of the data share)
+
 def raw_vcf_for_chrom(chrom):
     """Raw per-chrom VCF path: the region-trimmed copy when trim_region is
     configured for this chrom, else the original untouched file."""
@@ -79,7 +81,7 @@ def raw_vcf_for_chrom(chrom):
     if rng is None:
         return f"drosophila_data/data/{chrom}.vcf.gz"
     start, end = rng
-    return f"drosophila_data/data/{chrom}.trim{start}-{end}.vcf.gz"
+    return f"{RAW_TRIM_DIR}/{chrom}.trim{start}-{end}.vcf.gz"
 
 # Make sure these match files that actually exist in your repo
 DROSO_BASE_DIR   = "real_data_analysis/data/drosophila"           # untagged: region-independent shared metadata only
@@ -1681,8 +1683,8 @@ rule trim_raw_vcf_region:
         vcf = "drosophila_data/data/{chrom}.vcf.gz",
         tbi = "drosophila_data/data/{chrom}.vcf.gz.tbi",
     output:
-        vcf = "drosophila_data/data/{chrom}.trim{start}-{end}.vcf.gz",
-        tbi = "drosophila_data/data/{chrom}.trim{start}-{end}.vcf.gz.tbi",
+        vcf = f"{RAW_TRIM_DIR}/{{chrom}}.trim{{start}}-{{end}}.vcf.gz",
+        tbi = f"{RAW_TRIM_DIR}/{{chrom}}.trim{{start}}-{{end}}.vcf.gz.tbi",
     threads: 1
     shell:
         r"""
@@ -2294,15 +2296,16 @@ rule aggregate_ld_windows_real:
 rule infer_momentsld_real:
     input:
         mv       = f"{REAL_LD_ROOT}/means.varcovs.pkl",
-        # Seed only when momentsld_use_scaled_units is True: LD inference uses
-        # the moments best-fit purely to resolve N_ref (used for rho-scaling
-        # in scaled-units mode). Marked ancient() so regenerating the moments
-        # fit (e.g. changing REAL_TOP_K) does not needlessly re-trigger LD
-        # inference — the best (rep_0) moments params are unchanged. In
-        # absolute-units mode (the default), this dependency is dropped
-        # entirely and a placeholder --n-ref is passed instead, so MomentsLD
-        # can run standalone without moments/dadi having been fit first.
-        **({"sfs_best": ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl")} if REAL_USE_SCALED_UNITS else {}),
+        # Always sourced from the moments best-fit. Needed regardless of
+        # momentsld_use_scaled_units: in scaled mode it anchors N_ref; in
+        # absolute mode it's still required whenever fixed_parameters pins a
+        # param via "moments_best" (e.g. N_ANC) -- that lookup reads
+        # --sfs-best-fit-pkl independently of N_ref/rho scaling, which in
+        # absolute mode tracks the optimizer's own current N_ANC guess
+        # instead. Marked ancient() so regenerating the moments fit (e.g.
+        # changing REAL_TOP_K) does not needlessly re-trigger LD inference --
+        # the best (rep_0) moments params are unchanged.
+        sfs_best = ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl"),
     output:
         # Not temp(): kept per-restart so per-opt N_ANC/T/etc. trends can be
         # inspected directly (as we've been doing) without waiting on
@@ -2315,7 +2318,7 @@ rule infer_momentsld_real:
         seed_flag = (
             (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}"')
             if REAL_USE_SCALED_UNITS
-            else (lambda w, input: "--n-ref 1.0")
+            else (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}" --n-ref 1.0')
         ),
     threads: 1
     shell:
@@ -2415,16 +2418,16 @@ rule aggregate_ld_windows_real_by_arm:
 rule infer_momentsld_real_by_arm:
     input:
         mv       = f"{REAL_LD_ROOT}/{{arm}}/means.varcovs.pkl",
-        # Seed only when momentsld_use_scaled_units is True, from this SAME
-        # arm's own (unpooled) moments fit -- see infer_engine_real_chrom/
-        # aggregate_opts_engine_real_chrom, which fit per_chrom_sfs(arm)
-        # directly rather than the pooled COMBINED_SFS. In absolute-units
-        # mode (the default), this dependency is dropped entirely -- see
-        # infer_momentsld_real above for why.
-        **(
-            {"sfs_best": lambda w: ancient(f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{w.arm}/inferences/moments/best_fit.pkl")}
-            if REAL_USE_SCALED_UNITS else {}
-        ),
+        # Always sourced from this SAME arm's own (unpooled) moments fit --
+        # see infer_engine_real_chrom/aggregate_opts_engine_real_chrom, which
+        # fit per_chrom_sfs(arm) directly rather than the pooled COMBINED_SFS.
+        # Needed regardless of momentsld_use_scaled_units: in scaled mode it
+        # anchors N_ref; in absolute mode it's still required whenever
+        # fixed_parameters pins a param via "moments_best" (e.g. N_ANC) --
+        # that lookup reads --sfs-best-fit-pkl independently of N_ref/rho
+        # scaling, which in absolute mode tracks the optimizer's own current
+        # N_ANC guess instead (see infer_momentsld_real above).
+        sfs_best = lambda w: ancient(f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{w.arm}/inferences/moments/best_fit.pkl"),
     output:
         pkl = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{{arm}}/runs/run_{{opt}}/inferences/MomentsLD/best_fit.pkl",
     wildcard_constraints:
@@ -2436,7 +2439,7 @@ rule infer_momentsld_real_by_arm:
         seed_flag = (
             (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}"')
             if REAL_USE_SCALED_UNITS
-            else (lambda w, input: "--n-ref 1.0")
+            else (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}" --n-ref 1.0')
         ),
     threads: 1
     shell:

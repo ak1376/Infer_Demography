@@ -30,8 +30,29 @@ CLI wrapper: godambe_correction_LRT/snakemake_scripts/compute_validated_blocks.p
 
 from __future__ import annotations
 
+import subprocess
+
 import numpy as np
 from pg_gpu import HaplotypeMatrix
+
+
+def select_best_gpu() -> None:
+    """Pick the CUDA device with the most free memory (same logic as
+    src/LD_stats.py::_select_best_gpu) -- without this, cupy silently
+    defaults to device 0, which may be heavily used by someone else on this
+    shared host while other devices sit idle."""
+    import cupy as cp
+
+    best_gpu, max_free_mem = 0, 0
+    for gpu_id in range(cp.cuda.runtime.getDeviceCount()):
+        cp.cuda.Device(gpu_id).use()
+        free_mem, _total = cp.cuda.runtime.memGetInfo()
+        if free_mem > max_free_mem:
+            max_free_mem = free_mem
+            best_gpu = gpu_id
+    cp.cuda.Device(best_gpu).use()
+    name = cp.cuda.runtime.getDeviceProperties(best_gpu)["name"].decode()
+    print(f"Using GPU {best_gpu} ({name}) with {max_free_mem / 1e9:.1f}GB free memory")
 
 
 # --------------------------------------------------------------------------
@@ -50,16 +71,48 @@ def read_popfile(popfile_path):
     return co_samples, fr_samples
 
 
-def binned_median_r2(r2_matrix, positions, n_bins):
+def binned_median_r2(r2_matrix, positions, n_bins, max_pairs=2_000_000, seed=0):
     """median r2 per log-spaced distance bin, computed directly from an
-    already-materialized r2 matrix (no pg_gpu round-trip needed)."""
+    already-materialized r2 matrix (no pg_gpu round-trip needed).
+
+    A dense chunk can have tens of millions of SNP pairs (n_snps choose 2).
+    Using every single one doesn't change a bin's median in any meaningful
+    way -- once a bin has a few thousand pairs, more samples just cost CPU
+    time without changing the estimate -- but the pair count is NOT uniform
+    across bins: within a fixed-width chunk, short distances have far more
+    possible pairs than long ones (log-spaced bins only partly compensate),
+    so the bins beyond floor_cutoff_bp -- exactly the ones the floor
+    estimate depends on -- are naturally the sparsest to begin with.
+
+    A single global uniform subsample would thin every bin by the same
+    fraction, so those already-sparse far bins (the ones that matter most
+    for a robust floor) would get hit hardest. Instead, cap pairs PER BIN
+    (max_pairs / n_bins each): sparse far bins, usually already under that
+    cap, keep essentially all their pairs; only the over-represented near
+    bins get thinned. Distances/bin assignment are computed for every pair
+    first (cheap, vectorized) -- only the expensive r2-value gather + median
+    step operates on the capped-per-bin subset."""
     n = r2_matrix.shape[0]
     iu = np.triu_indices(n, k=1)
     dist = positions[iu[1]] - positions[iu[0]]
-    r2_vals = r2_matrix[iu]
     bins = np.logspace(0, np.log10(dist.max()), n_bins + 1)
     edges = bins[1:]
     bin_idx = np.clip(np.digitize(dist, bins) - 1, 0, n_bins - 1)
+
+    max_pairs_per_bin = max(1, max_pairs // n_bins)
+    rng = np.random.default_rng(seed)
+    keep_parts = []
+    for k in range(n_bins):
+        idx_k = np.where(bin_idx == k)[0]
+        if len(idx_k) > max_pairs_per_bin:
+            idx_k = rng.choice(idx_k, size=max_pairs_per_bin, replace=False)
+        keep_parts.append(idx_k)
+    keep = np.concatenate(keep_parts)
+
+    iu = (iu[0][keep], iu[1][keep])
+    bin_idx = bin_idx[keep]
+    r2_vals = r2_matrix[iu]
+
     medians = np.full(n_bins, np.nan)
     for k in range(n_bins):
         vals = r2_vals[bin_idx == k]
@@ -88,14 +141,42 @@ def polymorphic_mask(haplotypes):
     return (freq > 0) & (freq < 1)
 
 
+def pairwise_r2_cpu(haplotypes):
+    """Pure NumPy reimplementation of pg_gpu.HaplotypeMatrix.pairwise_r2('r2')
+    (via its _pairwise_ld_core) -- identical math, no GPU/cupy involved.
+
+    haplotypes: (n_samples, n_snps) array, negative = missing, 0/1 otherwise.
+
+    On this host, GPU calls carry large, unpredictable CUDA driver/
+    synchronization overhead (seconds to many minutes) that has nothing to
+    do with the actual FLOP count -- and the actual FLOP count here is tiny
+    regardless (the matmuls below have inner dimension = sample count, ~10).
+    A plain BLAS-backed NumPy call sidesteps that overhead entirely."""
+    hap = np.asarray(haplotypes, dtype=np.float64)
+    valid_mask = (hap >= 0).astype(np.float64)
+    hap_clean = np.where(hap >= 0, hap, 0.0)
+    n_valid = valid_mask.sum(axis=0)
+    p = np.where(n_valid > 0, hap_clean.sum(axis=0) / n_valid, 0.0)
+    joint_n = valid_mask.T @ valid_mask
+    joint_11 = hap_clean.T @ hap_clean
+    p_AB = np.where(joint_n > 0, joint_11 / joint_n, 0.0)
+    D = p_AB - np.outer(p, p)
+    denom_squared = np.outer(p * (1 - p), p * (1 - p))
+    r2 = np.where(denom_squared > 0, (D ** 2) / denom_squared, 0.0)
+    np.fill_diagonal(r2, 0)
+    return r2
+
+
 # --------------------------------------------------------------------------
 # Per-chunk processing
 # --------------------------------------------------------------------------
 
 def process_chunk(vcf, popfile, co_samples, fr_samples, arm, chunk_start, chunk_end,
-                   floor_cutoff_bp, tolerance, n_bins):
+                   floor_cutoff_bp, tolerance, n_bins, max_pairs=2_000_000, verbose_timing=False):
     """One chunk's floor/crossing-distance for CO and FR. Returns None if the
     chunk has too few polymorphic-within-population sites for either."""
+    import time
+    t0 = time.time()
     region = f"{arm}:{chunk_start}-{chunk_end}"
     try:
         hm_co = HaplotypeMatrix.from_vcf(vcf, region=region, samples=co_samples)
@@ -106,15 +187,19 @@ def process_chunk(vcf, popfile, co_samples, fr_samples, arm, chunk_start, chunk_
     positions = hm_co.positions
     if len(positions) < 2:
         return None
+    if verbose_timing:
+        print(f"  [{region}] from_vcf: {time.time()-t0:.2f}s, n_snps={len(positions)}")
 
-    # capture haplotypes (for the monomorphic-site mask) BEFORE pairwise_r2() --
-    # pairwise_r2() transfers the HaplotypeMatrix to GPU internally, after which
-    # .haplotypes returns a cupy array instead of numpy
     poly_co = polymorphic_mask(hm_co.haplotypes)
     poly_fr = polymorphic_mask(hm_fr.haplotypes)
 
-    r2_co = hm_co.pairwise_r2().get()
-    r2_fr = hm_fr.pairwise_r2().get()
+    t1 = time.time()
+    r2_co = pairwise_r2_cpu(hm_co.haplotypes)
+    t2 = time.time()
+    r2_fr = pairwise_r2_cpu(hm_fr.haplotypes)
+    t3 = time.time()
+    if verbose_timing:
+        print(f"  [{region}] pairwise_r2 (CPU): CO={t2-t1:.2f}s, FR={t3-t2:.2f}s")
 
     positions_co = positions[poly_co]
     positions_fr = positions[poly_fr]
@@ -124,8 +209,14 @@ def process_chunk(vcf, popfile, co_samples, fr_samples, arm, chunk_start, chunk_
     if len(positions_co) < 2 or len(positions_fr) < 2:
         return None
 
-    edges_co, med_co = binned_median_r2(r2_co, positions_co, n_bins)
-    edges_fr, med_fr = binned_median_r2(r2_fr, positions_fr, n_bins)
+    t4 = time.time()
+    edges_co, med_co = binned_median_r2(r2_co, positions_co, n_bins, max_pairs=max_pairs)
+    t5 = time.time()
+    edges_fr, med_fr = binned_median_r2(r2_fr, positions_fr, n_bins, max_pairs=max_pairs)
+    t6 = time.time()
+    if verbose_timing:
+        print(f"  [{region}] binned_median_r2: CO={t5-t4:.2f}s (n_pairs={len(positions_co)*(len(positions_co)-1)//2:,}), "
+              f"FR={t6-t5:.2f}s (n_pairs={len(positions_fr)*(len(positions_fr)-1)//2:,})")
 
     floor_co = compute_floor(med_co, edges_co, floor_cutoff_bp)
     floor_fr = compute_floor(med_fr, edges_fr, floor_cutoff_bp)
@@ -168,12 +259,11 @@ def validate_blocks_direct(vcf, co_samples, fr_samples, arm, blocks, chunk_resul
         hm_fr = HaplotypeMatrix.from_vcf(vcf, region=region, samples=fr_samples)
 
         positions = hm_co.positions
-        # capture haplotypes BEFORE pairwise_r2() -- see process_chunk's comment
         poly_co = polymorphic_mask(hm_co.haplotypes)
         poly_fr = polymorphic_mask(hm_fr.haplotypes)
 
-        r2_co = hm_co.pairwise_r2().get()
-        r2_fr = hm_fr.pairwise_r2().get()
+        r2_co = pairwise_r2_cpu(hm_co.haplotypes)
+        r2_fr = pairwise_r2_cpu(hm_fr.haplotypes)
 
         positions_co = positions[poly_co]
         positions_fr = positions[poly_fr]
@@ -211,47 +301,45 @@ def validate_blocks_direct(vcf, co_samples, fr_samples, arm, blocks, chunk_resul
 
 
 # --------------------------------------------------------------------------
-# Orchestration (everything except argparse + writing bed/report/plots)
+# Chunk enumeration (cheap: VCF span only, no r2) -- lets Stage 1 be
+# parallelized across chunks as separate Snakemake jobs instead of one
+# sequential Python loop.
 # --------------------------------------------------------------------------
 
-def find_validated_blocks(vcf, popfile, arm, chunk_size, floor_cutoff_bp,
-                          tolerance, n_bins, percentile, validate_group_size):
-    """Run the full validated-block-size analysis for one arm.
+def get_chrom_span(vcf) -> tuple[int, int]:
+    """(min POS, max POS) via bcftools -- no GPU/pg_gpu involved."""
+    out = subprocess.run(
+        ["bcftools", "query", "-f", "%POS\n", str(vcf)],
+        stdout=subprocess.PIPE, check=True, text=True,
+    )
+    positions = [int(p) for p in out.stdout.split()]
+    return min(positions), max(positions)
 
-    Returns a dict with everything the CLI wrapper needs to write
-    validated_blocks.bed / the JSON report / the two diagnostic plots:
-      chrom_start, chrom_end, usable_chrom_end, chunk_results, blocks,
-      block_co_all, block_fr_all, p_co, p_fr, final_block_size_bp,
-      detail_rows, co_rows, fr_rows,
-      total_pairs_co, total_bad_co, pct_bad_co,
-      total_pairs_fr, total_bad_fr, pct_bad_fr,
-      worst_co, worst_fr.
-    """
-    co_samples, fr_samples = read_popfile(popfile)
-    print(f"{arm}: {len(co_samples)} CO samples, {len(fr_samples)} FR samples")
 
-    full_hm = HaplotypeMatrix.from_vcf(vcf)
-    chrom_start = int(full_hm.positions.min())
-    chrom_end = int(full_hm.positions.max())
-    del full_hm
-    print(f"{arm} spans {chrom_start:,}-{chrom_end:,} "
-          f"({(chrom_end - chrom_start) / 1e6:.1f} Mb)")
-
-    # ---- per-chunk floor/crossing-distance ----
-    chunk_results = []
+def get_chunk_bounds(vcf, chunk_size, floor_cutoff_bp):
+    """(chrom_start, chrom_end, [(chunk_start, chunk_end), ...]) -- the exact
+    same chunk enumeration find_validated_blocks used to do inline, including
+    the "too small a leftover chunk" skip, but with no per-chunk r2 work."""
+    chrom_start, chrom_end = get_chrom_span(vcf)
+    chunks = []
     for chunk_start in range(chrom_start, chrom_end, chunk_size):
         chunk_end = min(chunk_start + chunk_size, chrom_end)
         if chunk_end - chunk_start < 2 * floor_cutoff_bp:
             continue  # too small a leftover chunk to reliably estimate a floor
+        chunks.append((chunk_start, chunk_end))
+    return chrom_start, chrom_end, chunks
 
-        result = process_chunk(vcf, popfile, co_samples, fr_samples, arm,
-                                chunk_start, chunk_end, floor_cutoff_bp,
-                                tolerance, n_bins)
-        if result is None:
-            continue
-        chunk_results.append(result)
-        print(f"  {result['region']}: block_co={result['block_co']}, "
-              f"block_fr={result['block_fr']}")
+
+# --------------------------------------------------------------------------
+# Stage 2 + 3: combine per-chunk results into one block size, then validate
+# against the real tiling. Takes already-computed chunk_results so this can
+# run as a single aggregation step after Stage 1's chunks have been computed
+# in parallel (e.g. as separate Snakemake jobs).
+# --------------------------------------------------------------------------
+
+def combine_and_validate(vcf, popfile, arm, chrom_start, chrom_end, chunk_results,
+                          tolerance, percentile, validate_group_size):
+    co_samples, fr_samples = read_popfile(popfile)
 
     block_co_all = np.array([c["block_co"] for c in chunk_results if c["block_co"] is not None])
     block_fr_all = np.array([c["block_fr"] for c in chunk_results if c["block_fr"] is not None])
@@ -259,7 +347,7 @@ def find_validated_blocks(vcf, popfile, arm, chunk_size, floor_cutoff_bp,
     # ---- usable range: stop at the first chunk that never reached its floor
     # in EITHER population (typically centromere-proximal, no real decay) ----
     usable_chrom_end = chrom_end
-    for c in chunk_results:
+    for c in sorted(chunk_results, key=lambda c: c["chunk_start"]):
         if c["block_co"] is None and c["block_fr"] is None:
             usable_chrom_end = c["chunk_start"]
             break
@@ -309,11 +397,47 @@ def find_validated_blocks(vcf, popfile, arm, chunk_size, floor_cutoff_bp,
 
     return dict(
         chrom_start=chrom_start, chrom_end=chrom_end, usable_chrom_end=usable_chrom_end,
-        chunk_results=chunk_results, blocks=blocks,
-        block_co_all=block_co_all, block_fr_all=block_fr_all,
+        blocks=blocks, block_co_all=block_co_all, block_fr_all=block_fr_all,
         p_co=p_co, p_fr=p_fr, final_block_size_bp=final_block_size_bp,
         detail_rows=detail_rows, co_rows=co_rows, fr_rows=fr_rows,
         total_pairs_co=total_pairs_co, total_bad_co=total_bad_co, pct_bad_co=pct_bad_co,
         total_pairs_fr=total_pairs_fr, total_bad_fr=total_bad_fr, pct_bad_fr=pct_bad_fr,
         worst_co=worst_co, worst_fr=worst_fr,
     )
+
+
+# --------------------------------------------------------------------------
+# Orchestration: single-process convenience path (Stage 1 runs sequentially
+# here). The parallel Snakemake path instead calls get_chunk_bounds,
+# process_chunk (per chunk, in separate jobs), and combine_and_validate
+# directly -- see rules chunk_bounds / process_one_chunk / validated_blocks.
+# --------------------------------------------------------------------------
+
+def find_validated_blocks(vcf, popfile, arm, chunk_size, floor_cutoff_bp,
+                          tolerance, n_bins, percentile, validate_group_size):
+    """Run the full validated-block-size analysis for one arm, sequentially.
+
+    Returns the same dict as combine_and_validate, plus chunk_results.
+    """
+    co_samples, fr_samples = read_popfile(popfile)
+    print(f"{arm}: {len(co_samples)} CO samples, {len(fr_samples)} FR samples")
+
+    chrom_start, chrom_end, chunk_bounds = get_chunk_bounds(vcf, chunk_size, floor_cutoff_bp)
+    print(f"{arm} spans {chrom_start:,}-{chrom_end:,} "
+          f"({(chrom_end - chrom_start) / 1e6:.1f} Mb)")
+
+    chunk_results = []
+    for chunk_start, chunk_end in chunk_bounds:
+        result = process_chunk(vcf, popfile, co_samples, fr_samples, arm,
+                                chunk_start, chunk_end, floor_cutoff_bp,
+                                tolerance, n_bins)
+        if result is None:
+            continue
+        chunk_results.append(result)
+        print(f"  {result['region']}: block_co={result['block_co']}, "
+              f"block_fr={result['block_fr']}")
+
+    result = combine_and_validate(vcf, popfile, arm, chrom_start, chrom_end,
+                                   chunk_results, tolerance, percentile, validate_group_size)
+    result["chunk_results"] = chunk_results
+    return result
