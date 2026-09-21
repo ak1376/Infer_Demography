@@ -1,6 +1,6 @@
 {
-  "sequence_length": 24000000,
-  "ld_sequence_length": 1e7,
+  "sequence_length": 14000000,
+  "ld_sequence_length": 700000,
   "mutation_rate": 1.45e-09,
   "recombination_rate": 1.45e-09,
   "demographic_model": "split_migration_growth_both",
@@ -9,7 +9,7 @@
     "FR": 9
   },
   "seed": 42,
-  "window_mode": "replicates",
+  "window_mode": "chunked",
   "num_windows": 100,
   "num_optimizations": 100,
   "start_strategy": "lhs",
@@ -19,7 +19,7 @@
   "real_data_analysis": {
     "arms": ["Chr2L", "Chr2R", "Chr3L", "Chr3R", "ChrX"],
     "pooling_mode": "individual",
-    "window_size_bp": 1000000,
+    "window_size_bp": 700000,
     "num_windows": 25,
     "use_genmap": true,
     "trim_region": {
@@ -30,7 +30,7 @@
       "ChrX": [1036552, 20902578]
     }
   },
-  "num_draws": 5000,
+  "num_draws": 500,
   "calibration_n_replicates": 100,
   "priors": {
     "N_ANC": [
@@ -77,7 +77,7 @@
     ],
     "N_CO1": [
       0.0001,
-      10.0
+      30.0
     ],
     "N_FR0": [
       0.001,
@@ -103,8 +103,6 @@
   "momentsld_use_scaled_units": false,
   "moments_best_fit_path": "experiments/split_migration_growth_both/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
-    "m_CO_FR": "sampled",
-    "m_FR_CO": "sampled"
   },
   "parameter_order": [
     "N_ANC",

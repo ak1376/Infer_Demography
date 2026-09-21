@@ -35,6 +35,9 @@ def main():
                     help="split_migration_growth (null) or split_migration_growth_both "
                          "(alt); 'null'/'alt' aliases ok (default %(default)s)")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--log", type=Path, default=None,
+                    help="if given, live nlopt progress (LL + params per eval) is "
+                         "written here as the optimization runs (tail -f friendly)")
     args = ap.parse_args()
 
     model_name = _ALIASES.get(args.model, args.model)
@@ -42,7 +45,12 @@ def main():
     with open(args.mv, "rb") as f:
         mv = pickle.load(f)
 
-    result = run_one_start((args.opt_index, args.n_opt, mv, model_name))
+    if args.log is not None:
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        call_args = (args.opt_index, args.n_opt, mv, model_name, args.log)
+    else:
+        call_args = (args.opt_index, args.n_opt, mv, model_name)
+    result = run_one_start(call_args)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "wb") as f:
         pickle.dump(result, f)

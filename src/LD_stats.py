@@ -230,14 +230,21 @@ def _read_pop_order_from_samples_txt(samples_txt: str | Path) -> List[str]:
 def _select_best_gpu() -> None:
     import cupy as cp  # local import so CPU-only envs still work
 
-    best_gpu = 0
+    best_gpu = None
     max_free_mem = 0
     for gpu_id in range(cp.cuda.runtime.getDeviceCount()):
-        cp.cuda.Device(gpu_id).use()
-        free_mem, _total = cp.cuda.runtime.memGetInfo()
+        try:
+            cp.cuda.Device(gpu_id).use()
+            free_mem, _total = cp.cuda.runtime.memGetInfo()
+        except Exception as exc:
+            print(f"⚠️  GPU {gpu_id} unusable ({exc}); skipping")
+            continue
         if free_mem > max_free_mem:
             max_free_mem = free_mem
             best_gpu = gpu_id
+
+    if best_gpu is None:
+        raise RuntimeError("No usable GPU found (all devices errored or reported 0 free memory)")
 
     cp.cuda.Device(best_gpu).use()
     name = cp.cuda.runtime.getDeviceProperties(best_gpu)["name"].decode()

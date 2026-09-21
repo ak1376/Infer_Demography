@@ -40,12 +40,18 @@ POPFILE       = f"{DROSO}/popfile.txt"
 # point directly at each arm's actual on-disk trimmed/polarized/diploid-recoded
 # VCF rather than deriving the path from a formula.
 TRIM_REGION = {
+    "Chr2R": (6063980, 20322335),
     "Chr3L": (447386, 18392988),
     "ChrX":  (1036552, 20902578),
 }
+_FIVE_ARM_TRIM_DIR = (
+    "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335"
+    "_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578"
+)
 TRIMMED_VCF = {
-    "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/polarized.diploidGT.vcf.gz",
-    "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/polarized.diploidGT.vcf.gz",
+    "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/polarized.diploidGT.vcf.gz",
+    "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/polarized.diploidGT.vcf.gz",
+    "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/polarized.diploidGT.vcf.gz",
 }
 # Same trimmed-data directories also hold the haploid VCF (polarized.vcf.gz,
 # ploidy=1, used by the SFS side) and unfolded.sfs.pkl -- point the SFS-side
@@ -53,12 +59,14 @@ TRIMMED_VCF = {
 # so they're consistent with the trimmed VCF the LD side already uses instead
 # of silently mixing trimmed LD data with untrimmed SFS data.
 TRIMMED_HAPLOID_VCF = {
-    "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/polarized.vcf.gz",
-    "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/polarized.vcf.gz",
+    "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/polarized.vcf.gz",
+    "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/polarized.vcf.gz",
+    "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/polarized.vcf.gz",
 }
 TRIMMED_SFS = {
-    "Chr3L": "real_data_analysis/data/drosophila_trim_Chr3L-447386-18392988/Chr3L/unfolded.sfs.pkl",
-    "ChrX":  "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578/ChrX/unfolded.sfs.pkl",
+    "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/unfolded.sfs.pkl",
+    "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/unfolded.sfs.pkl",
+    "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/unfolded.sfs.pkl",
 }
 
 def arm_vcf(arm):
@@ -78,6 +86,7 @@ def arm_sfs(arm):
 
 OUT           = "godambe_correction_LRT/real_arms"
 GODAMBE_SCR   = "godambe_correction_LRT/snakemake_scripts"
+GODAMBE_SRC   = "godambe_correction_LRT/src"
 SNAKE_SCR     = "snakemake_scripts"
 LD_CONFIG     = "godambe_correction_LRT/ld/ld_config.json"   # num_samples + use_gpu_ld
 
@@ -104,6 +113,28 @@ OVERLAP_NWIN = {
     "ChrX":  100,
 }
 
+# Wide-range r_bins for the momentsLD real-data model fit. Tried narrowing
+# these to bracket just the r* implied by each arm's SFS-fit T (~1e-6,
+# CO's own split/growth timing) -- that made things WORSE (more bound
+# railing, not less), because the wider range apparently also constrains
+# OTHER parameters (esp. N_FR0/N_FR1, FR's own separate two-epoch history,
+# which isn't necessarily at the same time depth as CO's event). Reverted:
+# max edge 1e-3 -> ~690kb at recombination_rate=1.45e-9/bp.
+MOMENTSLD_WIDE_R_BINS = (
+    "0,1e-06,1.58489e-06,2.51189e-06,3.98107e-06,6.30957e-06,1e-05,"
+    "1.58489e-05,2.51189e-05,3.98107e-05,6.30957e-05,0.0001,0.000158489,"
+    "0.000251189,0.000398107,0.000630957,0.001"
+)
+# Non-overlapping window size for the above -- must be >= the widest r_bin's
+# physical distance (~690kb) so that bin still has real SNP pairs; same for
+# every arm since it's set by the r_bins, not by any one arm's validated
+# decorrelation distance (which is far smaller than 690kb regardless).
+MOMENTSLD_WINDOW_BP_BY_ARM = {
+    "Chr3L": 700_000,
+    "ChrX":  700_000,
+    "Chr2R": 700_000,
+}
+
 # Optional pruning of step-3 windows before LD-stats (mirrors the main
 # Snakefile's prune_mode="count"): caps each window at PRUNE_KEEP SNPs,
 # random subsample when denser, copied through unchanged when already
@@ -119,9 +150,13 @@ OPT_INDICES = range(N_OPT)
 # The same fit rules serve both models, selected by the {fit} wildcard:
 #   fit_simple/  -> null  (split_migration_growth,      CO constant, p0 for J)
 #   fit_complex/ -> alt   (split_migration_growth_both, CO grows)
+#   fit_co_const/-> null  (co_const_at_anc,  CO tied to N_ANC -- identifiable)
+#   fit_co_grow/ -> alt   (co_grow_from_anc, CO grows from N_ANC -- identifiable)
 FIT_MODEL = {
-    "simple":  "split_migration_growth",         # original null (free N_CO)
-    "complex": "split_migration_growth_both",     # original alt  (free N_CO0 & N_CO1 -- unidentifiable)
+    "simple":   "split_migration_growth",         # original null (free N_CO)
+    "complex":  "split_migration_growth_both",    # original alt  (free N_CO0 & N_CO1 -- unidentifiable)
+    "co_const": "co_const_at_anc",                 # identifiable null (no free CO-specific param)
+    "co_grow":  "co_grow_from_anc",                # identifiable alt  (only N_CO1 free)
 }
 
 # Per-arm SFS (moments) identifiability check -- mirrors the LD-side Godambe
@@ -158,7 +193,7 @@ POOLED_ARMS_DASH = "-".join(POOLED_ARMS)  # "Chr2L-Chr3L" -- matches bootstrappi
 
 wildcard_constraints:
     arm         = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*",
-    fit         = r"simple|complex",
+    fit         = r"simple|complex|co_const|co_grow",
     opt         = r"\d+",
     i           = r"\d+",
     blocksize   = r"\d+",
@@ -401,6 +436,142 @@ rule compute_H_J:
             --simple-fit "{input.simple_fit}" \
             --complex-fit "{input.complex_fit}" \
             --out-json "{output.json}"
+        """
+
+
+# ===========================================================================
+# STEP 2b -- momentsLD real-data model-fit windows: NON-overlapping, wide
+# r_bins (~690kb reach, to see recent-history LD signal), one job per window.
+# Distinct from STEP 3's overlapping p0-fit windows and STEP 4's block-size
+# sweep -- this is windowing for the actual momentsLD parameter fit/model
+# comparison. Request explicitly, e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N --resources gpu=1 \
+#       godambe_correction_LRT/real_arms/Chr3L/momentsld/LD_stats/LD_stats_window_0.pkl
+# ===========================================================================
+checkpoint momentsld_windows:
+    input:
+        vcf     = lambda wc: arm_vcf(wc.arm),
+        popfile = POPFILE,
+    output:
+        windir = directory(f"{OUT}/{{arm}}/momentsld/windows"),
+    params:
+        window_bp = lambda wc: MOMENTSLD_WINDOW_BP_BY_ARM[wc.arm],
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{output.windir}"
+        # `bcftools query | head` trips SIGPIPE under pipefail; disable it here.
+        set +o pipefail
+        first=$(bcftools query -f '%POS\n' "{input.vcf}" | head -n1)
+        last=$(bcftools query -f '%POS\n' "{input.vcf}" | tail -n1)
+        set -o pipefail
+        span=$((last - first + 1))
+        n=$((span / {params.window_bp}))
+        if [ "$n" -lt 1 ]; then n=1; fi
+        python "{SNAKE_SCR}/split_vcf_windows.py" \
+            --input-vcf "{input.vcf}" --popfile "{input.popfile}" \
+            --out-dir "{output.windir}" \
+            --window-size {params.window_bp} --num-windows "$n"
+        """
+
+def gather_momentsld_pkls(wildcards):
+    ck = checkpoints.momentsld_windows.get(arm=wildcards.arm)
+    windir = ck.output.windir
+    idxs = glob_wildcards(os.path.join(windir, "window_{i}.vcf.gz")).i
+    pattern = OUT + "/{arm}/momentsld/LD_stats/LD_stats_window_{i}.pkl"
+    return expand(pattern, arm=wildcards.arm, i=idxs)
+
+rule momentsld_ld_stats:
+    input:
+        vcf_gz = f"{OUT}/{{arm}}/momentsld/windows/window_{{i}}.vcf.gz",
+        gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+    output:
+        pkl = f"{OUT}/{{arm}}/momentsld/LD_stats/LD_stats_window_{{i}}.pkl",
+    resources:
+        gpu = 1
+    params:
+        sim_dir = f"{OUT}/{{arm}}/momentsld",
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats"
+        python "{GODAMBE_SCR}/ld_stats_safe.py" \
+            --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+            --config-file "{LD_CONFIG}" --r-bins "{MOMENTSLD_WIDE_R_BINS}" \
+            --rec-map-file "{input.gmap}"
+        """
+
+# Convenience target: all per-window LD stat pkls for one arm, e.g.
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N --resources gpu=1 \
+#       godambe_correction_LRT/real_arms/Chr3L/momentsld/LD_stats/all.done
+rule momentsld_ld_stats_all:
+    input:
+        pkls = gather_momentsld_pkls,
+    output:
+        touch(f"{OUT}/{{arm}}/momentsld/LD_stats/all.done"),
+
+# aggregate the 25 non-overlapping windows -> means.varcovs.pkl + bootstrap_sets.pkl
+# (bootstrap_ld.py resamples WINDOWS with replacement -- valid here since,
+# unlike the old 1Mb/25-window scheme, these windows are genuinely non-overlapping).
+rule momentsld_aggregate:
+    input:
+        pkls = gather_momentsld_pkls,
+    output:
+        mv    = f"{OUT}/{{arm}}/momentsld/means.varcovs.pkl",
+        boots = f"{OUT}/{{arm}}/momentsld/bootstrap_sets.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/bootstrap_ld.py" \
+            --ld-stats-dir "{OUT}/{wildcards.arm}/momentsld/LD_stats" \
+            --out-dir "{OUT}/{wildcards.arm}/momentsld"
+        """
+
+# Diagonal-only covariance (standing choice for this analysis, not a one-off
+# patch -- see diagonalize_varcov.py docstring for what this trades away).
+rule momentsld_diagonal_varcov:
+    input:
+        mv = f"{OUT}/{{arm}}/momentsld/means.varcovs.pkl",
+    output:
+        mv_diag = f"{OUT}/{{arm}}/momentsld/means.varcovs.diagonly.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/diagonalize_varcov.py" --mv "{input.mv}" --out "{output.mv_diag}"
+        """
+
+# Fit null (CO constant, fit_simple/) / alt (CO grows, fit_complex/) to the
+# diagonal-only covariance -- same {fit}->FIT_MODEL mapping, same N_OPT=100
+# LHS starts EACH ITS OWN JOB, same collect_best_fit.py as the overlap-window
+# p0 fit above. (Reuses FIT_MODEL: "simple"->split_migration_growth,
+# "complex"->split_migration_growth_both -- the unidentifiable diagnostic
+# pair per fit_simple_ld.py's docstring, not co_grow_from_anc.)
+rule momentsld_fit_one_start:
+    input:
+        mv = f"{OUT}/{{arm}}/momentsld/means.varcovs.diagonly.pkl",
+    output:
+        start = f"{OUT}/{{arm}}/momentsld/fit_{{fit}}/start_{{opt}}/result.pkl",
+        log   = f"{OUT}/{{arm}}/momentsld/fit_{{fit}}/start_{{opt}}/optimization.txt",
+    params:
+        model = lambda wc: FIT_MODEL[wc.fit],
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/fit_one_start_ld.py" \
+            --mv "{input.mv}" --opt-index {wildcards.opt} --n-opt {N_OPT} \
+            --model {params.model} --out "{output.start}" --log "{output.log}"
+        """
+
+rule momentsld_collect_best_fit:
+    input:
+        starts = expand(f"{OUT}/{{{{arm}}}}/momentsld/fit_{{{{fit}}}}/start_{{opt}}/result.pkl", opt=OPT_INDICES),
+    output:
+        fit = f"{OUT}/{{arm}}/momentsld/fit_{{fit}}/best_fit.pkl",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/collect_best_fit.py" \
+            --starts {input.starts} --out "{output.fit}"
         """
 
 

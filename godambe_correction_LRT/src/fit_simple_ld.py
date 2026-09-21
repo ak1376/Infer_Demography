@@ -69,21 +69,57 @@ def resolve_model(name):
     return names, lb, ub, MODEL_FUNCS[name]
 
 
+def _r_bins_from_mv(mv):
+    """Reconstruct the r_bins EDGE array actually used to build this mv's
+    empirical data, from its own stored (lo, hi) bin-interval list, instead of
+    trusting the module-level R_BINS constant to match. R_BINS is only correct
+    for data built with the narrow (overlap/sweep) r-bins -- anything built
+    with a different r-bins choice (e.g. the wide momentsld/ windows) would
+    otherwise get silently truncated to len(R_BINS)-1 bins in
+    compute_composite_likelihood's zip(), dropping the rest of the curve with
+    no error. mv['bins'] is authoritative for what's actually in mv['means'].
+    """
+    bins = mv.get("bins")
+    if not bins:
+        return R_BINS   # legacy mv without a 'bins' key: fall back to the module default
+    edges = [bins[0][0]] + [hi for _lo, hi in bins]
+    return np.asarray(edges, dtype=float)
+
+
 def run_one_start(args):
     """One LHS start -> one optimization. (Top-level for ProcessPoolExecutor.)
 
-    args = (opt_index, n_opt, mv, model_name).
+    args = (opt_index, n_opt, mv, model_name) or
+           (opt_index, n_opt, mv, model_name, log_path). When log_path is
+           given, every nlopt objective evaluation (LL + full param vector)
+           is written to that file as it happens (line-buffered, so `tail -f`
+           shows the optimizer's progress live), instead of being suppressed.
     """
-    i, n_opt, mv, model_name = args
+    i, n_opt, mv, model_name, *rest = args
+    log_path = rest[0] if rest else None
     param_names, lb, ub, model_func = resolve_model(model_name)
     cfg = {"num_optimizations": n_opt, "seed": SEED, "opt_seed": i}
     start = 10.0 ** lhs_start_log10(lb, ub, cfg)       # LHS row i, absolute units
-    opt, ll, status = optimize_parameters(
-        start_values=start, lower_bounds=lb, upper_bounds=ub,
-        param_names=param_names, demographic_model=model_func,
-        r_bins=R_BINS, empirical_data=mv, populations=list(NUM_SAMPLES),
-        normalization=0, verbose=False,
-    )
+    r_bins = _r_bins_from_mv(mv)
+
+    def _run(verbose):
+        return optimize_parameters(
+            start_values=start, lower_bounds=lb, upper_bounds=ub,
+            param_names=param_names, demographic_model=model_func,
+            r_bins=r_bins, empirical_data=mv, populations=list(NUM_SAMPLES),
+            normalization=0, verbose=verbose,
+        )
+
+    if log_path is None:
+        opt, ll, status = _run(verbose=False)
+    else:
+        import contextlib
+        with open(log_path, "w", buffering=1) as logf:
+            with contextlib.redirect_stdout(logf):
+                print(f"# start {i} (n_opt={n_opt}, model={model_name})")
+                opt, ll, status = _run(verbose=True)
+                print(f"# DONE: LL={ll:.6f}")
+
     return {"best_params": dict(zip(param_names, opt)),
             "best_lls": float(ll), "status": int(status), "opt": i}
 

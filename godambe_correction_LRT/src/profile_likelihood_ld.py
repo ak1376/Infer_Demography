@@ -32,11 +32,26 @@ def model_for(param_names):
     raise ValueError(f"no model matches parameter set {sorted(s)}")
 
 
-def theory_for(param_dict, model_func):
+def r_bins_from_mv(mv):
+    """Reconstruct the r_bins EDGE array actually used to build this mv's
+    empirical data, from its own stored (lo, hi) bin-interval list, instead of
+    trusting cj.R_BINS to match -- see fit_simple_ld.py's _r_bins_from_mv for
+    why this matters: cj.R_BINS is only correct for the narrow overlap/sweep
+    data, and silently truncates prepare_data_for_comparison's zip() to
+    len(cj.R_BINS)-1 bins for anything built with a wider r-bins choice.
+    """
+    bins = mv.get("bins")
+    if not bins:
+        return cj.R_BINS
+    edges = [bins[0][0]] + [hi for _lo, hi in bins]
+    return np.asarray(edges, dtype=float)
+
+
+def theory_for(param_dict, model_func, r_bins=None):
     """σD²-normalized theory LD curve for a param dict (mirrors theoretical_ld_linear)."""
     graph = model_func(param_dict)
     ref = float(param_dict["N_ANC"])
-    rho_edges = 4.0 * ref * np.asarray(cj.R_BINS)
+    rho_edges = 4.0 * ref * np.asarray(r_bins if r_bins is not None else cj.R_BINS)
     ld_edges = moments.Demes.LD(graph, sampled_demes=cj.POPULATIONS, rho=rho_edges)
     rho_mids = (rho_edges[:-1] + rho_edges[1:]) / 2.0
     ld_mids = moments.Demes.LD(graph, sampled_demes=cj.POPULATIONS, rho=rho_mids)
@@ -49,7 +64,7 @@ def theory_for(param_dict, model_func):
 
 
 def ll_at(param_dict, model_func, mv):
-    return cj.ll_from_theory(theory_for(param_dict, model_func),
+    return cj.ll_from_theory(theory_for(param_dict, model_func, r_bins_from_mv(mv)),
                              mv["means"], mv["varcovs"])
 
 

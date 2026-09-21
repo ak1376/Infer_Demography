@@ -182,19 +182,30 @@ def fit_model_realdata_scaled(
     obs_folded = bool(getattr(sfs, "folded", False))
 
     # loglik in scaled space with theta profiled
+    # Wrapped defensively: near the scaled-migration prior's upper edge
+    # (M up to 2.0, m_abs = M/2 under the N_ANC=1 shape-only trick), a
+    # finite-difference gradient probe (nd.Gradient, step=1e-4) or an
+    # LHS start can land just past m_abs=1.0, which demes rejects as an
+    # invalid migration rate -- an uncaught exception here otherwise
+    # crashes the whole optimization run. Mirrors the same catch-all
+    # pattern already used by MomentsLD_inference.py's objective.
     def loglikelihood(log10_params: np.ndarray) -> float:
-        base = _base_sfs_theta1_from_scaled(
-            log10_params,
-            demo_model_abs=demo_model_abs,
-            param_names=param_names,
-            sampled_demes=sampled_demes,
-            haploid_sizes=haploid_sizes,
-            folded=obs_folded,
-        )
-        base_arr = np.asarray(base)
-        theta_hat = _theta_hat_poisson_mle(sfs, base_arr)
-        exp_arr = theta_hat * base_arr
-        return _mask_safe_poisson_ll(sfs, exp_arr, eps=eps)
+        try:
+            base = _base_sfs_theta1_from_scaled(
+                log10_params,
+                demo_model_abs=demo_model_abs,
+                param_names=param_names,
+                sampled_demes=sampled_demes,
+                haploid_sizes=haploid_sizes,
+                folded=obs_folded,
+            )
+            base_arr = np.asarray(base)
+            theta_hat = _theta_hat_poisson_mle(sfs, base_arr)
+            exp_arr = theta_hat * base_arr
+            return _mask_safe_poisson_ll(sfs, exp_arr, eps=eps)
+        except Exception as e:
+            print(f"[moments-real] invalid params at {log10_params}: {e} -- penalizing")
+            return -1e12
 
     # --- quick timing diagnostic (one eval) ---
     import time
