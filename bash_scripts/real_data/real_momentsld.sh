@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-BATCH_SIZE="${BATCH_SIZE:-10}"   # tasks per array element
+BATCH_SIZE="${BATCH_SIZE:-1}"   # opts per array element
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
