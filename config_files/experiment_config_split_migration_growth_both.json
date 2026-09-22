@@ -101,6 +101,7 @@
     ]
   },
   "momentsld_use_scaled_units": false,
+  "ld_diagonal_only_varcov": false,
   "moments_best_fit_path": "experiments/split_migration_growth_both/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
   },

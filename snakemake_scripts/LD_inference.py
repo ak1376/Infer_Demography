@@ -79,8 +79,10 @@ def _parse_args():
             "purely so load_sampled_params(required=False) fails gracefully -- "
             "--run-dir being set is NOT a reliable simulation-vs-real-data signal "
             "on its own, so this flag is required to correctly gate "
-            "diagonal_only_varcov (real data drops off-diagonal empirical varcov "
-            "terms; simulation keeps the full covariance)."
+            "diagonal_only_varcov (real data always drops off-diagonal empirical "
+            "varcov terms, regardless of the config; simulation mode instead "
+            "follows experiment_config['ld_diagonal_only_varcov'] (default false, "
+            "i.e. full covariance)."
         ),
     )
     p.add_argument(
@@ -150,7 +152,7 @@ def main():
             if a.run_dir is not None
             else None
         )
-        diagonal_only_varcov = False
+        diagonal_only_varcov = bool(cfg.get("ld_diagonal_only_varcov", False))
 
     # r-bins to use for both comparison PDF and optimisation
     if a.r_bins:
@@ -164,8 +166,9 @@ def main():
     # ------------------------------------------------------------------
     # 1) aggregate LD pickles → means/varcovs/bootstrap_sets
     #    (assumes LD_stats/*.pkl live under output_root/LD_stats)
-    #    Real data mode retains only the variances (diagonal) of the
-    #    empirical varcov matrix; simulation mode keeps the full covariance.
+    #    Real data mode always retains only the variances (diagonal) of the
+    #    empirical varcov matrix; simulation mode follows
+    #    experiment_config['ld_diagonal_only_varcov'] (default full covariance).
     # ------------------------------------------------------------------
     empirical_data = aggregate_ld_statistics(
         a.output_root,
