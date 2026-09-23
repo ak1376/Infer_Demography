@@ -40,6 +40,7 @@ POPFILE       = f"{DROSO}/popfile.txt"
 # point directly at each arm's actual on-disk trimmed/polarized/diploid-recoded
 # VCF rather than deriving the path from a formula.
 TRIM_REGION = {
+    "Chr2L": (844225, 19946732),
     "Chr2R": (6063980, 20322335),
     "Chr3L": (447386, 18392988),
     "ChrX":  (1036552, 20902578),
@@ -49,6 +50,7 @@ _FIVE_ARM_TRIM_DIR = (
     "_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578"
 )
 TRIMMED_VCF = {
+    "Chr2L": f"{_FIVE_ARM_TRIM_DIR}/Chr2L/polarized.diploidGT.vcf.gz",
     "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/polarized.diploidGT.vcf.gz",
     "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/polarized.diploidGT.vcf.gz",
     "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/polarized.diploidGT.vcf.gz",
@@ -59,11 +61,13 @@ TRIMMED_VCF = {
 # so they're consistent with the trimmed VCF the LD side already uses instead
 # of silently mixing trimmed LD data with untrimmed SFS data.
 TRIMMED_HAPLOID_VCF = {
+    "Chr2L": f"{_FIVE_ARM_TRIM_DIR}/Chr2L/polarized.vcf.gz",
     "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/polarized.vcf.gz",
     "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/polarized.vcf.gz",
     "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/polarized.vcf.gz",
 }
 TRIMMED_SFS = {
+    "Chr2L": f"{_FIVE_ARM_TRIM_DIR}/Chr2L/unfolded.sfs.pkl",
     "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/unfolded.sfs.pkl",
     "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/unfolded.sfs.pkl",
     "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/unfolded.sfs.pkl",
@@ -130,6 +134,7 @@ MOMENTSLD_WIDE_R_BINS = (
 # every arm since it's set by the r_bins, not by any one arm's validated
 # decorrelation distance (which is far smaller than 690kb regardless).
 MOMENTSLD_WINDOW_BP_BY_ARM = {
+    "Chr2L": 700_000,
     "Chr3L": 700_000,
     "ChrX":  700_000,
     "Chr2R": 700_000,
@@ -527,6 +532,71 @@ rule momentsld_aggregate:
             --out-dir "{OUT}/{wildcards.arm}/momentsld"
         """
 
+# ---------------------------------------------------------------------------
+# Pooled-arm momentsLD analysis: combine ALREADY-COMPUTED per-arm LD_stats
+# (each arm's own windows, non-overlapping within that arm; windows from
+# different arms can't overlap each other either, since they're on different
+# chromosomes entirely) into one shared pool via symlinks, then reuse the
+# generic momentsld_diagonal_varcov/momentsld_fit_one_start/
+# momentsld_collect_best_fit rules UNCHANGED, since they're already
+# parameterized generically. Tag deliberately does NOT start with "Chr" so it
+# can't collide with the real-arm `arm` wildcard_constraints regex above.
+# ---------------------------------------------------------------------------
+MOMENTSLD_POOLED_ARM_SETS = {
+    "Pooled_Chr2R_Chr3L": ["Chr2R", "Chr3L"],
+}
+
+def gather_momentsld_pkls_for_arm(arm):
+    ck = checkpoints.momentsld_windows.get(arm=arm)
+    windir = ck.output.windir
+    idxs = glob_wildcards(os.path.join(windir, "window_{i}.vcf.gz")).i
+    pattern = OUT + "/{arm}/momentsld/LD_stats/LD_stats_window_{i}.pkl"
+    return expand(pattern, arm=arm, i=idxs)
+
+def gather_momentsld_pkls_pooled(wildcards):
+    pkls = []
+    for member in MOMENTSLD_POOLED_ARM_SETS[wildcards.pooled]:
+        pkls += gather_momentsld_pkls_for_arm(member)
+    return pkls
+
+rule momentsld_pool_ld_stats:
+    input:
+        pkls = gather_momentsld_pkls_pooled,
+    output:
+        directory(f"{OUT}/{{pooled}}/momentsld/LD_stats"),
+    wildcard_constraints:
+        pooled = "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
+    run:
+        import pathlib
+        outdir = pathlib.Path(output[0])
+        outdir.mkdir(parents=True, exist_ok=True)
+        idx = 0
+        for member in MOMENTSLD_POOLED_ARM_SETS[wildcards.pooled]:
+            src_dir = pathlib.Path(f"{OUT}/{member}/momentsld/LD_stats")
+            for f in sorted(src_dir.glob("LD_stats_window_*.pkl"),
+                             key=lambda p: int(p.stem.rsplit("_", 1)[-1])):
+                dest = outdir / f"LD_stats_window_{idx}.pkl"
+                if dest.exists() or dest.is_symlink():
+                    dest.unlink()
+                dest.symlink_to(f.resolve())
+                idx += 1
+
+rule momentsld_aggregate_pooled:
+    input:
+        ld_stats_dir = f"{OUT}/{{pooled}}/momentsld/LD_stats",
+    output:
+        mv    = f"{OUT}/{{pooled}}/momentsld/means.varcovs.pkl",
+        boots = f"{OUT}/{{pooled}}/momentsld/bootstrap_sets.pkl",
+    wildcard_constraints:
+        pooled = "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
+    shell:
+        r"""
+        set -euo pipefail
+        python "{GODAMBE_SCR}/bootstrap_ld.py" \
+            --ld-stats-dir "{input.ld_stats_dir}" \
+            --out-dir "{OUT}/{wildcards.pooled}/momentsld"
+        """
+
 # Diagonal-only covariance (standing choice for this analysis, not a one-off
 # patch -- see diagonalize_varcov.py docstring for what this trades away).
 rule momentsld_diagonal_varcov:
@@ -534,6 +604,11 @@ rule momentsld_diagonal_varcov:
         mv = f"{OUT}/{{arm}}/momentsld/means.varcovs.pkl",
     output:
         mv_diag = f"{OUT}/{{arm}}/momentsld/means.varcovs.diagonly.pkl",
+    wildcard_constraints:
+        # widened locally (not in the global block) so this one rule also
+        # accepts pooled tags, without making momentsld_aggregate/_windows/
+        # etc. ambiguous for real-arm-only paths.
+        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
     shell:
         r"""
         set -euo pipefail
@@ -554,6 +629,8 @@ rule momentsld_fit_one_start:
         log   = f"{OUT}/{{arm}}/momentsld/fit_{{fit}}/start_{{opt}}/optimization.txt",
     params:
         model = lambda wc: FIT_MODEL[wc.fit],
+    wildcard_constraints:
+        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
     shell:
         r"""
         set -euo pipefail
@@ -567,6 +644,8 @@ rule momentsld_collect_best_fit:
         starts = expand(f"{OUT}/{{{{arm}}}}/momentsld/fit_{{{{fit}}}}/start_{{opt}}/result.pkl", opt=OPT_INDICES),
     output:
         fit = f"{OUT}/{{arm}}/momentsld/fit_{{fit}}/best_fit.pkl",
+    wildcard_constraints:
+        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
     shell:
         r"""
         set -euo pipefail
