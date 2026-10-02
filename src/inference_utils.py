@@ -8,6 +8,13 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 
 
+# Stand-in N_ANC for the "shape-only" SFS (the real N_ANC comes from theta
+# afterwards). The SFS shape doesn't depend on this value, but demes rejects
+# migration rates > 1, and absolute m = M / (2 * N_ANC): with a stand-in of 1,
+# scaled M was effectively capped at 2. 1e4 allows M up to 2e4.
+SHAPE_N_ANC = 1e4
+
+
 def lhs_start_log10(
     lb: np.ndarray,
     ub: np.ndarray,
@@ -51,43 +58,6 @@ def lhs_start_log10(
 
     x0 = log10_starts[run_idx % n_runs]
     return np.clip(x0, lb_log10, ub_log10)
-
-
-def jitter_start_log10(
-    lb: np.ndarray,
-    ub: np.ndarray,
-    experiment_config: Dict[str, Any],
-) -> np.ndarray:
-    """
-    Return a starting point in log10 space: geometric midpoint of bounds,
-    optionally perturbed by seeded lognormal noise.
-
-    Fixed parameters (lb == ub) are left exactly at their fixed log10 value,
-    regardless of sigma.
-
-    Parameters
-    ----------
-    lb, ub : bounds arrays (real, positive)
-    experiment_config : may contain
-        "start_jitter_sigma" - stddev of log10-space noise (default 0.0, i.e.
-            no jitter, just the geometric midpoint)
-        "opt_seed"           - seed for reproducible jitter (default None)
-    """
-    lb_log10 = np.log10(lb)
-    ub_log10 = np.log10(ub)
-
-    x0_log10 = (lb_log10 + ub_log10) / 2.0
-
-    sigma = float(experiment_config.get("start_jitter_sigma", 0.0))
-    if sigma > 0:
-        seed = experiment_config.get("opt_seed", None)
-        rng = np.random.default_rng(None if seed is None else int(seed))
-        x0_log10 = x0_log10 + rng.normal(0.0, sigma, size=x0_log10.shape)
-
-    fixed_mask = lb == ub
-    x0_log10[fixed_mask] = lb_log10[fixed_mask]
-
-    return np.clip(x0_log10, lb_log10, ub_log10)
 
 
 def build_scaled_param_dict(

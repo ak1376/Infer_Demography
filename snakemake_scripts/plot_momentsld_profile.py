@@ -67,7 +67,8 @@ def main():
         for v, ll, p, n, _ in rows:
             fh.write("\t".join([f"{v:.6g}", f"{ll:.4f}", f"{top - ll:.4f}", str(n)] + [f"{p[x]:.6g}" for x in names]) + "\n")
 
-    lo, hi = json.load(open(args.config))["priors"][args.param]
+    cfg = json.load(open(args.config))
+    lo, hi = cfg.get("priors_real_data_analysis_absolute", cfg["priors"])[args.param]   # same box MomentsLD_real_data.py searched
     x = np.array([r[0] for r in rows]); y = np.array([r[1] for r in rows])
     fig, ax = plt.subplots(figsize=(7.5, 4.8))
     ax.axvspan(lo, hi, color="grey", alpha=0.10, label="prior range")

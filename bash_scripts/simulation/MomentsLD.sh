@@ -14,7 +14,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# One LHS/jitter-seeded MomentsLD restart per (sid,opt), same array-sizing
+# One LHS-seeded MomentsLD restart per (sid,opt), same array-sizing
 # pattern as moments.sh/dadi.sh (NUM_DRAWS*NUM_OPTIMS, not just NUM_DRAWS)
 # so all num_optimizations restarts per sim actually run in parallel across
 # the array instead of serially inside one per-sim task. Requires

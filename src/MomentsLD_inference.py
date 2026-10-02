@@ -27,7 +27,6 @@ from src.inference_utils import (
     absolute_to_scaled_params,
     scaled_to_absolute_params,
     lhs_start_log10,
-    jitter_start_log10,
 )
 
 # ---------------------------------------------------------------------------
@@ -1091,16 +1090,10 @@ def run_momentsld_inference(
     lower_bounds = np.array([prior[0] for prior in priors.values()])
     upper_bounds = np.array([prior[1] for prior in priors.values()])
 
-    # Start point: LHS or jittered-midpoint, keyed by config["opt_seed"] so each
-    # restart (one Snakemake job per opt) gets a distinct, reproducible start —
-    # same mechanism as the moments/dadi SFS inference (src/inference_utils.py).
-    start_strategy = str(config.get("start_strategy", "jitter")).lower()
-    if start_strategy == "lhs":
-        start_values = 10 ** lhs_start_log10(lower_bounds, upper_bounds, config)
-    elif start_strategy == "jitter":
-        start_values = 10 ** jitter_start_log10(lower_bounds, upper_bounds, config)
-    else:
-        raise ValueError(f"Unknown start_strategy: {start_strategy!r}")
+    # Start point: LHS row keyed by config["opt_seed"] so each restart (one
+    # Snakemake job per opt) gets a distinct, reproducible start — same
+    # mechanism as the moments/dadi SFS inference (src/inference_utils.py).
+    start_values = 10 ** lhs_start_log10(lower_bounds, upper_bounds, config)
 
     # Get populations to sample
     populations = list(config.get("num_samples", {}).keys())

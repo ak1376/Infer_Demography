@@ -103,12 +103,6 @@ def _parse_args():
         default=None,
         help="Start-point seed (experiment_config['opt_seed']), set by Snakemake's {opt} wildcard.",
     )
-    p.add_argument(
-        "--start-strategy",
-        choices=["jitter", "lhs"],
-        default=None,
-        help="Overrides experiment_config['start_strategy'] ('jitter' or 'lhs').",
-    )
     p.add_argument("-v", "--verbose", action="count", default=0)
     return p.parse_args()
 
@@ -124,8 +118,6 @@ def main():
     cfg = load_config(a.config_file)
     if a.opt_seed is not None:
         cfg["opt_seed"] = a.opt_seed
-    if a.start_strategy is not None:
-        cfg["start_strategy"] = a.start_strategy
 
     results_dir = a.results_dir if a.results_dir is not None else a.output_root
     results_dir.mkdir(parents=True, exist_ok=True)

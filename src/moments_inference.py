@@ -11,7 +11,7 @@ Moments SFS inference for demes-based models with NLopt.
 
 What this version does (per your requests):
 - Start point is the incoming start_vec as-is (computed once by the shared
-  caller, sfs_inference_runner.py, via experiment_config["start_strategy"], so
+  caller, sfs_inference_runner.py, as a Latin Hypercube draw, so
   dadi and moments always optimize from the identical starting point).
 - Computes mask-safe Poisson composite log-likelihood:
     LL = sum( sfs * log(model + eps) - model )
@@ -178,7 +178,7 @@ def fit_model(
     Returns (fitted_real_params, ll_hat).
 
     start_vec is used as-is (computed by the caller, sfs_inference_runner.py,
-    via experiment_config["start_strategy"]) so dadi and moments always start
+    as a Latin Hypercube draw) so dadi and moments always start
     from the identical point.
 
     Likelihood plots:

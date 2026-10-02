@@ -7,13 +7,10 @@ Shared inference “glue” for dadi + moments.
 Key behaviors:
 - fixed parameters come from config["fixed_parameters"] and are filled from ground_truth
 - start vector uses fixed values for fixed params
-- config["start_strategy"] selects how the FREE params' start point is chosen,
+- the FREE params' start point is a Latin Hypercube draw across the prior box
+  (inference_utils.lhs_start_log10, row opt_seed % num_optimizations),
   computed ONCE here and passed identically to both backends (neither dadi nor
-  moments recomputes its own start point internally):
-    * "jitter" (default) - geometric midpoint of bounds, optionally perturbed
-      by seeded lognormal noise (see inference_utils.jitter_start_log10)
-    * "lhs" - Latin Hypercube start spread across the prior box (see
-      inference_utils.lhs_start_log10)
+  moments recomputes its own start point internally)
 - fixed params are NOT perturbed
 - FIXED params are ALSO CONSTRAINED during optimization by setting their bounds to [v, v]
   in the config passed to the backend (moments/dadi), so they truly cannot move.
@@ -41,7 +38,7 @@ import matplotlib.pyplot as plt  # noqa: F401
 
 import dadi_inference
 import moments_inference
-from inference_utils import lhs_start_log10, jitter_start_log10
+from inference_utils import lhs_start_log10
 
 # =============================================================================
 # Parameter ordering / validation helpers
@@ -167,7 +164,6 @@ def run_cli(
     verbose: bool = False,
     optimizer_algorithm: Optional[str] = None,
     opt_seed: Optional[int] = None,
-    start_strategy: Optional[str] = None,
     num_optimizations: Optional[int] = None,
 ) -> None:
     # Load SFS
@@ -180,14 +176,11 @@ def run_cli(
 
     # CLI overrides (used e.g. to compare optimizer algorithms against an
     # identical start point: fit_model computes its start before picking the
-    # nlopt algorithm, so pinning opt_seed here fixes any start_jitter_sigma
-    # jitter across runs).
+    # nlopt algorithm, so pinning opt_seed here fixes the LHS start).
     if optimizer_algorithm is not None:
         config["optimizer_algorithm"] = optimizer_algorithm
     if opt_seed is not None:
         config["opt_seed"] = opt_seed
-    if start_strategy is not None:
-        config["start_strategy"] = start_strategy
     if num_optimizations is not None:
         config["num_optimizations"] = num_optimizations
 
@@ -240,22 +233,14 @@ def run_cli(
     # ------------------------------------------------------------------
     # Step 3: start vector (fixed params pinned via [v, v] bounds above)
     # ------------------------------------------------------------------
-    start_strategy = str(config.get("start_strategy", "jitter")).lower()
-
     print(f"Model function: {module_name}:{func_name}  signature={sig}")
     print(f"Parameter order: {param_order}")
     print(f"Fixed params: {fixed_params}")
-    print(f"Start strategy: {start_strategy}")
 
     lb_arr = np.array([float(priors_fit[p][0]) for p in param_order], dtype=float)
     ub_arr = np.array([float(priors_fit[p][1]) for p in param_order], dtype=float)
 
-    if start_strategy == "lhs":
-        start_perturbed = 10 ** lhs_start_log10(lb_arr, ub_arr, config_fit)
-    elif start_strategy == "jitter":
-        start_perturbed = 10 ** jitter_start_log10(lb_arr, ub_arr, config_fit)
-    else:
-        raise ValueError(f"Unknown start_strategy: {start_strategy!r}")
+    start_perturbed = 10 ** lhs_start_log10(lb_arr, ub_arr, config_fit)
 
     print(f"Starting values for optimization (ordered): {start_perturbed}")
 
@@ -363,7 +348,6 @@ def run_cli(
             verbose=verbose,
             optimizer_algorithm=optimizer_algorithm,
             opt_seed=opt_seed,
-            start_strategy=start_strategy,
             num_optimizations=num_optimizations,
         )
         run_cli(
@@ -378,7 +362,6 @@ def run_cli(
             verbose=verbose,
             optimizer_algorithm=optimizer_algorithm,
             opt_seed=opt_seed,
-            start_strategy=start_strategy,
             num_optimizations=num_optimizations,
         )
         return

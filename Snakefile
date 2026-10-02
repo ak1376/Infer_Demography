@@ -1101,7 +1101,7 @@ rule aggregate_ld_stats:
         subprocess.run(cmd, check=True, env=env)
 
 ##############################################################################
-# RULE infer_momentsld – one LHS/jitter-seeded MomentsLD restart            #
+# RULE infer_momentsld – one LHS-seeded MomentsLD restart                   #
 # Mirrors infer_moments/infer_dadi: one Snakemake job per {opt}, each a     #
 # single nlopt run from a distinct start point keyed by opt_seed.           #
 ##############################################################################
@@ -1136,7 +1136,7 @@ rule infer_momentsld:
         """
 
 ##############################################################################
-# RULE aggregate_opts_momentsld – pick top-K across LHS/jitter restarts     #
+# RULE aggregate_opts_momentsld – pick top-K across LHS restarts            #
 # Mirrors aggregate_opts_moments/aggregate_opts_dadi exactly (same TOP_K,   #
 # same best_params/best_ll/opt_index list schema).                         #
 ##############################################################################
@@ -1223,7 +1223,7 @@ rule aggregate_ld_stats_pruned:
         subprocess.run(cmd, check=True, env=env)
 
 ##############################################################################
-# RULE infer_momentsld_pruned – one LHS/jitter-seeded MomentsLD restart,     #
+# RULE infer_momentsld_pruned – one LHS-seeded MomentsLD restart,            #
 # pruned stats. Mirrors infer_momentsld exactly, keyed additionally by       #
 # {frac_tag}.                                                                #
 ##############################################################################
@@ -1258,7 +1258,7 @@ rule infer_momentsld_pruned:
         """
 
 ##############################################################################
-# RULE aggregate_opts_momentsld_pruned – pick top-K across LHS/jitter        #
+# RULE aggregate_opts_momentsld_pruned – pick top-K across LHS               #
 # restarts, pruned stats. Mirrors aggregate_opts_momentsld exactly, keyed    #
 # additionally by {frac_tag}. Output path is unchanged from the old         #
 # optimize_momentsld_mixed target, so MomentsLD.sh's TARGET doesn't need to  #

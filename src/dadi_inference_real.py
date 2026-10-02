@@ -29,7 +29,7 @@ Return:
     (best_params_abs: Dict[str,float], ll_hat: float, theta_hat: float, N_ANC_implied: float)
 
 Notes:
-- We compute a BASE dadi SFS with theta=1 by constructing a demography with N_ANC=1
+- We compute a BASE dadi SFS with theta=1 by constructing a demography with N_ANC=SHAPE_N_ANC
   (shape-only), then profile theta using theta_hat = sum(obs)/sum(base) (mask-safe).
 - Likelihood is Poisson composite: sum(obs*log(exp+eps) - exp) over unmasked entries.
 """
@@ -47,6 +47,7 @@ import numdifftools as nd
 from src.inference_utils import (
     build_scaled_param_dict,
     scaled_to_absolute_params,
+    SHAPE_N_ANC,
     lhs_start_log10,
     profile_1d,
     save_profiles,
@@ -120,14 +121,14 @@ def _base_sfs_theta1_from_scaled(
     Compute base SFS with theta=1 using a "shape-only" demography.
 
     Trick:
-      convert scaled -> absolute with N_ANC=1.0 (shape-only),
+      convert scaled -> absolute with N_ANC=SHAPE_N_ANC (shape-only),
       then compute dadi SFS with theta=1.0 (i.e., DO NOT multiply by theta).
     """
     vec_real = 10**log10_params
     p_scaled = build_scaled_param_dict(param_names, vec_real)
 
-    # shape-only absolute params with N_ANC=1
-    p_abs_shape = scaled_to_absolute_params(p_scaled, N_anc_abs=1.0, time_scale="2N")
+    # shape-only absolute params
+    p_abs_shape = scaled_to_absolute_params(p_scaled, N_anc_abs=SHAPE_N_ANC, time_scale="2N")
     graph = demo_model_abs(p_abs_shape)
 
     fs = dadi.Spectrum.from_demes(
@@ -221,9 +222,9 @@ def fit_model_realdata_scaled(
         # params_vec is in REAL (scaled) space already here for base; inside wrapper we are called by extrap func
         p_scaled = build_scaled_param_dict(param_names, np.asarray(params_vec, float))
 
-        # shape-only absolute params with N_ANC=1
+        # shape-only absolute params
         p_abs_shape = scaled_to_absolute_params(
-            p_scaled, N_anc_abs=1.0, time_scale="2N"
+            p_scaled, N_anc_abs=SHAPE_N_ANC, time_scale="2N"
         )
         graph = demo_model_abs(p_abs_shape)
 

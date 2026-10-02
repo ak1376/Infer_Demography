@@ -45,6 +45,7 @@ import numdifftools as nd
 from src.inference_utils import (
     build_scaled_param_dict,
     scaled_to_absolute_params,
+    SHAPE_N_ANC,
     lhs_start_log10,
     profile_1d,
     save_profiles,
@@ -95,14 +96,14 @@ def _base_sfs_theta1_from_scaled(
     Compute base SFS with theta=1 using a "shape-only" demography.
 
     Trick:
-      convert scaled -> absolute with N_ANC=1.0 (so it’s pure shape),
+      convert scaled -> absolute with N_ANC=SHAPE_N_ANC (pure shape),
       then compute SFS with theta=1.0.
     """
     vec_real = 10**log10_params
     p_scaled = build_scaled_param_dict(param_names, vec_real)
 
-    # shape-only absolute params with N_ANC=1
-    p_abs_shape = scaled_to_absolute_params(p_scaled, N_anc_abs=1.0, time_scale="2N")
+    # shape-only absolute params
+    p_abs_shape = scaled_to_absolute_params(p_scaled, N_anc_abs=SHAPE_N_ANC, time_scale="2N")
 
     graph = demo_model_abs(p_abs_shape)
 
@@ -182,13 +183,10 @@ def fit_model_realdata_scaled(
     obs_folded = bool(getattr(sfs, "folded", False))
 
     # loglik in scaled space with theta profiled
-    # Wrapped defensively: near the scaled-migration prior's upper edge
-    # (M up to 2.0, m_abs = M/2 under the N_ANC=1 shape-only trick), a
-    # finite-difference gradient probe (nd.Gradient, step=1e-4) or an
-    # LHS start can land just past m_abs=1.0, which demes rejects as an
-    # invalid migration rate -- an uncaught exception here otherwise
-    # crashes the whole optimization run. Mirrors the same catch-all
-    # pattern already used by MomentsLD_inference.py's objective.
+    # Wrapped defensively: any demes/moments failure for a candidate point
+    # (e.g. an invalid parameter combination) otherwise crashes the whole
+    # optimization run. Mirrors the same catch-all pattern already used by
+    # MomentsLD_inference.py's objective.
     def loglikelihood(log10_params: np.ndarray) -> float:
         try:
             base = _base_sfs_theta1_from_scaled(

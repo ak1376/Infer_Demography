@@ -12,7 +12,7 @@
 #SBATCH --mail-user=akapoor@uoregon.edu
 #SBATCH --verbose
 
-# Stage D2: one LHS/jitter-seeded MomentsLD restart per opt -- or, in
+# Stage D2: one LHS-seeded MomentsLD restart per opt -- or, in
 # pooling_mode="individual", per (arm,opt) -- same array-per-restart pattern
 # as MomentsLD.sh. Requires real_momentsld_prep.sh (means.varcovs.pkl, per-
 # arm in individual mode) and real_aggregate_sfs.sh (moments best_fit, used
