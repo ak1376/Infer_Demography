@@ -1819,6 +1819,22 @@ rule compute_unfolded_sfs:
           --output-meta "{output.meta}"
         """
 
+# Each population's own spectrum vs. the neutral 1/i expectation, plus the
+# joint SFS heatmap (log scale).
+rule plot_unfolded_sfs:
+    input:
+        sfs  = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
+        meta = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json",
+    output:
+        png = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.png",
+    threads: 1
+    shell:
+        r"""
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/plot_unfolded_sfs.py \
+          --sfs "{input.sfs}" --meta "{input.meta}" --out "{output.png}"
+        """
+
 ##############################################################################
 # RULE combine_autosomal_sfs
 # Sum the per-chromosome unfolded SFSs for the four autosomes into one
