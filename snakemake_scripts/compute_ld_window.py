@@ -48,6 +48,11 @@ def parse_args():
         type=Path,
         help="recombination map to use (default: <sim-dir>/windows/flat_map.txt)",
     )
+    p.add_argument(
+        "--haplotypes",
+        action="store_true",
+        help="VCF is phased (a|b): compute from haplotypes (use_genotypes=False)",
+    )
     return p.parse_args()
 
 
@@ -88,6 +93,7 @@ def main():
         rec_map_file=rec_map_t,
         r_bins=r_bins,
         config=config,
+        use_genotypes=not args.haplotypes,
     )
 
     with out_pkl.open("wb") as fh:

@@ -36,13 +36,13 @@ SNAKEFILE="$ROOT/Snakefile"
 load_real_data_config "$CFG"
 
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
-    TARGETS=("experiments/${MODEL}/real_data_analysis${TRIM_SUFFIX}/inferences/${REAL_LD_ENGINE}/best_fit.pkl")
+    TARGETS=("${REAL_INF_ROOT}/${REAL_LD_ENGINE}/best_fit.pkl")
     ALLOWED_RULES=(aggregate_opts_momentsld_real)
 else
     TARGETS=()
     for arm in "${REAL_ARMS[@]}"; do
         INF_ROOT_ARM="$(real_data_chrom_path "$REAL_INF_ROOT_CHROM_TMPL" "$arm")"
-        TARGETS+=("${INF_ROOT_ARM}/MomentsLD/best_fit.pkl")
+        TARGETS+=("${INF_ROOT_ARM}/${REAL_LD_ENGINE_ARM}/best_fit.pkl")
     done
     ALLOWED_RULES=(aggregate_opts_momentsld_real_by_arm)
 fi

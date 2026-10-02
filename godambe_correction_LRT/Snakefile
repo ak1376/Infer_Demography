@@ -23,6 +23,7 @@
 # ACTIVE_ARMS -- the moments/LD-Godambe sweep (steps 3-5) still works, just
 # request its target explicitly (see rule sweep_plot).
 
+import json
 import os
 from pathlib import Path
 
@@ -43,17 +44,16 @@ TRIM_REGION = {
     "Chr2L": (844225, 19946732),
     "Chr2R": (6063980, 20322335),
     "Chr3L": (447386, 18392988),
-    "ChrX":  (1036552, 20902578),
+    "Chr3R": (7940899, 27237549),
 }
-_FIVE_ARM_TRIM_DIR = (
-    "real_data_analysis/data/drosophila_trim_Chr2L-844225-19946732_Chr2R-6063980-20322335"
-    "_Chr3L-447386-18392988_Chr3R-7940899-27237549_ChrX-1036552-20902578"
-)
+# Trimmed data folder written by the main Snakefile (src/real_paths.py);
+# its settings.json records the exact trim coordinates.
+_FIVE_ARM_TRIM_DIR = "real_data_analysis/data/drosophila_trimmed"
 TRIMMED_VCF = {
     "Chr2L": f"{_FIVE_ARM_TRIM_DIR}/Chr2L/polarized.diploidGT.vcf.gz",
     "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/polarized.diploidGT.vcf.gz",
     "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/polarized.diploidGT.vcf.gz",
-    "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/polarized.diploidGT.vcf.gz",
+    "Chr3R": f"{_FIVE_ARM_TRIM_DIR}/Chr3R/polarized.diploidGT.vcf.gz",
 }
 # Same trimmed-data directories also hold the haploid VCF (polarized.vcf.gz,
 # ploidy=1, used by the SFS side) and unfolded.sfs.pkl -- point the SFS-side
@@ -64,13 +64,13 @@ TRIMMED_HAPLOID_VCF = {
     "Chr2L": f"{_FIVE_ARM_TRIM_DIR}/Chr2L/polarized.vcf.gz",
     "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/polarized.vcf.gz",
     "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/polarized.vcf.gz",
-    "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/polarized.vcf.gz",
+    "Chr3R": f"{_FIVE_ARM_TRIM_DIR}/Chr3R/polarized.vcf.gz",
 }
 TRIMMED_SFS = {
     "Chr2L": f"{_FIVE_ARM_TRIM_DIR}/Chr2L/unfolded.sfs.pkl",
     "Chr2R": f"{_FIVE_ARM_TRIM_DIR}/Chr2R/unfolded.sfs.pkl",
     "Chr3L": f"{_FIVE_ARM_TRIM_DIR}/Chr3L/unfolded.sfs.pkl",
-    "ChrX":  f"{_FIVE_ARM_TRIM_DIR}/ChrX/unfolded.sfs.pkl",
+    "Chr3R": f"{_FIVE_ARM_TRIM_DIR}/Chr3R/unfolded.sfs.pkl",
 }
 
 def arm_vcf(arm):
@@ -204,6 +204,7 @@ wildcard_constraints:
     blocksize   = r"\d+",
     chunk_index = r"\d+",
     vbchunk     = r"\d+",
+    buffer_bp   = r"\d+",
 
 
 def blocksizes_for(arm):
@@ -581,6 +582,151 @@ rule momentsld_pool_ld_stats:
                 dest.symlink_to(f.resolve())
                 idx += 1
 
+# ---------------------------------------------------------------------------
+# Additive: user-specified multi-arm momentsLD pool that EXCLUDES whole
+# windows within `buffer_bp` of a cosmopolitan/endemic inversion breakpoint
+# (godambe_correction_LRT/src/inversion_breakpoints.py) before bootstrap/
+# aggregation. No individuals/samples are ever excluded -- only whole windows.
+#
+# Windowing/LD-stats reuse the EXISTING tile_nonoverlap/nonoverlap_ld_stats
+# rules (STEP 4 below) at a given blocksize, rather than momentsld_windows'
+# 700kb windows -- momentsld_windows uses MOMENTSLD_WIDE_R_BINS, whose widest
+# bin needs windows >=~690kb to have real SNP pairs, so it can't be shrunk to
+# 100kb. tile_nonoverlap's R_BINS (trimmed range) has no such floor, and
+# 100_000 is already one of BLOCKSIZES' own sweep values.
+#
+# Never touches real_arms/{arm}/momentsld/ or any other existing output --
+# everything lands under real_arms/{tag}/momentsld/, a new sibling directory,
+# reusing momentsld_aggregate_pooled/momentsld_diagonal_varcov/
+# momentsld_fit_one_start/momentsld_collect_best_fit UNCHANGED (see
+# POOLED_TAG_RE below, which widens those rules' wildcard pattern).
+#
+# Add an entry here for any arm/blocksize/buffer combination you want to run.
+# Tag must not start with "Chr" (would collide with the real-arm wildcard
+# regex) and must not collide with an existing MOMENTSLD_POOLED_ARM_SETS tag.
+# ---------------------------------------------------------------------------
+EXCL_BREAKPOINTS_CONFIG = {
+    "NoBreakpoints_Chr2L_Chr2R_Chr3L_Chr3R": {
+        "arms": ["Chr2L", "Chr2R", "Chr3L", "Chr3R"],
+        "blocksize": 100_000,
+        "buffer_bp": 3_000_000,
+    },
+}
+
+# r_bins for this additive path's LD-stats computation, deliberately separate
+# from the shared R_BINS (STEP 4's sweep, which must stay valid down to its
+# smallest 20kb block) -- our 100kb blocks have headroom for wider bins.
+# Max edge 6e-5 -> ~41kb physical distance at the genome-wide-average
+# recombination_rate=1.45e-9/bp (see MOMENTSLD_WIDE_R_BINS comment above for
+# the same back-of-envelope approach), comfortably under the 100kb window.
+# Written to its own LD_stats_ext/ subdir (see ld_stats_safe.py --out-subdir)
+# so it never overwrites/invalidates the shared LD_stats/ the STEP 4 sweep
+# uses for the same (arm, blocksize).
+EXCL_BREAKPOINTS_R_BINS = "0,1e-6,2e-6,5e-6,1e-5,2e-5,4e-5,6e-5"
+
+# Union of every pooled-tag namespace, so momentsld_aggregate_pooled/
+# momentsld_diagonal_varcov/momentsld_fit_one_start/momentsld_collect_best_fit
+# stay generic across both pooling schemes without rule-body changes.
+POOLED_TAG_RE = "|".join(list(MOMENTSLD_POOLED_ARM_SETS.keys()) + list(EXCL_BREAKPOINTS_CONFIG.keys()))
+
+
+# gather every non-overlapping-tile window VCF for one (arm, blocksize) --
+# mirrors gather_ld_pkls (STEP 4) but returns the window VCFs themselves,
+# so blocks_excl_breakpoints can inspect each window's actual span.
+def gather_window_vcfs(wildcards):
+    ck = checkpoints.tile_nonoverlap.get(arm=wildcards.arm, blocksize=wildcards.blocksize)
+    windir = ck.output.windir
+    idxs = glob_wildcards(os.path.join(windir, "window_{i}.vcf.gz")).i
+    pattern = OUT + "/{arm}/sweep/bs{blocksize}/windows/window_{i}.vcf.gz"
+    return expand(pattern, arm=wildcards.arm, blocksize=wildcards.blocksize, i=idxs)
+
+
+# CHECKPOINT: which window indices survive the breakpoint buffer is only
+# known after inspecting each window's actual VCF span.
+checkpoint blocks_excl_breakpoints:
+    input:
+        vcfs = gather_window_vcfs,
+    output:
+        json = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}/kept_windows_excl{{buffer_bp}}bp.json",
+    params:
+        script = f"{GODAMBE_SCR}/filter_windows_near_breakpoints.py",
+    shell:
+        r"""
+        set -euo pipefail
+        python "{params.script}" \
+            --arm {wildcards.arm} --buffer-bp {wildcards.buffer_bp} \
+            --window-vcfs {input.vcfs} \
+            --out-json "{output.json}"
+        """
+
+
+# LD stats at EXCL_BREAKPOINTS_R_BINS (wider than the shared STEP-4 R_BINS),
+# for the SAME windows tile_nonoverlap already produced -- written to
+# LD_stats_ext/ (via ld_stats_safe.py --out-subdir) so it's a sibling of, not
+# a replacement for, sweep/bs{blocksize}/LD_stats/.
+rule nonoverlap_ld_stats_excl_breakpoints:
+    input:
+        vcf_gz = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}/windows/window_{{i}}.vcf.gz",
+        gmap   = f"{OUT}/{{arm}}/genetic_map.txt",
+    output:
+        pkl = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}/LD_stats_ext/LD_stats_window_{{i}}.pkl",
+    resources:
+        gpu = 1
+    params:
+        sim_dir = f"{OUT}/{{arm}}/sweep/bs{{blocksize}}",
+        r_bins  = EXCL_BREAKPOINTS_R_BINS,
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "{params.sim_dir}/LD_stats_ext"
+        python "{GODAMBE_SCR}/ld_stats_safe.py" \
+            --sim-dir "{params.sim_dir}" --window-index {wildcards.i} \
+            --config-file "{LD_CONFIG}" --r-bins "{params.r_bins}" \
+            --rec-map-file "{input.gmap}" --out-subdir LD_stats_ext
+        """
+
+
+def gather_ld_pkls_excl_breakpoints_for_arm(arm, blocksize, buffer_bp):
+    ck = checkpoints.blocks_excl_breakpoints.get(arm=arm, blocksize=blocksize, buffer_bp=buffer_bp)
+    with open(ck.output.json) as f:
+        kept = json.load(f)["kept"]
+    pattern = OUT + "/{arm}/sweep/bs{blocksize}/LD_stats_ext/LD_stats_window_{i}.pkl"
+    return expand(pattern, arm=arm, blocksize=blocksize, i=kept)
+
+
+def gather_ld_pkls_excl_breakpoints_pooled(wildcards):
+    cfg = EXCL_BREAKPOINTS_CONFIG[wildcards.pooled]
+    pkls = []
+    for member in cfg["arms"]:
+        pkls += gather_ld_pkls_excl_breakpoints_for_arm(member, cfg["blocksize"], cfg["buffer_bp"])
+    return pkls
+
+
+# Pool the SURVIVING (breakpoint-filtered) windows' already-computed LD stats
+# across every arm in EXCL_BREAKPOINTS_CONFIG[tag]["arms"] into one shared
+# directory via symlinks -- exactly momentsld_pool_ld_stats's approach, just
+# sourced from sweep/bs{blocksize}/LD_stats (STEP 4) instead of
+# momentsld/LD_stats, and pre-filtered. Request e.g.:
+#   snakemake -s godambe_correction_LRT/Snakefile --cores N --resources gpu=1 \
+#       godambe_correction_LRT/real_arms/NoBreakpoints_Chr2L_Chr2R_Chr3L_Chr3R/momentsld/fit_simple/best_fit.pkl
+rule pool_ld_stats_excl_breakpoints:
+    input:
+        pkls = gather_ld_pkls_excl_breakpoints_pooled,
+    output:
+        directory(f"{OUT}/{{pooled}}/momentsld/LD_stats"),
+    wildcard_constraints:
+        pooled = "|".join(EXCL_BREAKPOINTS_CONFIG.keys()),
+    run:
+        import pathlib
+        outdir = pathlib.Path(output[0])
+        outdir.mkdir(parents=True, exist_ok=True)
+        for idx, f in enumerate(input.pkls):
+            dest = outdir / f"LD_stats_window_{idx}.pkl"
+            if dest.exists() or dest.is_symlink():
+                dest.unlink()
+            dest.symlink_to(pathlib.Path(f).resolve())
+
+
 rule momentsld_aggregate_pooled:
     input:
         ld_stats_dir = f"{OUT}/{{pooled}}/momentsld/LD_stats",
@@ -588,7 +734,7 @@ rule momentsld_aggregate_pooled:
         mv    = f"{OUT}/{{pooled}}/momentsld/means.varcovs.pkl",
         boots = f"{OUT}/{{pooled}}/momentsld/bootstrap_sets.pkl",
     wildcard_constraints:
-        pooled = "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
+        pooled = POOLED_TAG_RE,
     shell:
         r"""
         set -euo pipefail
@@ -608,7 +754,7 @@ rule momentsld_diagonal_varcov:
         # widened locally (not in the global block) so this one rule also
         # accepts pooled tags, without making momentsld_aggregate/_windows/
         # etc. ambiguous for real-arm-only paths.
-        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
+        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + POOLED_TAG_RE,
     shell:
         r"""
         set -euo pipefail
@@ -630,7 +776,7 @@ rule momentsld_fit_one_start:
     params:
         model = lambda wc: FIT_MODEL[wc.fit],
     wildcard_constraints:
-        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
+        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + POOLED_TAG_RE,
     shell:
         r"""
         set -euo pipefail
@@ -645,7 +791,7 @@ rule momentsld_collect_best_fit:
     output:
         fit = f"{OUT}/{{arm}}/momentsld/fit_{{fit}}/best_fit.pkl",
     wildcard_constraints:
-        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + "|".join(MOMENTSLD_POOLED_ARM_SETS.keys()),
+        arm = r"Chr[0-9A-Za-z]+(_Chr[0-9A-Za-z]+)*|" + POOLED_TAG_RE,
     shell:
         r"""
         set -euo pipefail

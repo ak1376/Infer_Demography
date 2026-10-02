@@ -43,13 +43,18 @@ def main():
     ap.add_argument("--config-file", required=True, type=Path)
     ap.add_argument("--r-bins", required=True)
     ap.add_argument("--rec-map-file", default=None, type=Path)
+    ap.add_argument("--out-subdir", default="LD_stats",
+                     help="Subdir of --sim-dir to write LD_stats_window_{i}.pkl into "
+                          "(default LD_stats). Lets a different r-bins choice for the "
+                          "same windows land in a separate directory instead of "
+                          "overwriting the default one.")
     args = ap.parse_args()
 
     sim, i = args.sim_dir, args.window_index
     vcf = sim / "windows" / f"window_{i}.vcf.gz"
     samples = sim / "windows" / "samples.txt"
     rec_map = args.rec_map_file if args.rec_map_file is not None else sim / "windows" / "flat_map.txt"
-    out_dir = sim / "LD_stats"
+    out_dir = sim / args.out_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"LD_stats_window_{i}.pkl"
 

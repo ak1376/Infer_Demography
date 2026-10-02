@@ -71,12 +71,16 @@ def main() -> None:
     ap.add_argument("--runs-dir", required=True, type=Path,
                      help="real_data_analysis/runs directory (contains run_0, run_1, ...).")
     ap.add_argument("--out-dir", required=True, type=Path)
+    ap.add_argument("--ld-engine-subdir", default="MomentsLD",
+                     help="Subdir name under run_*/inferences/ for the MomentsLD engine "
+                          "(matches Snakefile's REAL_LD_ENGINE, e.g. "
+                          "'MomentsLD_Chr2L_Chr3L_genmap'). Default 'MomentsLD' for backward compat.")
     args = ap.parse_args()
 
     cfg = json.loads(args.config.read_text())
     param_order = list(cfg["priors"].keys())
 
-    ENGINES = [("dadi", "dadi"), ("moments", "moments"), ("momentsLD", "MomentsLD")]
+    ENGINES = [("dadi", "dadi"), ("moments", "moments"), ("momentsLD", args.ld_engine_subdir)]
     runs_by_engine = {label: load_engine_runs(args.runs_dir, subdir) for label, subdir in ENGINES}
     for label, rows in runs_by_engine.items():
         print(f"{label}: {len(rows)} restarts loaded from {args.runs_dir}")

@@ -274,9 +274,14 @@ def compute_ld_window(
     rec_map_file: Path,
     r_bins: np.ndarray,
     config: Dict[str, Any],
+    use_genotypes: bool = True,
 ) -> Dict[str, Any]:
     """
     Compute LD stats for one window.
+
+    use_genotypes=True treats samples as unphased diploids; False reads each
+    phased (a|b) diploid as two haplotypes (real pseudo-diploids, whose phase
+    is known exactly).
 
     Uses pg_gpu (GPU) when config["use_gpu_ld"] is true, otherwise falls back
     to moments.LD.Parsing (CPU).
@@ -304,7 +309,7 @@ def compute_ld_window(
         pops=pops_cpu,
         r_bins=r_bins,
         report=False,
-        use_genotypes=True,
+        use_genotypes=use_genotypes,
     )
     stats = compute_fn(**kwargs)
     dt = time.perf_counter() - t0

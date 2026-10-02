@@ -34,28 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "snakemake_scripts"
 from build_genetic_map import load_sheet_grid, find_block  # noqa: E402
 
 from trim_chromosome_extents import KNOWN_EXTENTS  # noqa: E402
-
-# name -> (chrom, distal_bp, proximal_bp), R5/dm3 coordinates.
-INVERSIONS = {
-    "In(2L)t": ("Chr2L", 2225744, 13154180),
-    "In(2R)NS": ("Chr2R", 16163839, 11278659),
-    "In(3R)K": ("Chr3R", 21966092, 7576289),
-    "In(3R)Mo": ("Chr3R", 24857019, 17232639),
-    "In(3R)P": ("Chr3R", 20569732, 12257931),
-    "In(3L)P": ("Chr3L", 3173046, 16301941),
-    "In(1)A": ("ChrX", 13519769, 19473361),
-    "In(1)Be": ("ChrX", 17722945, 19487744),
-}
-
-# Full arm length, R5/dm3 (from this project's VCF/FASTA headers -- see
-# drosophila_data/data/*.vcf.gz ##contig lines).
-CHROM_LENGTH = {
-    "Chr2L": 23011544,
-    "Chr2R": 21146708,
-    "Chr3L": 24543557,
-    "Chr3R": 27905053,
-    "ChrX": 22422827,
-}
+from inversion_breakpoints import INVERSIONS, CHROM_LENGTH  # noqa: E402
 
 
 def _fmt(bp: int) -> str:

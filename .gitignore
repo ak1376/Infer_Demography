@@ -9,6 +9,7 @@ Snakefile.simple
 experiments/
 OOA/
 real_data_analysis/
+debugging_drosophila/results/
 test_scripts/
 scripts/
 !godambe_correction_LRT/scripts/
@@ -79,3 +80,6 @@ godambe_correction_LRT/simulation_varrecomb/
 analysis/
 LD_stats_diagnosis/
 scaling_factor_validation/
+_preserved_results/
+debugging_drosophila/
+godambe_correction_LRT/archive

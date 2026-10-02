@@ -66,11 +66,13 @@ REAL_TRIM_REGION = {
     for c, v in REAL_DATA_CFG.get("trim_region", {}).items()
 }
 
-def _trim_dir_suffix():
-    if not REAL_TRIM_REGION:
-        return ""
-    bits = "_".join(f"{c}-{s}-{e}" for c, (s, e) in sorted(REAL_TRIM_REGION.items()))
-    return f"_trim_{bits}"
+# All real-data folder names come from src/real_paths.py (shared with the bash
+# drivers): short names built from the settings that vary between runs, with
+# the rest (exact trim coordinates, r-bins, pairing seed) in a settings.json
+# inside each folder.
+sys.path.insert(0, workflow.basedir)
+from src.real_paths import real_paths, check_settings, write_settings, PSEUDODIPLOID_SEED
+RP = real_paths(CFG, CFG["demographic_model"])
 
 RAW_TRIM_DIR = "real_data_analysis/data/trimmed_raw_vcf"  # derived output only -- never drosophila_data/data (read-only mirror of the data share)
 
@@ -84,8 +86,9 @@ def raw_vcf_for_chrom(chrom):
     return f"{RAW_TRIM_DIR}/{chrom}.trim{start}-{end}.vcf.gz"
 
 # Make sure these match files that actually exist in your repo
-DROSO_BASE_DIR   = "real_data_analysis/data/drosophila"           # untagged: region-independent shared metadata only
-DROSO_DIR        = f"{DROSO_BASE_DIR}{_trim_dir_suffix()}"        # tagged when trim_region is set: all region-derived data
+DROSO_BASE_DIR   = RP["DROSO_BASE_DIR"]   # region-independent inputs (popfile, pairing, genetic maps)
+DROSO_DIR        = RP["DROSO_DIR"]        # processed data: drosophila_trimmed/ (or drosophila/ when untrimmed)
+GENMAP_DIR       = RP["GENMAP_DIR"]       # {GENMAP_DIR}/{chrom}/genetic_map.txt (Comeron, region/model-independent)
 AUTOSOMES        = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]          # all autosomal arms (ChrX excluded: not an autosome)
 ANCESTRAL_DIR    = "drosophila_data/dpgp_ancestor"                        # relative to repo root, alongside drosophila_data/data/
 
@@ -95,6 +98,12 @@ RAW_HAPLOID_VCF  = "drosophila_data/data/Chr3L.vcf.gz"                    # lega
 # analyzed, so it stays on the untagged base dir -- otherwise every new
 # trim_region tag would need its own copy of an identical file.
 REAL_POPFILE     = f"{DROSO_BASE_DIR}/popfile.txt"
+# Pseudo-diploid pairing of the haploid samples (for MomentsLD). Region-
+# independent like popfile.txt, so every chrom/trim uses the same pairs.
+PSEUDODIPLOID_PAIRS   = RP["PSEUDODIPLOID_PAIRS"]     # tagged .excl-<ids> when real_data_analysis.exclude_samples is set
+PSEUDODIPLOID_POPFILE = RP["PSEUDODIPLOID_POPFILE"]
+DIPLOID_SUFFIX        = RP["DIPLOID_SUFFIX"]          # "" or ".excl-<ids>" in the diploid VCF names
+EXCLUDE_SAMPLES       = RP["EXCLUDE_SAMPLES"]
 REAL_VCF         = f"{DROSO_DIR}/Chr3L/polarized.diploidGT.vcf.gz"        # diploid polarized (Chr3L); used by MomentsLD-real
 POLARIZED_VCF    = f"{DROSO_DIR}/Chr3L/polarized.vcf.gz"                  # haploid + AA (Chr3L); legacy alias
 UNFOLDED_SFS     = f"{DROSO_DIR}/Chr3L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr3L); legacy alias
@@ -104,7 +113,11 @@ ANCESTRAL_FASTA  = f"{ANCESTRAL_DIR}/chr3L.q30.fa"                        # lega
 
 # Per-chromosome path helpers (by-chromosome layout)
 def polarized_vcf(chrom):          return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
-def polarized_diploid_vcf(chrom):  return f"{DROSO_DIR}/{chrom}/polarized.diploidGT.vcf.gz"
+# real_data_analysis.phased -> a|b pseudo-diploids + haplotype-mode LD (use_genotypes=False)
+REAL_PHASED = RP["REAL_PHASED"]
+def polarized_diploid_vcf(chrom):
+    suffix = ".phased" if REAL_PHASED else ""
+    return f"{DROSO_DIR}/{chrom}/polarized.diploidGT{DIPLOID_SUFFIX}{suffix}.vcf.gz"
 def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded.sfs.pkl"
 def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr', 'chr', 1)}.q30.fa"
 
@@ -237,7 +250,7 @@ REAL_NUM_WINDOWS_MODE = "auto" if str(_raw_real_nw).lower() == "auto" else int(_
 # When true, the real-data LD-fitting path (real_vcf_windows/compute_ld_real/
 # infer_momentsld_real) uses the true Comeron per-chromosome recombination map
 # instead of a single flat/average rate to convert physical -> genetic
-# distance. Folded into REAL_TAG so flat-rate and genmap results live at
+# distance. Part of the LD-run name ("genmap"/"flatmap") so flat-rate and genmap results live at
 # distinct, non-colliding paths instead of one overwriting the other.
 REAL_USE_GENMAP = bool(REAL_DATA_CFG.get("use_genmap", False))
 # MomentsLD_real_data.py always needs SOME N_ref to satisfy resolve_n_ref(),
@@ -249,13 +262,22 @@ REAL_USE_GENMAP = bool(REAL_DATA_CFG.get("use_genmap", False))
 # MomentsLD can run standalone without requiring moments/dadi to have been
 # fit first.
 REAL_USE_SCALED_UNITS = bool(CFG.get("momentsld_use_scaled_units", True))
-REAL_TAG        = "_".join(REAL_ARMS)            # "Chr3L" / "Chr2L_Chr3L" / ...
-if REAL_USE_GENMAP:
-    REAL_TAG += "_genmap"
-# Replaces the literal "MomentsLD" path segment as the real-data LD engine key
-# everywhere below, so every arm-set (including today's default) writes to its
-# own tagged, non-colliding directory.
-REAL_LD_ENGINE  = f"MomentsLD_{REAL_TAG}"
+# MomentsLD_real_data.py only reads the moments SFS fit to anchor N_ref (scaled
+# units) or to pin a fixed_parameters entry set to "moments_best"; otherwise
+# the real MomentsLD rules don't wait on the SFS fit at all.
+MOMENTSLD_NEEDS_SFS_FIT = REAL_USE_SCALED_UNITS or any(
+    v == "moments_best" for v in CFG.get("fixed_parameters", {}).values()
+)
+def _momentsld_seed_flag(w, input):
+    if not MOMENTSLD_NEEDS_SFS_FIT:
+        return "--n-ref 1.0"
+    flag = f'--sfs-best-fit-pkl "{input.sfs_best}"'
+    return flag if REAL_USE_SCALED_UNITS else f"{flag} --n-ref 1.0"
+# LD-run name from arms + window + map, e.g. "Chr3L_100kb_genmap" (see
+# src/real_paths.py). REAL_LD_ENGINE names the pooled MomentsLD fit subdir,
+# REAL_LD_ENGINE_ARM the per-arm one (arm is already in that path).
+REAL_LD_ENGINE     = RP["REAL_LD_ENGINE"]
+REAL_LD_ENGINE_ARM = RP["REAL_LD_ENGINE_ARM"]
 
 # Real-data LD windows/LD_stats/aggregated means+varcovs are pure functions of
 # the VCF data (arms, window size, r_bins) -- not of which demographic model
@@ -264,7 +286,7 @@ REAL_LD_ENGINE  = f"MomentsLD_{REAL_TAG}"
 # window split or the (GPU-bound) per-window LD computation. The MomentsLD
 # *fit itself* (aggregate_opts_momentsld_real's best_fit.pkl) is genuinely
 # model-specific and lives under REAL_INF_ROOT instead -- see that rule below.
-REAL_LD_ROOT = f"{DROSO_DIR}/{REAL_LD_ENGINE}"
+REAL_LD_ROOT = RP["REAL_LD_ROOT"]   # {DROSO_DIR}/ld/{REAL_LD_NAME}
 # Per-autosome LD decay analysis (independent of the Chr3L inference pipeline above)
 REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_by_chrom"
 # Same, but with the real Comeron (R5/dm3) recombination map and 1 Mb windows.
@@ -276,16 +298,17 @@ COMERON_XLSX       = f"{DROSO_BASE_DIR}/recombination_maps/Comeron_100kb_R5_R6.x
 # same tag, otherwise a trimmed run would silently overwrite the full-arm
 # moments/dadi best_fit.pkl already sitting here. Untagged when trim_region
 # is unset, matching every path above.
-REAL_RUN_ROOT = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/runs"
-REAL_INF_ROOT = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/inferences"
+REAL_FIT_ROOT = RP["REAL_FIT_ROOT"]   # experiments/{MODEL}/real_trimmed (or real_untrimmed)
+REAL_RUN_ROOT = RP["REAL_RUN_ROOT"]
+REAL_INF_ROOT = RP["REAL_INF_ROOT"]
 REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
 
 # Single-chromosome variants of REAL_RUN_ROOT/REAL_INF_ROOT (as opposed to the
 # combined-autosome COMBINED_SFS used by infer_engine_real above). {chrom} is
 # a real Snakemake wildcard here (double-braced so the f-string leaves it
 # literal), constrained below to Chr(2L|2R|3L|3R).
-REAL_RUN_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{{chrom}}/runs"
-REAL_INF_ROOT_CHROM = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{{chrom}}/inferences"
+REAL_RUN_ROOT_CHROM = RP["REAL_RUN_ROOT_CHROM"]
+REAL_INF_ROOT_CHROM = RP["REAL_INF_ROOT_CHROM"]
 
 # Number of top replicates the real moments/dadi aggregation keeps.
 # Must match the rep count the trained model was built with (moments_*_rep_0..N-1),
@@ -362,6 +385,19 @@ wildcard_constraints:
 # 9-edge (~2-2.5x ratio) set, to reduce quadrature error in compute_theoretical_ld
 # for the short-range bins.
 R_BINS_STR = "0,1e-06,1.58489e-06,2.51189e-06,3.98107e-06,6.30957e-06,1e-05,1.58489e-05,2.51189e-05,3.98107e-05,6.30957e-05,0.0001,0.000158489,0.000251189,0.000398107,0.000630957,0.001"
+
+# Refuse to reuse a real-data folder whose settings.json disagrees with the
+# current config (e.g. trim coordinates changed but the folder name didn't);
+# settings.json is written into whichever of these folders a (non-dry) run
+# actually created.
+REAL_FOLDER_SETTINGS = real_paths(CFG, CFG["demographic_model"], r_bins=R_BINS_STR)["_settings"]
+check_settings(REAL_FOLDER_SETTINGS)
+
+onsuccess:
+    write_settings(REAL_FOLDER_SETTINGS)
+
+onerror:
+    write_settings(REAL_FOLDER_SETTINGS)
 
 # Optional pruning — set "prune_mode": "fraction"|"count" and
 # "prune_keep_values" in EXP_CFG to enable.
@@ -1724,17 +1760,47 @@ rule annotate_ancestral_allele:
         """
 
 ##############################################################################
+# RULE make_pseudodiploid_pairs
+# Shuffle each population's haploid samples (fixed seed) and split them into
+# disjoint pairs -- no sample used twice, no cross-population pairs; an odd
+# leftover is dropped. Writes the pairing table and the matching popfile
+# (names "<hap1>_<hap2>") that the MomentsLD rules use with the diploid VCF.
+##############################################################################
+rule make_pseudodiploid_pairs:
+    input:
+        popfile = REAL_POPFILE,
+    output:
+        pairs   = PSEUDODIPLOID_PAIRS,
+        popfile = PSEUDODIPLOID_POPFILE,
+    params:
+        seed = PSEUDODIPLOID_SEED,
+        exclude = EXCLUDE_SAMPLES,
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        python snakemake_scripts/make_pseudodiploid_pairs.py \
+          --popfile     "{input.popfile}" \
+          --seed        {params.seed} \
+          --exclude     "{params.exclude}" \
+          --out-pairs   "{output.pairs}" \
+          --out-popfile "{output.popfile}"
+        """
+
+##############################################################################
 # RULE recode_polarized_to_diploid  (per-chromosome, autosomes)
-# Recode the AA-annotated haploid VCF to diploid GTs so that MomentsLD can
-# use exactly the same sites as the SFS analysis.
+# Combine pairs of haploid samples (from make_pseudodiploid_pairs) into
+# pseudo-diploid GTs so that MomentsLD can use exactly the same sites as the
+# SFS analysis. Unpaired haploid samples are dropped.
 ##############################################################################
 rule recode_polarized_to_diploid:
     input:
-        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
-        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
+        vcf   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
+        tbi   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
+        pairs = PSEUDODIPLOID_PAIRS,
     output:
-        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT.vcf.gz",
-        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT.vcf.gz.tbi",
+        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT{DIPLOID_SUFFIX}.vcf.gz",
+        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT{DIPLOID_SUFFIX}.vcf.gz.tbi",
     params:
         script = f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
     threads: 1
@@ -1744,7 +1810,31 @@ rule recode_polarized_to_diploid:
         mkdir -p "$(dirname "{output.vcf}")"
         out="{output.vcf}"
         tmp_vcf="${{out%.gz}}"                 # uncompressed temp (strip .gz)
-        python "{params.script}" "{input.vcf}" "$tmp_vcf"
+        python "{params.script}" "{input.vcf}" "$tmp_vcf" "{input.pairs}"
+        bgzip -f "$tmp_vcf"
+        tabix -f -p vcf "{output.vcf}"
+        """
+
+# Same pairs, written phased (a|b) -- used when real_data_analysis.phased is
+# set, so LD stats come from the two known haplotypes (use_genotypes=False).
+rule recode_polarized_to_phased_diploid:
+    input:
+        vcf   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
+        tbi   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
+        pairs = PSEUDODIPLOID_PAIRS,
+    output:
+        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT{DIPLOID_SUFFIX}.phased.vcf.gz",
+        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT{DIPLOID_SUFFIX}.phased.vcf.gz.tbi",
+    params:
+        script = f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname "{output.vcf}")"
+        out="{output.vcf}"
+        tmp_vcf="${{out%.gz}}"
+        python "{params.script}" "{input.vcf}" "$tmp_vcf" "{input.pairs}" --phased
         bgzip -f "$tmp_vcf"
         tabix -f -p vcf "{output.vcf}"
         """
@@ -1954,7 +2044,7 @@ rule aggregate_opts_engine_real_chrom:
 checkpoint real_vcf_windows:
     input:
         vcf     = lambda wc: polarized_diploid_vcf(wc.arm),
-        popfile = REAL_POPFILE,
+        popfile = PSEUDODIPLOID_POPFILE,
     output:
         windir = directory(f"{REAL_LD_ROOT}/{{arm}}/windows"),
     params:
@@ -1993,12 +2083,40 @@ checkpoint real_vcf_windows:
         """
 
 
+# real_data_analysis.exclude_breakpoint_buffer_bp: windows whose span comes
+# within this many bp of any inversion breakpoint on the arm (table in
+# godambe_correction_LRT/src/inversion_breakpoints.py) are never computed or
+# aggregated. 0 = keep every window.
+BREAKPOINT_BUFFER_BP = RP["BREAKPOINT_BUFFER_BP"]
+sys.path.insert(0, os.path.join(workflow.basedir, "godambe_correction_LRT", "src"))
+from inversion_breakpoints import overlaps_any_breakpoint
+
+def _window_span(vcf_gz):
+    import gzip
+    first = last = None
+    with gzip.open(vcf_gz, "rt") as f:
+        for line in f:
+            if line[0] == "#":
+                continue
+            p = int(line.split("\t", 2)[1])
+            first = p if first is None else first
+            last = p
+    return first, last
+
 def _real_arm_window_idxs(arm):
     ck = checkpoints.real_vcf_windows.get(arm=arm)
-    return sorted(
+    idxs = sorted(
         glob_wildcards(os.path.join(ck.output.windir, "window_{i}.vcf.gz")).i,
         key=int,
     )
+    if not BREAKPOINT_BUFFER_BP:
+        return idxs
+    kept = []
+    for i in idxs:
+        s, e = _window_span(os.path.join(ck.output.windir, f"window_{i}.vcf.gz"))
+        if s is not None and not overlaps_any_breakpoint(s, e, arm, BREAKPOINT_BUFFER_BP):
+            kept.append(i)
+    return kept
 
 
 def gather_all_real_ld_stats(wildcards):
@@ -2027,7 +2145,7 @@ rule compute_ld_real:
         # Only pulled in (and only required) when REAL_USE_GENMAP is set --
         # forces build_genetic_map_real to run first for this arm.
         gmap   = lambda wc: (
-            [f"{REAL_LD_GENMAP}/{wc.arm}/genetic_map.txt"] if REAL_USE_GENMAP else []
+            [f"{GENMAP_DIR}/{wc.arm}/genetic_map.txt"] if REAL_USE_GENMAP else []
         ),
     output:
         pkl = f"{REAL_LD_ROOT}/{{arm}}/LD_stats/LD_stats_window_{{i}}.pkl"
@@ -2042,9 +2160,10 @@ rule compute_ld_real:
         # REAL_USE_GENMAP, in which case point it at the real Comeron map
         # instead of the per-arm flat/average rate.
         rec_map_arg = lambda wc: (
-            f'--rec-map-file "{REAL_LD_GENMAP}/{wc.arm}/genetic_map.txt"'
+            f'--rec-map-file "{GENMAP_DIR}/{wc.arm}/genetic_map.txt"'
             if REAL_USE_GENMAP else ""
         ),
+        hap_arg = "--haplotypes" if REAL_PHASED else "",
     shell:
         r"""
         set -euo pipefail
@@ -2055,7 +2174,7 @@ rule compute_ld_real:
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
             --r-bins "{params.r_bins}" \
-            {params.rec_map_arg}
+            {params.rec_map_arg} {params.hap_arg}
         """
 
 
@@ -2107,7 +2226,7 @@ rule build_genetic_map_real:
     input:
         xlsx = COMERON_XLSX,
     output:
-        gmap = f"{REAL_LD_GENMAP}/{{chrom}}/genetic_map.txt",
+        gmap = f"{GENMAP_DIR}/{{chrom}}/genetic_map.txt",
     params:
         script = "snakemake_scripts/build_genetic_map.py",
     threads: 1
@@ -2123,7 +2242,7 @@ rule build_genetic_map_real:
 rule split_real_vcf_window_chrom:
     input:
         vcf     = lambda wc: polarized_diploid_vcf(wc.chrom),
-        popfile = REAL_POPFILE,
+        popfile = PSEUDODIPLOID_POPFILE,
     output:
         vcf_gz = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/windows/window_{{i}}.vcf.gz"
     params:
@@ -2149,7 +2268,7 @@ rule compute_ld_real_chrom:
     input:
         vcf_gz = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/windows/window_{{i}}.vcf.gz",
         gmap   = lambda wc: (
-            [f"{REAL_LD_GENMAP}/{wc.chrom}/genetic_map.txt"] if wc.ld_variant == "genmap" else []
+            [f"{GENMAP_DIR}/{wc.chrom}/genetic_map.txt"] if wc.ld_variant == "genmap" else []
         ),
     output:
         pkl = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
@@ -2305,7 +2424,7 @@ rule infer_momentsld_real:
         # instead. Marked ancient() so regenerating the moments fit (e.g.
         # changing REAL_TOP_K) does not needlessly re-trigger LD inference --
         # the best (rep_0) moments params are unchanged.
-        sfs_best = ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl"),
+        sfs_best = [ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl")] if MOMENTSLD_NEEDS_SFS_FIT else [],
     output:
         # Not temp(): kept per-restart so per-opt N_ANC/T/etc. trends can be
         # inspected directly (as we've been doing) without waiting on
@@ -2315,11 +2434,7 @@ rule infer_momentsld_real:
         outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/{REAL_LD_ENGINE}",
         cfg    = EXP_CFG,
         bins   = R_BINS_STR,
-        seed_flag = (
-            (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}"')
-            if REAL_USE_SCALED_UNITS
-            else (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}" --n-ref 1.0')
-        ),
+        seed_flag = _momentsld_seed_flag,
     threads: 1
     shell:
         r"""
@@ -2427,20 +2542,16 @@ rule infer_momentsld_real_by_arm:
         # that lookup reads --sfs-best-fit-pkl independently of N_ref/rho
         # scaling, which in absolute mode tracks the optimizer's own current
         # N_ANC guess instead (see infer_momentsld_real above).
-        sfs_best = lambda w: ancient(f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{w.arm}/inferences/moments/best_fit.pkl"),
+        sfs_best = lambda w: [ancient(f"{REAL_FIT_ROOT}/{w.arm}/inferences/moments/best_fit.pkl")] if MOMENTSLD_NEEDS_SFS_FIT else [],
     output:
-        pkl = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{{arm}}/runs/run_{{opt}}/inferences/MomentsLD/best_fit.pkl",
+        pkl = f"{REAL_FIT_ROOT}/{{arm}}/runs/run_{{opt}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
     wildcard_constraints:
         arm = r"Chr(2L|2R|3L|3R|X)",
     params:
-        outdir = lambda w: f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{w.arm}/runs/run_{w.opt}/inferences/MomentsLD",
+        outdir = lambda w: f"{REAL_FIT_ROOT}/{w.arm}/runs/run_{w.opt}/inferences/{REAL_LD_ENGINE_ARM}",
         cfg    = EXP_CFG,
         bins   = R_BINS_STR,
-        seed_flag = (
-            (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}"')
-            if REAL_USE_SCALED_UNITS
-            else (lambda w, input: f'--sfs-best-fit-pkl "{input.sfs_best}" --n-ref 1.0')
-        ),
+        seed_flag = _momentsld_seed_flag,
     threads: 1
     shell:
         r"""
@@ -2465,11 +2576,11 @@ rule infer_momentsld_real_by_arm:
 rule aggregate_opts_momentsld_real_by_arm:
     input:
         runs = lambda w: [
-            f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{w.arm}/runs/run_{o}/inferences/MomentsLD/best_fit.pkl"
+            f"{REAL_FIT_ROOT}/{w.arm}/runs/run_{o}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl"
             for o in range(NUM_REAL_OPTIMS)
         ],
     output:
-        best = f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{{arm}}/inferences/MomentsLD/best_fit.pkl",
+        best = f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
     wildcard_constraints:
         arm = r"Chr(2L|2R|3L|3R|X)",
     run:
@@ -2486,11 +2597,108 @@ rule aggregate_opts_momentsld_real_by_arm:
         print(f"✅ [REAL/{wildcards.arm}] Aggregated {diag['n_entries']} MomentsLD optimization results → {output.best}")
 
 
+##############################################################################
+# REAL DATA: MomentsLD profile likelihoods (per arm) -- opt-in               #
+# Only defined when real_data_analysis.profile_likelihood is in the config:  #
+#   "profile_likelihood": {                                                 #
+#     "grids":    {"T": [5e4, 1e6, 13], "N_CO0": [1e5, 3e7, 13]},           #
+#     "n_starts": 8                                                         #
+#   }                                                                       #
+# Each grid is [min, max, n_points], log-spaced. Pin one parameter at each  #
+# grid value and re-optimize every other one from n_starts starts (start 0  #
+# from the unrestricted best fit, the rest LHS draws); the collect rule     #
+# keeps the best start per grid value. Grids may extend past the prior      #
+# (e.g. to see whether a railed N_CO0 keeps improving beyond its bound).    #
+# Target: all_momentsld_profiles_real, or e.g.                              #
+#   {REAL_FIT_ROOT}/Chr3L/profiles/{REAL_LD_ENGINE_ARM}/T/profile_T.png     #
+##############################################################################
+import numpy as _np
+_PROFILE_CFG = REAL_DATA_CFG.get("profile_likelihood") or {}
+PROFILE_GRIDS = {
+    p: list(_np.logspace(_np.log10(float(lo)), _np.log10(float(hi)), int(n)))
+    for p, (lo, hi, n) in _PROFILE_CFG.get("grids", {}).items()
+}
+PROFILE_N_STARTS = int(_PROFILE_CFG.get("n_starts", 8))
+
+if PROFILE_GRIDS:
+    def _profile_root(w):
+        return f"{REAL_FIT_ROOT}/{w.arm}/profiles/{REAL_LD_ENGINE_ARM}/{w.pparam}"
+
+    rule momentsld_profile_point_real_by_arm:
+        input:
+            mv   = f"{REAL_LD_ROOT}/{{arm}}/means.varcovs.pkl",
+            best = f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
+        output:
+            pkl = f"{REAL_FIT_ROOT}/{{arm}}/profiles/{REAL_LD_ENGINE_ARM}/{{pparam}}/pt{{k}}/start{{s}}/best_fit.pkl",
+        wildcard_constraints:
+            arm    = r"Chr(2L|2R|3L|3R|X)",
+            pparam = "|".join(PROFILE_GRIDS),
+            k      = r"\d+",
+            s      = r"\d+",
+        params:
+            outdir = lambda w: f"{_profile_root(w)}/pt{w.k}/start{w.s}",
+            cfg    = EXP_CFG,
+            bins   = R_BINS_STR,
+            fix    = lambda w: f"{w.pparam}={PROFILE_GRIDS[w.pparam][int(w.k)]:.6g}",
+            start  = lambda w, input: (f'--x0-pkl "{input.best}"' if int(w.s) == 0
+                                       else f"--opt-seed {w.s}"),
+            seed_flag = "--n-ref 1.0" if not MOMENTSLD_NEEDS_SFS_FIT else "",
+        threads: 1
+        shell:
+            r"""
+            set -euo pipefail
+            mkdir -p "{params.outdir}"
+            PYTHONPATH={workflow.basedir} \
+            python "src/MomentsLD_real_data.py" \
+                --config        "{params.cfg}" \
+                --empirical     "{input.mv}" \
+                --outdir        "{params.outdir}" \
+                {params.seed_flag} \
+                --r-bins        "{params.bins}" \
+                --normalization 0 \
+                --fix           "{params.fix}" \
+                {params.start}
+            test -f "{output.pkl}"
+            """
+
+    rule momentsld_profile_real_by_arm:
+        input:
+            fits = lambda w: [f"{_profile_root(w)}/pt{k}/start{s}/best_fit.pkl"
+                              for k in range(len(PROFILE_GRIDS[w.pparam])) for s in range(PROFILE_N_STARTS)],
+            best = f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
+        output:
+            tsv = f"{REAL_FIT_ROOT}/{{arm}}/profiles/{REAL_LD_ENGINE_ARM}/{{pparam}}/profile_{{pparam}}.tsv",
+            png = f"{REAL_FIT_ROOT}/{{arm}}/profiles/{REAL_LD_ENGINE_ARM}/{{pparam}}/profile_{{pparam}}.png",
+        wildcard_constraints:
+            arm    = r"Chr(2L|2R|3L|3R|X)",
+            pparam = "|".join(PROFILE_GRIDS),
+        params:
+            out   = lambda w: f"{_profile_root(w)}/profile_{w.pparam}",
+            cfg   = EXP_CFG,
+            title = lambda w: f"{w.arm} {REAL_LD_ENGINE_ARM}",
+        threads: 1
+        shell:
+            r"""
+            set -euo pipefail
+            python snakemake_scripts/plot_momentsld_profile.py \
+                --param {wildcards.pparam} --fits {input.fits} --overall-best "{input.best}" \
+                --config "{params.cfg}" --title "{params.title}" --out "{params.out}"
+            """
+
+    rule all_momentsld_profiles_real:
+        """Convenience target: every configured profile, for every configured arm."""
+        input:
+            expand(
+                f"{REAL_FIT_ROOT}/{{arm}}/profiles/{REAL_LD_ENGINE_ARM}/{{pparam}}/profile_{{pparam}}.png",
+                arm=REAL_ARMS, pparam=list(PROFILE_GRIDS),
+            ),
+
+
 rule all_momentsld_real_individual:
     """Convenience target: every configured arm's independent (unpooled) MomentsLD fit."""
     input:
         expand(
-            f"experiments/{MODEL}/real_data_analysis{_trim_dir_suffix()}/{{arm}}/inferences/MomentsLD/best_fit.pkl",
+            f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
             arm=REAL_ARMS,
         ),
 

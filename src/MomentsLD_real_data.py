@@ -301,6 +301,21 @@ def main() -> None:
         default=None,
         help="Run index (0-based) for LHS start selection; set by Snakemake wildcard.",
     )
+    ap.add_argument(
+        "--fix",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Pin a parameter (in the fit's own units) for this run only, e.g. for a "
+             "profile likelihood; the value may lie outside its prior. Repeatable.",
+    )
+    ap.add_argument(
+        "--x0-pkl",
+        type=Path,
+        default=None,
+        help="best_fit.pkl whose best_params seed the start (instead of an LHS draw); "
+             "clipped into the bounds, pinned parameters keep their pinned value.",
+    )
 
     args = ap.parse_args()
 
@@ -393,7 +408,21 @@ def main() -> None:
             lb[idx] = ub[idx] = val
             logging.info("Fixing %s = %.6g (%s)", pname, val, "scaled" if use_scaled_units else "absolute")
 
-    x0 = lhs_start_log10(lb, ub, cfg)
+    for spec in args.fix:
+        pname, val = spec.split("=", 1)
+        if pname not in param_names:
+            raise ValueError(f"--fix {pname}: not a parameter ({param_names})")
+        idx = param_names.index(pname)
+        lb[idx] = ub[idx] = float(val)
+        logging.info("Fixing %s = %.6g (--fix)", pname, float(val))
+
+    if args.x0_pkl is not None:
+        d = load_pickle(args.x0_pkl)
+        bp = d["best_params"][0] if isinstance(d["best_params"], list) else d["best_params"]
+        x0 = np.clip(np.log10([float(bp[p]) for p in param_names]), np.log10(lb), np.log10(ub))
+        logging.info("Start from %s", args.x0_pkl)
+    else:
+        x0 = lhs_start_log10(lb, ub, cfg)
 
     _diag_once = {"did": False}
 
@@ -438,10 +467,12 @@ def main() -> None:
                      _eval["n"], ll, show, N_ref)
         return ll
 
-    # Shares the same "optimizer_algorithm" config key as dadi_inference.py/
-    # moments_inference.py -- one setting applies to all three engines.
-    # Defaults to the old hardcoded behavior if unset.
-    algo_name = str(cfg.get("optimizer_algorithm", "LN_BOBYQA"))
+    # "momentsld_optimizer_algorithm" overrides for MomentsLD alone; otherwise
+    # falls back to the "optimizer_algorithm" key shared with dadi_inference.py/
+    # moments_inference.py. Defaults to the old hardcoded behavior if neither is set.
+    algo_name = str(cfg.get("momentsld_optimizer_algorithm")
+                    or cfg.get("optimizer_algorithm", "LN_BOBYQA"))
+    logging.info("MomentsLD optimizer: %s", algo_name)
     try:
         algo = getattr(nlopt, algo_name)
     except AttributeError:
@@ -455,9 +486,13 @@ def main() -> None:
     # Noisy finite-difference gradients can prevent ftol_rel from ever
     # triggering for LD_* algorithms (same guard as moments_inference.py) --
     # cap evals explicitly so optimization is guaranteed to terminate.
-    maxeval = int(cfg.get("optimizer_maxeval", 500))
+    # "momentsld_optimizer_maxeval" overrides for MomentsLD alone (derivative-free
+    # LN_BOBYQA needs far more evals than LD_LBFGS); else the shared key.
+    maxeval = int(cfg.get("momentsld_optimizer_maxeval")
+                  or cfg.get("optimizer_maxeval", 500))
+    logging.info("MomentsLD maxeval: %d", maxeval)
     opt.set_maxeval(maxeval)
-    maxtime = cfg.get("optimizer_maxtime")
+    maxtime = cfg.get("momentsld_optimizer_maxtime") or cfg.get("optimizer_maxtime")
     if maxtime is not None:
         opt.set_maxtime(float(maxtime))
 
