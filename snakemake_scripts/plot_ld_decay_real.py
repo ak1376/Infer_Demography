@@ -22,9 +22,12 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import moments
 import moments.LD.Plotting as ldplot
 import numpy as np
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.MomentsLD_inference import bootstrap_ld  # noqa: E402  same seeded aggregation as step 8
 
 # Same panels and labels as create_comparison_plot in src/MomentsLD_inference.py
 STATS_TO_PLOT = [["DD_0_0"], ["DD_0_1"], ["DD_1_1"],
@@ -41,6 +44,7 @@ def main():
     ap.add_argument("--ld-stats-dir", required=True, type=Path)
     ap.add_argument("--r-bins", required=True)
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--seed", type=int, default=42, help="bootstrap seed (config 'seed', as in step 8)")
     args = ap.parse_args()
 
     ld = {}
@@ -49,7 +53,7 @@ def main():
             ld[int(f.stem.split("_")[-1])] = pickle.load(fh)
     stat_names = next(iter(ld.values()))["stats"][0]
 
-    mv = moments.LD.Parsing.bootstrap_data(ld)
+    mv, _ = bootstrap_ld(ld, args.seed)
     ms, vcs = mv["means"][:-1], mv["varcovs"][:-1]          # last entry = heterozygosity
 
     rs = np.array([float(x) for x in args.r_bins.split(",")])

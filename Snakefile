@@ -2329,11 +2329,12 @@ rule plot_ld_decay_real:
     params:
         ld_dir = lambda w: f"{REAL_LD_ROOT}/{w.arm}/LD_stats",
         bins   = R_BINS_STR,
+        seed   = int(CFG.get("seed", 42)),
     threads: 1
     shell:
         r"""
         python snakemake_scripts/plot_ld_decay_real.py \
-            --ld-stats-dir "{params.ld_dir}" --r-bins "{params.bins}" --out "{output.pdf}"
+            --ld-stats-dir "{params.ld_dir}" --r-bins "{params.bins}" --seed {params.seed} --out "{output.pdf}"
         """
 
 

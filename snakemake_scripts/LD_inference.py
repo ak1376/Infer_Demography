@@ -166,6 +166,7 @@ def main():
         a.output_root,
         fallback_ld_root=a.fallback_ld_dir,
         diagonal_only_varcov=diagonal_only_varcov,
+        seed=int(cfg.get("seed", 42)),
     )
 
     # ------------------------------------------------------------------

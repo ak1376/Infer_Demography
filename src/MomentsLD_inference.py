@@ -79,10 +79,24 @@ def load_config(config_path: Path) -> Dict:
         return json.load(f)
 
 
+def bootstrap_ld(ld_stats: Dict, seed: int = 42):
+    """moments.LD.Parsing.bootstrap_data + get_bootstrap_sets with a fixed seed.
+
+    Both resample windows with np.random and no seed of their own, so without
+    this the variances (and the fit that uses them) change on every rerun.
+    Returns (means/varcovs dict, bootstrap_sets).
+    """
+    np.random.seed(int(seed))
+    mv = moments.LD.Parsing.bootstrap_data(ld_stats)
+    bootstrap_sets = moments.LD.Parsing.get_bootstrap_sets(ld_stats)
+    return mv, bootstrap_sets
+
+
 def aggregate_ld_statistics(
     ld_root: Path,
     fallback_ld_root: Optional[Path] = None,
     diagonal_only_varcov: bool = False,
+    seed: int = 42,
 ) -> Dict[str, List[np.ndarray]]:
     """
     Aggregate LD statistics from multiple windows into means and covariances.
@@ -168,9 +182,8 @@ def aggregate_ld_statistics(
     if not ld_stats:
         raise RuntimeError(f"No LD statistics files found in {ld_stats_dir}")
 
-    # Aggregate using moments.LD
-    mv = moments.LD.Parsing.bootstrap_data(ld_stats)
-    bootstrap_sets = moments.LD.Parsing.get_bootstrap_sets(ld_stats)
+    # Aggregate using moments.LD (seeded, so reruns give identical variances)
+    mv, bootstrap_sets = bootstrap_ld(ld_stats, seed)
 
     if diagonal_only_varcov:
         software_mean_file = ld_root / "software_mean.varcovs.pkl"
