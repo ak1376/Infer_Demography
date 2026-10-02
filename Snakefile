@@ -1797,13 +1797,14 @@ rule compute_unfolded_sfs:
     input:
         vcf     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
         tbi     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
+        unpolarized = lambda w: raw_vcf_for_chrom(w.chrom),
         popfile = REAL_POPFILE,
     output:
         sfs  = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
-        # sequence_length here comes straight from this VCF's own ##contig
-        # header -- the real-data inference rules read it back out so theta/
-        # N_ANC scaling always matches whichever VCF actually built the SFS,
-        # instead of a hand-maintained config value that can drift out of sync.
+        # sequence_length = region length (this VCF's ##contig header) x the
+        # fraction of SNPs that survived polarization -- the real-data
+        # inference rules read it back out for theta -> N_ANC, so it always
+        # matches whichever VCF actually built the SFS.
         meta = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json",
     threads: 1
     shell:
@@ -1812,6 +1813,7 @@ rule compute_unfolded_sfs:
         PYTHONPATH={workflow.basedir} \
         python snakemake_scripts/compute_unfolded_sfs.py \
           --input-vcf   "{input.vcf}" \
+          --unpolarized-vcf "{input.unpolarized}" \
           --popfile     "{input.popfile}" \
           --output-sfs  "{output.sfs}" \
           --output-meta "{output.meta}"

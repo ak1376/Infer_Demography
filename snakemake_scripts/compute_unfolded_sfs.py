@@ -13,11 +13,18 @@ Derived allele count per site is determined by the AA field:
 Sites with any missing GT ('.') are skipped.
 Sites without an AA field are skipped.
 
+sequence_length (the L in theta = 4*mu*L*N_ANC) starts as the region length
+from the VCF's ##contig header. With --unpolarized-vcf (the same region before
+annotate_ancestral_allele dropped sites with no usable ancestral base), it is
+scaled by (SNPs kept in the SFS / SNPs before polarization), on the assumption
+that sequence is lost in the same proportion as SNPs.
+
 Usage:
   python compute_unfolded_sfs.py \
       --input-vcf  real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz \
       --popfile    real_data_analysis/data/drosophila/popfile.txt \
       --output-sfs real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl \
+      [--unpolarized-vcf <pre-polarization VCF>]   # optional: scale L by kept SNP fraction
       [--project-to N]   # optional: project each pop down to N haplotypes
 """
 
@@ -82,6 +89,9 @@ def main():
     p.add_argument("--output-meta", type=Path, default=None,
                    help="Optional: write {chrom, sequence_length, n_sites_*} JSON here, "
                         "sequence_length taken from the VCF's own ##contig header.")
+    p.add_argument("--unpolarized-vcf", type=Path, default=None,
+                   help="Optional: the same region before polarization. sequence_length is "
+                        "scaled by (SNPs kept / SNPs in this VCF).")
     p.add_argument("--project-to",  type=int, default=None,
                    help="Project each population down to this many haplotypes.")
     args = p.parse_args()
@@ -208,9 +218,19 @@ def main():
 
     if args.output_meta is not None:
         args.output_meta.parent.mkdir(parents=True, exist_ok=True)
+        region_length = sequence_length
+        n_before = None
+        if args.unpolarized_vcf is not None:
+            with gzip.open(args.unpolarized_vcf, "rt") as fh:
+                n_before = sum(1 for line in fh if line[0] != "#")
+            sequence_length = int(round(region_length * kept / n_before))
+            print(f"Effective L = {region_length:,} x {kept:,}/{n_before:,} = {sequence_length:,}")
         meta = {
             "chrom": chrom,
             "sequence_length": sequence_length,
+            "region_length": region_length,
+            "n_sites_before_polarization": n_before,
+            "kept_fraction": None if n_before is None else kept / n_before,
             "source_vcf": str(args.input_vcf),
             "n_sites_total": total,
             "n_sites_kept": kept,
