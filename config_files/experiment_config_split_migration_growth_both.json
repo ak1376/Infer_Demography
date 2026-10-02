@@ -21,8 +21,6 @@
     "pooling_mode": "individual",
     "window_size_bp": 100000,
     "num_windows": "auto",
-    "use_genmap": true,
-    "phased": true,
     "exclude_samples": ["FR217", "FR361"],
     "exclude_breakpoint_buffer_bp": 3000000,
     "trim_region": {
@@ -105,7 +103,6 @@
   },
   "momentsld_use_scaled_units": false,
   "ld_diagonal_only_varcov": false,
-  "moments_best_fit_path": "experiments/split_migration_growth_both/real_data_analysis/inferences/moments/best_fit.pkl",
   "fixed_parameters": {
   },
   "parameter_order": [
@@ -139,11 +136,6 @@
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [20, 30, 40],
-  "generate_profiles": false,
-  "profile_points": 41,
-  "profile_widen": 0.5,
-  "profile_make_plots": true,
-  "start_jitter_sigma": 0.05,
   "optimizer_algorithm": "LD_LBFGS",
   "momentsld_optimizer_algorithm": "LN_BOBYQA",
   "momentsld_optimizer_maxeval": 3000,

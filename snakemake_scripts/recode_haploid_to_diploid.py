@@ -3,13 +3,13 @@
 Combine pairs of haploid samples into pseudo-diploid individuals.
 
 Usage:
-  recode_haploid_to_diploid.py <in.vcf.gz> <out.vcf> <pairs.tsv> [--phased]
+  recode_haploid_to_diploid.py <in.vcf.gz> <out.vcf> <pairs.tsv>
 
 pairs.tsv (from make_pseudodiploid_pairs.py) has header "name hap1 hap2 pop";
-each row becomes one output sample whose GT is "<hap1 GT>/<hap2 GT>", or
-"<hap1 GT>|<hap2 GT>" with --phased (the phase is known exactly, so LD can be
-computed from the two haplotypes with use_genotypes=False). Haploid samples
-not listed in pairs.tsv are dropped. If either haplotype is missing, GT is "./.".
+each row becomes one output sample whose GT is the phased "<hap1 GT>|<hap2 GT>"
+(the phase is known exactly, so LD is computed from the two haplotypes with
+use_genotypes=False). Haploid samples not listed in pairs.tsv are dropped. If
+either haplotype is missing, GT is ".|.".
 Only the GT field is kept (FORMAT is rewritten to "GT").
 """
 import gzip
@@ -18,7 +18,6 @@ import sys
 inp = sys.argv[1]    # e.g. polarized.vcf.gz
 out = sys.argv[2]    # e.g. polarized.diploidGT.vcf  (NOT .gz)
 pairs_tsv = sys.argv[3]
-sep = "|" if "--phased" in sys.argv[4:] else "/"
 
 pairs = []  # (name, hap1, hap2)
 with open(pairs_tsv) as f:
@@ -58,6 +57,6 @@ with gzip.open(inp, "rt") as fin, open(out, "wt") as fout:
         for ia, ib in pair_cols:
             a = haploid_allele(fields[ia].split(":")[gt_idx])
             b = haploid_allele(fields[ib].split(":")[gt_idx])
-            out_gts.append(f".{sep}." if "." in (a, b) else f"{a}{sep}{b}")
+            out_gts.append(".|." if "." in (a, b) else f"{a}|{b}")
 
         fout.write("\t".join(fields[:8] + ["GT"] + out_gts) + "\n")

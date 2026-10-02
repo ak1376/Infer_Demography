@@ -26,15 +26,16 @@ mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
+load_real_data_config "$CFG"   # sets MODEL, REAL_FIT_ROOT, ...
 
 VARIANT="${VARIANT:-wo_FIM_wo_SFSresids}"
 MODEL_KEY="${MODEL_KEY:-xgboost}"
 
-TARGET="experiments/${MODEL}/real_data_analysis/calibration_${VARIANT}/${MODEL_KEY}/ppc/calibration_ppc.png"
+TARGET="${REAL_FIT_ROOT}/calibration_${VARIANT}/${MODEL_KEY}/ppc/calibration_ppc.png"
 
 echo "MODEL=$MODEL  VARIANT=$VARIANT  MODEL_KEY=$MODEL_KEY"
 echo "Target: $TARGET"

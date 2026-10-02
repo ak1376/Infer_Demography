@@ -19,7 +19,6 @@ configfile: "config_files/model_config.yaml"
 
 # External scripts
 SIM_SCRIPT   = "snakemake_scripts/simulation.py"
-INFER_SCRIPT = "snakemake_scripts/moments_dadi_inference.py"
 WIN_SCRIPT   = "snakemake_scripts/simulate_window_replicate.py"
 LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
 RESID_SCRIPT = "snakemake_scripts/computing_residuals_from_sfs.py"
@@ -33,7 +32,6 @@ NUM_OPTIMS    = int(CFG.get("num_optimizations", 3))
 NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
 TOP_K         = int(CFG.get("top_k", 2))
 NUM_WINDOWS   = int(CFG.get("num_windows", 100))
-WINDOW_SIZE   = 10_000_000
 
 # window_mode: "replicates" (default) independently re-simulates each of the
 # NUM_WINDOWS windows for a sid at chunk_genome_length bp each
@@ -50,7 +48,6 @@ if WINDOW_MODE not in ("replicates", "chunked"):
 FIM_ENGINES = CFG.get("fim_engines", ["moments"])
 
 USE_GPU_LD = CFG.get("use_gpu_ld", False)
-USE_GPU_DADI = CFG.get("use_gpu_dadi", False)
 
 USE_GS = bool(CFG.get("gram_schmidt", False))
 
@@ -92,8 +89,6 @@ GENMAP_DIR       = RP["GENMAP_DIR"]       # {GENMAP_DIR}/{chrom}/genetic_map.txt
 AUTOSOMES        = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]          # all autosomal arms (ChrX excluded: not an autosome)
 ANCESTRAL_DIR    = "drosophila_data/dpgp_ancestor"                        # relative to repo root, alongside drosophila_data/data/
 
-# Data now lives in per-chromosome subdirs: {DROSO_DIR}/{chrom}/{polarized,polarized.diploidGT,unfolded.sfs}...
-RAW_HAPLOID_VCF  = "drosophila_data/data/Chr3L.vcf.gz"                    # legacy Chr3L alias
 # popfile.txt (sample->population map) doesn't depend on the genomic region
 # analyzed, so it stays on the untagged base dir -- otherwise every new
 # trim_region tag would need its own copy of an identical file.
@@ -104,30 +99,18 @@ PSEUDODIPLOID_PAIRS   = RP["PSEUDODIPLOID_PAIRS"]     # tagged .excl-<ids> when 
 PSEUDODIPLOID_POPFILE = RP["PSEUDODIPLOID_POPFILE"]
 DIPLOID_SUFFIX        = RP["DIPLOID_SUFFIX"]          # "" or ".excl-<ids>" in the diploid VCF names
 EXCLUDE_SAMPLES       = RP["EXCLUDE_SAMPLES"]
-REAL_VCF         = f"{DROSO_DIR}/Chr3L/polarized.diploidGT.vcf.gz"        # diploid polarized (Chr3L); used by MomentsLD-real
-POLARIZED_VCF    = f"{DROSO_DIR}/Chr3L/polarized.vcf.gz"                  # haploid + AA (Chr3L); legacy alias
-UNFOLDED_SFS     = f"{DROSO_DIR}/Chr3L/unfolded.sfs.pkl"                  # per-chrom SFS (Chr3L); legacy alias
 COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl"     # summed autosomal SFS; used by SFS inference
 COMBINED_SFS_META = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.meta.json"  # summed sequence_length across AUTOSOMES
-ANCESTRAL_FASTA  = f"{ANCESTRAL_DIR}/chr3L.q30.fa"                        # legacy Chr3L alias
 
 # Per-chromosome path helpers (by-chromosome layout)
-def polarized_vcf(chrom):          return f"{DROSO_DIR}/{chrom}/polarized.vcf.gz"
-# real_data_analysis.phased -> a|b pseudo-diploids + haplotype-mode LD (use_genotypes=False)
-REAL_PHASED = RP["REAL_PHASED"]
-def polarized_diploid_vcf(chrom):
-    suffix = ".phased" if REAL_PHASED else ""
-    return f"{DROSO_DIR}/{chrom}/polarized.diploidGT{DIPLOID_SUFFIX}{suffix}.vcf.gz"
+# Phased (a|b) pseudo-diploids: LD stats come from the two known haplotypes.
+def polarized_diploid_vcf(chrom):  return f"{DROSO_DIR}/{chrom}/polarized.diploidGT{DIPLOID_SUFFIX}.phased.vcf.gz"
 def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded.sfs.pkl"
 def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr', 'chr', 1)}.q30.fa"
 
 def _resid_vector_fname():
     # which vector do we want to feed into all_inferences.pkl?
     return "residuals_gs_coeffs.npy" if USE_GS else "residuals_flat.npy"
-
-def _resid_vector_regex():
-    # for combine_results parsing
-    return r"residuals_gs_coeffs\.npy$" if USE_GS else r"residuals_flat\.npy$"
 
 
 def _normalize_residual_engines(val):
@@ -247,12 +230,6 @@ if REAL_POOLING_MODE not in ("pooled", "individual"):
 REAL_WINDOW_BP  = int(REAL_DATA_CFG.get("window_size_bp", 10_000_000))
 _raw_real_nw    = REAL_DATA_CFG.get("num_windows", 100)
 REAL_NUM_WINDOWS_MODE = "auto" if str(_raw_real_nw).lower() == "auto" else int(_raw_real_nw)
-# When true, the real-data LD-fitting path (real_vcf_windows/compute_ld_real/
-# infer_momentsld_real) uses the true Comeron per-chromosome recombination map
-# instead of a single flat/average rate to convert physical -> genetic
-# distance. Part of the LD-run name ("genmap"/"flatmap") so flat-rate and genmap results live at
-# distinct, non-colliding paths instead of one overwriting the other.
-REAL_USE_GENMAP = bool(REAL_DATA_CFG.get("use_genmap", False))
 # MomentsLD_real_data.py always needs SOME N_ref to satisfy resolve_n_ref(),
 # but only actually USES it for rho-scaling when momentsld_use_scaled_units
 # is True -- in absolute-units mode (the current default), rho is rescaled
@@ -273,7 +250,7 @@ def _momentsld_seed_flag(w, input):
         return "--n-ref 1.0"
     flag = f'--sfs-best-fit-pkl "{input.sfs_best}"'
     return flag if REAL_USE_SCALED_UNITS else f"{flag} --n-ref 1.0"
-# LD-run name from arms + window + map, e.g. "Chr3L_100kb_genmap" (see
+# LD-run name from arms + window + exclusions, e.g. "Chr3L_100kb" (see
 # src/real_paths.py). REAL_LD_ENGINE names the pooled MomentsLD fit subdir,
 # REAL_LD_ENGINE_ARM the per-arm one (arm is already in that path).
 REAL_LD_ENGINE     = RP["REAL_LD_ENGINE"]
@@ -287,11 +264,8 @@ REAL_LD_ENGINE_ARM = RP["REAL_LD_ENGINE_ARM"]
 # *fit itself* (aggregate_opts_momentsld_real's best_fit.pkl) is genuinely
 # model-specific and lives under REAL_INF_ROOT instead -- see that rule below.
 REAL_LD_ROOT = RP["REAL_LD_ROOT"]   # {DROSO_DIR}/ld/{REAL_LD_NAME}
-# Per-autosome LD decay analysis (independent of the Chr3L inference pipeline above)
-REAL_LD_BYCHROM = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_by_chrom"
-# Same, but with the real Comeron (R5/dm3) recombination map and 1 Mb windows.
-REAL_LD_GENMAP     = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_genmap"
-GENMAP_WINDOW_SIZE = 1_000_000
+# Real-data LD always converts bp -> genetic distance with the Comeron (R5/dm3)
+# recombination map (build_genetic_map_real turns this into GENMAP_DIR files).
 COMERON_XLSX       = f"{DROSO_BASE_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"  # shared reference map, region-independent
 # infer_engine_real/aggregate_opts_engine_real fit COMBINED_SFS, which is
 # itself trim-tagged (built under DROSO_DIR) -- so these fit outputs need the
@@ -301,7 +275,6 @@ COMERON_XLSX       = f"{DROSO_BASE_DIR}/recombination_maps/Comeron_100kb_R5_R6.x
 REAL_FIT_ROOT = RP["REAL_FIT_ROOT"]   # experiments/{MODEL}/real_trimmed (or real_untrimmed)
 REAL_RUN_ROOT = RP["REAL_RUN_ROOT"]
 REAL_INF_ROOT = RP["REAL_INF_ROOT"]
-REAL_OPTIMS   = list(range(NUM_REAL_OPTIMS))
 
 # Single-chromosome variants of REAL_RUN_ROOT/REAL_INF_ROOT (as opposed to the
 # combined-autosome COMBINED_SFS used by infer_engine_real above). {chrom} is
@@ -321,7 +294,7 @@ REAL_TOP_K    = int(CFG.get("real_top_k", TOP_K))
 # real_predict_modeling_dir config override -- so real-data predictions can
 # be compared with/without FIM and SFS-residual features. Each variant's
 # outputs live under their own prediction_{variant}/ dir.
-REAL_PRED_ROOT = f"experiments/{MODEL}/real_data_analysis/prediction_{{variant}}"
+REAL_PRED_ROOT = f"{REAL_FIT_ROOT}/prediction_{{variant}}"
 
 def _real_modeling_dir(variant):
     return f"experiments/{MODEL}/modeling_{variant}"
@@ -354,7 +327,7 @@ REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
 # fitted params, one job per (variant, model_key, rep) so replicates can run
 # as parallel SLURM array tasks (see bash_scripts/simulation/calibration_simulate.sh) --
 # each array task builds just its own replicate_{rep} target.
-CALIBRATION_ROOT = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/replicate_{{rep}}"
+CALIBRATION_ROOT = f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/replicate_{{rep}}"
 NUM_CALIBRATION_REPLICATES = int(CFG.get("calibration_n_replicates", 20))
 CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
 
@@ -366,7 +339,6 @@ wildcard_constraints:
     # combine_features narrows this back down (raw_features has its own
     # producer rules, build_raw_features_dataset/prepare_raw_features_splits).
     variant    = r"(w|wo)_FIM_(w|wo)_SFSresids|raw_features",
-    ld_variant = r"by_chrom|genmap",
     reg        = r"standard|ridge|lasso|elasticnet",
     opt        = "|".join(str(i) for i in range(NUM_OPTIMS)),
     engine     = "moments|dadi",
@@ -1789,35 +1761,12 @@ rule make_pseudodiploid_pairs:
 
 ##############################################################################
 # RULE recode_polarized_to_diploid  (per-chromosome, autosomes)
-# Combine pairs of haploid samples (from make_pseudodiploid_pairs) into
-# pseudo-diploid GTs so that MomentsLD can use exactly the same sites as the
-# SFS analysis. Unpaired haploid samples are dropped.
+# Combine pairs of haploid samples (from make_pseudodiploid_pairs) into phased
+# (a|b) pseudo-diploid GTs, so MomentsLD uses exactly the same sites as the
+# SFS analysis and computes LD from the two known haplotypes
+# (use_genotypes=False). Unpaired haploid samples are dropped.
 ##############################################################################
 rule recode_polarized_to_diploid:
-    input:
-        vcf   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
-        tbi   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
-        pairs = PSEUDODIPLOID_PAIRS,
-    output:
-        vcf = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT{DIPLOID_SUFFIX}.vcf.gz",
-        tbi = f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT{DIPLOID_SUFFIX}.vcf.gz.tbi",
-    params:
-        script = f"{workflow.basedir}/snakemake_scripts/recode_haploid_to_diploid.py",
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "$(dirname "{output.vcf}")"
-        out="{output.vcf}"
-        tmp_vcf="${{out%.gz}}"                 # uncompressed temp (strip .gz)
-        python "{params.script}" "{input.vcf}" "$tmp_vcf" "{input.pairs}"
-        bgzip -f "$tmp_vcf"
-        tabix -f -p vcf "{output.vcf}"
-        """
-
-# Same pairs, written phased (a|b) -- used when real_data_analysis.phased is
-# set, so LD stats come from the two known haplotypes (use_genotypes=False).
-rule recode_polarized_to_phased_diploid:
     input:
         vcf   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
         tbi   = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
@@ -1834,7 +1783,7 @@ rule recode_polarized_to_phased_diploid:
         mkdir -p "$(dirname "{output.vcf}")"
         out="{output.vcf}"
         tmp_vcf="${{out%.gz}}"
-        python "{params.script}" "{input.vcf}" "$tmp_vcf" "{input.pairs}" --phased
+        python "{params.script}" "{input.vcf}" "$tmp_vcf" "{input.pairs}"
         bgzip -f "$tmp_vcf"
         tabix -f -p vcf "{output.vcf}"
         """
@@ -1892,19 +1841,6 @@ rule combine_autosomal_sfs:
           --in-meta {input.per_chrom_meta} \
           --output-meta "{output.meta}"
         """
-
-##############################################################################
-# Convenience targets (autosomes)
-##############################################################################
-rule all_polarized_diploid:
-    input:
-        expand(f"{DROSO_DIR}/{{chrom}}/polarized.diploidGT.vcf.gz", chrom=AUTOSOMES),
-
-rule all_unfolded_sfs:
-    input:
-        expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl", chrom=AUTOSOMES),
-        COMBINED_SFS,
-
 
 ##############################################################################
 # REAL DATA – NLopt Poisson SFS optimisation (moments / dadi)
@@ -2142,11 +2078,7 @@ def real_flat_ld_stats(wildcards):
 rule compute_ld_real:
     input:
         vcf_gz = f"{REAL_LD_ROOT}/{{arm}}/windows/window_{{i}}.vcf.gz",
-        # Only pulled in (and only required) when REAL_USE_GENMAP is set --
-        # forces build_genetic_map_real to run first for this arm.
-        gmap   = lambda wc: (
-            [f"{GENMAP_DIR}/{wc.arm}/genetic_map.txt"] if REAL_USE_GENMAP else []
-        ),
+        gmap   = f"{GENMAP_DIR}/{{arm}}/genetic_map.txt",
     output:
         pkl = f"{REAL_LD_ROOT}/{{arm}}/LD_stats/LD_stats_window_{{i}}.pkl"
     resources:
@@ -2156,14 +2088,6 @@ rule compute_ld_real:
         config  = EXP_CFG,
         sim_dir = lambda wc: f"{REAL_LD_ROOT}/{wc.arm}",
         r_bins  = R_BINS_STR,
-        # Empty string (flat-map default inside compute_ld_window.py) unless
-        # REAL_USE_GENMAP, in which case point it at the real Comeron map
-        # instead of the per-arm flat/average rate.
-        rec_map_arg = lambda wc: (
-            f'--rec-map-file "{GENMAP_DIR}/{wc.arm}/genetic_map.txt"'
-            if REAL_USE_GENMAP else ""
-        ),
-        hap_arg = "--haplotypes" if REAL_PHASED else "",
     shell:
         r"""
         set -euo pipefail
@@ -2174,7 +2098,8 @@ rule compute_ld_real:
             --window-index "{wildcards.i}" \
             --config-file "{params.config}" \
             --r-bins "{params.r_bins}" \
-            {params.rec_map_arg} {params.hap_arg}
+            --rec-map-file "{input.gmap}" \
+            --haplotypes
         """
 
 
@@ -2201,27 +2126,6 @@ checkpoint materialize_real_ld_stats:
         for j, src in enumerate(input.pkls):
             shutil.copyfile(src, out / f"LD_stats_window_{j}.pkl")
 
-##############################################################################
-# PER-AUTOSOME LD DECAY ANALYSIS
-# One windowing/LD/aggregation/decay-comparison chain, parametrised by
-# {chrom} AND {ld_variant}:
-#   ld_variant="by_chrom" -> flat-rate WINDOW_SIZE (10 Mb) windows, written
-#                             under REAL_LD_BYCHROM/{chrom}/
-#   ld_variant="genmap"   -> GENMAP_WINDOW_SIZE (1 Mb) windows binned by
-#                             genetic distance from the real Comeron (R5/dm3)
-#                             recombination map instead of a flat rate,
-#                             written under REAL_LD_GENMAP/{chrom}/ — lets you
-#                             check whether the cross-autosome curves collapse
-#                             once the recombination landscape is accounted for.
-# Both variants feed a cross-autosome decay-curve comparison (no inference).
-##############################################################################
-LD_VARIANT_WINDOW_SIZE = {"by_chrom": WINDOW_SIZE, "genmap": GENMAP_WINDOW_SIZE}
-
-
-def ld_variant_root(ld_variant, chrom):
-    return f"{REAL_LD_BYCHROM if ld_variant == 'by_chrom' else REAL_LD_GENMAP}/{chrom}"
-
-
 rule build_genetic_map_real:
     input:
         xlsx = COMERON_XLSX,
@@ -2237,111 +2141,6 @@ rule build_genetic_map_real:
             --xlsx  "{input.xlsx}" \
             --chrom "{wildcards.chrom}" \
             --out   "{output.gmap}"
-        """
-
-rule split_real_vcf_window_chrom:
-    input:
-        vcf     = lambda wc: polarized_diploid_vcf(wc.chrom),
-        popfile = PSEUDODIPLOID_POPFILE,
-    output:
-        vcf_gz = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/windows/window_{{i}}.vcf.gz"
-    params:
-        script      = "snakemake_scripts/split_vcf_windows.py",
-        window_size = lambda wc: LD_VARIANT_WINDOW_SIZE[wc.ld_variant],
-        num_windows = NUM_WINDOWS,
-        out_dir     = lambda wc: f"{ld_variant_root(wc.ld_variant, wc.chrom)}/windows",
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.out_dir}"
-
-        python "{params.script}" \
-            --input-vcf "{input.vcf}" \
-            --popfile "{input.popfile}" \
-            --out-dir "{params.out_dir}" \
-            --window-size "{params.window_size}" \
-            --num-windows "{params.num_windows}" \
-            --window-index "{wildcards.i}"
-        """
-
-rule compute_ld_real_chrom:
-    input:
-        vcf_gz = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/windows/window_{{i}}.vcf.gz",
-        gmap   = lambda wc: (
-            [f"{GENMAP_DIR}/{wc.chrom}/genetic_map.txt"] if wc.ld_variant == "genmap" else []
-        ),
-    output:
-        pkl = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/LD_stats/LD_stats_window_{{i}}.pkl"
-    resources:
-        gpu = 1 if USE_GPU_LD else 0
-    params:
-        script  = "snakemake_scripts/compute_ld_window.py",
-        config  = EXP_CFG,
-        sim_dir = lambda wc: ld_variant_root(wc.ld_variant, wc.chrom),
-        r_bins  = R_BINS_STR
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.sim_dir}/LD_stats"
-
-        GMAP_FLAG=""
-        if [ -n "{input.gmap}" ]; then
-            GMAP_FLAG="--rec-map-file {input.gmap}"
-        fi
-
-        python "{params.script}" \
-            --sim-dir "{params.sim_dir}" \
-            --window-index "{wildcards.i}" \
-            --config-file "{params.config}" \
-            --r-bins "{params.r_bins}" \
-            $GMAP_FLAG
-        """
-
-rule aggregate_ld_real_chrom:
-    """Aggregate per-window LD stats for one autosome (by_chrom or genmap variant) into means/varcovs."""
-    input:
-        pkls = lambda w: expand(
-            f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{w.ld_variant}/{w.chrom}/LD_stats/LD_stats_window_{{i}}.pkl",
-            i=WINDOWS
-        ),
-    output:
-        mv = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/{{chrom}}/means.varcovs.pkl",
-    params:
-        output_root = lambda wc: ld_variant_root(wc.ld_variant, wc.chrom),
-        cfg         = EXP_CFG,
-        bins        = R_BINS_STR,
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/LD_inference.py" \
-            --output-root "{params.output_root}" \
-            --config-file "{params.cfg}" \
-            --r-bins      "{params.bins}" \
-            --skip-optimize
-        """
-
-rule compare_ld_decay_autosomes:
-    """Overlay LD decay curves across autosomes, one panel per LD statistic, for one variant."""
-    input:
-        mv = lambda wc: expand(
-            f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{wc.ld_variant}/{{chrom}}/means.varcovs.pkl",
-            chrom=AUTOSOMES,
-        ),
-    output:
-        pdf = f"experiments/{MODEL}/real_data_analysis/inferences/MomentsLD_{{ld_variant}}/ld_decay_across_autosomes.pdf",
-    params:
-        script = "snakemake_scripts/compare_ld_decay_autosomes.py",
-        labels = " ".join(AUTOSOMES),
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        python "{params.script}" \
-            --means {input.mv} \
-            --labels {params.labels} \
-            --out-pdf "{output.pdf}"
         """
 
 ##############################################################################
@@ -2810,7 +2609,7 @@ rule combine_results_real:
 # model. One dataset per {variant} (matches MODELING_VARIANTS) since features #
 # differ by whether FIM / SFS-residual columns are included.                 #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/real_features_df.pkl
+#   snakemake experiments/<MODEL>/real_trimmed/prediction_<variant>/real_features_df.pkl
 ##############################################################################
 rule build_real_prediction_dataset:
     input:
@@ -2842,7 +2641,7 @@ rule build_real_prediction_dataset:
         # unsubstituted "{variant}" text; params (unlike input/output) don't
         # get auto-filled from wildcards, so this must build the real path
         # from w.variant directly.
-        out_dir      = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}",
+        out_dir      = lambda w: f"{REAL_FIT_ROOT}/prediction_{w.variant}",
         ld_engine_subdir = REAL_LD_ENGINE,
     threads: 1
     shell:
@@ -2868,7 +2667,7 @@ rule build_real_prediction_dataset:
 # {variant} selects which modeling_{variant}-trained model to use (matches   #
 # MODELING_VARIANTS) -- outputs land under the matching prediction_{variant}/ #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/predictions_random_forest.json
+#   snakemake experiments/<MODEL>/real_trimmed/prediction_<variant>/predictions_random_forest.json
 ##############################################################################
 rule predict_real_data:
     input:
@@ -2880,7 +2679,7 @@ rule predict_real_data:
         json = f"{REAL_PRED_ROOT}/predictions_{{model_key}}.json",
         csv  = f"{REAL_PRED_ROOT}/predictions_{{model_key}}.csv",
     params:
-        out_prefix = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}",
+        out_prefix = lambda w: f"{REAL_FIT_ROOT}/prediction_{w.variant}/predictions_{w.model_key}",
     threads: 1
     shell:
         r"""
@@ -2902,7 +2701,7 @@ rule predict_real_data:
 # features (normalized_train_features.pkl), same space real_features_df.pkl  #
 # is normalized into.                                                        #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/prediction_<variant>/shap_summary_random_forest.json
+#   snakemake experiments/<MODEL>/real_trimmed/prediction_<variant>/shap_summary_random_forest.json
 ##############################################################################
 rule shap_real_data:
     input:
@@ -2916,7 +2715,7 @@ rule shap_real_data:
         csv  = f"{REAL_PRED_ROOT}/shap_values_{{model_key}}.csv",
         png  = f"{REAL_PRED_ROOT}/shap_summary_{{model_key}}.png",
     params:
-        out_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}",
+        out_dir = lambda w: f"{REAL_FIT_ROOT}/prediction_{w.variant}",
     threads: 1
     shell:
         r"""
@@ -2940,18 +2739,18 @@ rule shap_real_data:
 # loop in one job. Saves the tree sequence + SFS per replicate for           #
 # comparison against the real observed SFS.                                 #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/replicate_<rep>/SFS.pkl
+#   snakemake experiments/<MODEL>/real_trimmed/calibration_<variant>/<model_key>/replicate_<rep>/SFS.pkl
 ##############################################################################
 rule calibration_simulate:
     input:
         cfg         = EXP_CFG,
-        predictions = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}.json",
+        predictions = lambda w: f"{REAL_FIT_ROOT}/prediction_{w.variant}/predictions_{w.model_key}.json",
     output:
         trees  = f"{CALIBRATION_ROOT}/tree_sequence.trees",
         sfs    = f"{CALIBRATION_ROOT}/SFS.pkl",
         meta   = f"{CALIBRATION_ROOT}/meta.json",
     params:
-        out_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}",
+        out_dir = lambda w: f"{REAL_FIT_ROOT}/calibration_{w.variant}/{w.model_key}",
     threads: 1
     shell:
         r"""
@@ -2973,11 +2772,11 @@ rule calibration_simulate:
 rule calibration_simulate_all_reps:
     input:
         lambda w: expand(
-            f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}/replicate_{{rep}}/SFS.pkl",
+            f"{REAL_FIT_ROOT}/calibration_{w.variant}/{w.model_key}/replicate_{{rep}}/SFS.pkl",
             rep=CALIBRATION_REPS,
         )
     output:
-        touch(f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/.all_reps_done")
+        touch(f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/.all_reps_done")
 
 ##############################################################################
 # REAL DATA: calibration_ppc – model calibration / posterior-predictive check #
@@ -2986,7 +2785,7 @@ rule calibration_simulate_all_reps:
 # calibration_simulate replicates for one {variant}/{model_key}. Requires all #
 # replicates (calibration_simulate) to already exist.                        #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/ppc/calibration_ppc.png
+#   snakemake experiments/<MODEL>/real_trimmed/calibration_<variant>/<model_key>/ppc/calibration_ppc.png
 ##############################################################################
 rule calibration_ppc:
     input:
@@ -2994,15 +2793,15 @@ rule calibration_ppc:
         sfs  = COMBINED_SFS,
         meta = COMBINED_SFS_META,
         reps = lambda w: expand(
-            f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}/replicate_{{rep}}/SFS.pkl",
+            f"{REAL_FIT_ROOT}/calibration_{w.variant}/{w.model_key}/replicate_{{rep}}/SFS.pkl",
             rep=CALIBRATION_REPS,
         ),
     output:
-        png     = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/ppc/calibration_ppc.png",
-        summary = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/ppc/calibration_ppc_summary.json",
+        png     = f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/ppc/calibration_ppc.png",
+        summary = f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/ppc/calibration_ppc_summary.json",
     params:
-        calibration_dir = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}",
-        out_dir         = lambda w: f"experiments/{MODEL}/real_data_analysis/calibration_{w.variant}/{w.model_key}/ppc",
+        calibration_dir = lambda w: f"{REAL_FIT_ROOT}/calibration_{w.variant}/{w.model_key}",
+        out_dir         = lambda w: f"{REAL_FIT_ROOT}/calibration_{w.variant}/{w.model_key}/ppc",
         title           = lambda w: f"{MODEL} ({w.variant}/{w.model_key})",
     threads: 1
     shell:
@@ -3027,15 +2826,15 @@ rule calibration_ppc:
 # -- no calibration_simulate replicates needed, so this doesn't depend on    #
 # the (SLURM-array) tree-sequence simulations at all.                        #
 #                                                                             #
-#   snakemake experiments/<MODEL>/real_data_analysis/calibration_<variant>/<model_key>/ppc/calibration_ld_ppc.pdf
+#   snakemake experiments/<MODEL>/real_trimmed/calibration_<variant>/<model_key>/ppc/calibration_ld_ppc.pdf
 ##############################################################################
 rule calibration_ld_ppc:
     input:
         cfg         = EXP_CFG,
         real_ld     = f"{REAL_LD_ROOT}/means.varcovs.pkl",
-        predictions = lambda w: f"experiments/{MODEL}/real_data_analysis/prediction_{w.variant}/predictions_{w.model_key}.json",
+        predictions = lambda w: f"{REAL_FIT_ROOT}/prediction_{w.variant}/predictions_{w.model_key}.json",
     output:
-        pdf = f"experiments/{MODEL}/real_data_analysis/calibration_{{variant}}/{{model_key}}/ppc/calibration_ld_ppc.pdf",
+        pdf = f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/ppc/calibration_ld_ppc.pdf",
     threads: 1
     shell:
         r"""

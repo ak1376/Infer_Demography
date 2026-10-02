@@ -15,22 +15,15 @@ set -euo pipefail
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
+load_real_data_config "$CFG"   # sets MODEL, REAL_INF_ROOT, REAL_LD_ENGINE, REAL_FIT_ROOT, ...
 VARIANT="${VARIANT:-wo_FIM_wo_SFSresids}"
 MODEL_KEY="${MODEL_KEY:-xgboost}"
 
-# Must match the Snakefile's REAL_TAG / REAL_LD_ENGINE (and every other
-# real-data script's copy of this same logic).
-readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$CFG")
-REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$CFG")
-REAL_TAG=$(IFS=_; echo "${REAL_ARMS[*]}")
-[[ "$REAL_USE_GENMAP" == "true" ]] && REAL_TAG="${REAL_TAG}_genmap"
-REAL_LD_ENGINE="MomentsLD_${REAL_TAG}"
-
-REAL_INF_ROOT="$ROOT/experiments/${MODEL}/real_data_analysis/inferences"
-PRED_JSON="$ROOT/experiments/${MODEL}/real_data_analysis/prediction_${VARIANT}/predictions_${MODEL_KEY}.json"
+REAL_INF_ROOT="$ROOT/${REAL_INF_ROOT}"
+PRED_JSON="$ROOT/${REAL_FIT_ROOT}/prediction_${VARIANT}/predictions_${MODEL_KEY}.json"
 
 echo "MODEL=$MODEL  VARIANT=$VARIANT  MODEL_KEY=$MODEL_KEY"
 echo "ML prediction : $PRED_JSON"

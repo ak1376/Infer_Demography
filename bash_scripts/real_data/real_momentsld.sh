@@ -79,7 +79,7 @@ else
         ARM="${REAL_ARMS[$ARM_I]}"
 
         RUN_ROOT_ARM="$(real_data_chrom_path "$REAL_RUN_ROOT_CHROM_TMPL" "$ARM")"
-        TARGET="${RUN_ROOT_ARM}/run_${OPT}/inferences/MomentsLD/best_fit.pkl"
+        TARGET="${RUN_ROOT_ARM}/run_${OPT}/inferences/${REAL_LD_ENGINE_ARM}/best_fit.pkl"
         if [[ -s "$ROOT/$TARGET" ]]; then
             echo "SKIP: ARM=$ARM OPT=$OPT (already exists: $TARGET)"
             continue

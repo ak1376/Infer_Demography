@@ -66,7 +66,7 @@ MODEL_KEYS=(
 echo "MODEL=$MODEL"
 
 for variant in "${MODELING_VARIANTS[@]}"; do
-    REAL_PRED_ROOT="experiments/${MODEL}/real_data_analysis/prediction_${variant}"
+    REAL_PRED_ROOT="${REAL_FIT_ROOT}/prediction_${variant}"
     MODELING_DIR="experiments/${MODEL}/modeling_${variant}"
 
     echo "[$variant] Building real prediction dataset -> ${REAL_PRED_ROOT}/real_features_df.pkl"

@@ -10,20 +10,20 @@ name does NOT spell out (exact trim coordinates, r-bins, pairing seed, ...) is
 recorded in a settings.json inside that folder; check_settings() refuses to
 reuse a folder whose settings.json disagrees with the current config.
 
-Layout (e.g. trimmed data, Chr3L, 100 kb windows, Comeron map):
+Layout (e.g. trimmed data, Chr3L, 100 kb windows):
     real_data_analysis/data/drosophila/                    region-independent inputs
         popfile.txt, pseudodiploid_*.txt, genetic_maps/{chrom}/genetic_map.txt
     real_data_analysis/data/drosophila_trimmed/            processed data
         settings.json
         {chrom}/polarized.vcf.gz, polarized.diploidGT.vcf.gz, unfolded.sfs.pkl
         combined/autosomes.unfolded.sfs.pkl
-        ld/Chr3L_100kb_genmap/                             one LD run
+        ld/Chr3L_100kb/                             one LD run
             settings.json
             {arm}/windows/, {arm}/LD_stats/, {arm}/means.varcovs.pkl
     experiments/{model}/real_trimmed/                      fits on that data
         runs/, inferences/                                 combined-autosome SFS fits (+ pooled MomentsLD)
         {chrom}/runs/, {chrom}/inferences/                 per-arm fits
-            inferences/moments/, inferences/MomentsLD_100kb_genmap/
+            inferences/moments/, inferences/MomentsLD_100kb/
 """
 from __future__ import annotations
 
@@ -57,8 +57,6 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     window_bp = int(rd.get("window_size_bp", 10_000_000))
     nw = rd.get("num_windows", 100)
     nw = "auto" if str(nw).lower() == "auto" else int(nw)
-    genmap = bool(rd.get("use_genmap", False))
-    phased = bool(rd.get("phased", False))
     # Haploid samples left out before pairing (e.g. inversion carriers).
     excl = sorted(rd.get("exclude_samples", []))
     excl_tag = ("excl-" + "-".join(excl)) if excl else ""
@@ -71,13 +69,11 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     # LD-run name: only what varies between runs. num_windows="auto" means
     # non-overlapping tiling, so it adds nothing; a fixed count is spelled out.
     win = _bp_label(window_bp) + ("" if nw == "auto" else f"x{nw}")
-    map_label = "genmap" if genmap else "flatmap"
-    phase_label = "_phased" if phased else ""                 # haplotype-mode LD on a|b pseudo-diploids
     excl_label = f"_{excl_tag}" if excl else ""
     buf_label = f"_bpbuf{_bp_label(bp_buffer)}" if bp_buffer else ""
-    tags = f"{phase_label}{excl_label}{buf_label}"
-    ld_name = f"{_arms_label(arms)}_{win}_{map_label}{tags}"
-    ld_engine_arm = f"MomentsLD_{win}_{map_label}{tags}"  # per-arm fit subdir
+    tags = f"{excl_label}{buf_label}"
+    ld_name = f"{_arms_label(arms)}_{win}{tags}"
+    ld_engine_arm = f"MomentsLD_{win}{tags}"              # per-arm fit subdir
     ld_engine = f"MomentsLD_{ld_name}"                        # pooled fit subdir
 
     fit_root = f"experiments/{model}/real_{data_label}"
@@ -93,18 +89,13 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
         "arms": arms,
         "window_size_bp": window_bp,
         "num_windows": nw,
-        "use_genmap": genmap,
-        "phased": phased,
         "r_bins": r_bins,
-        # flat-map runs depend on the constant rate; genmap runs on the map build
-        "recombination_rate": None if genmap else cfg.get("recombination_rate"),
     }
 
     return {
         "DROSO_BASE_DIR": DROSO_BASE_DIR,
         "DROSO_DIR": droso_dir,
         "REAL_LD_NAME": ld_name,
-        "REAL_PHASED": phased,
         "EXCLUDE_SAMPLES": ",".join(excl),
         "BREAKPOINT_BUFFER_BP": bp_buffer,
         # pairing files + diploid-VCF suffix carry the exclusion so runs with

@@ -24,11 +24,9 @@
 #
 # Rules run: real_vcf_windows (checkpoint), compute_ld_real
 #
-# REAL_LD_ROOT is NOT model-scoped (must match the Snakefile's REAL_LD_ROOT =
-# f"{DROSO_DIR}/{REAL_LD_ENGINE}", REAL_LD_ENGINE = f"MomentsLD_{REAL_TAG}",
-# REAL_TAG = "_".join(REAL_ARMS) + ("_genmap" if use_genmap)): the window
-# split + per-window LD stats are pure functions of the VCF/window-size/r-bins
-# for this arm-set/genmap choice, not of which demographic model you're
+# REAL_LD_ROOT is NOT model-scoped (it comes from src/real_paths.py, same as
+# the Snakefile): the window split + per-window LD stats are pure functions of
+# the VCF/window-size/r-bins/sample exclusions, not of which demographic model you're
 # fitting, so this whole (GPU-bound) stage is computed once per arm-set and
 # reused across every model instead of being redone per experiment.
 #
@@ -63,6 +61,8 @@ load_real_data_config "$CFG"
 
 # Deterministically list every (arm, window-index) pair actually present on
 # disk, arms in config order and indices numerically sorted within each arm.
+# Windows within BREAKPOINT_BUFFER_BP of an inversion breakpoint are skipped,
+# matching the Snakefile's _real_arm_window_idxs (they are never aggregated).
 # Called both by the dispatcher (to size the array) and by every array task
 # (to pick its slice) so both agree without passing state between them --
 # safe as long as the windows/ dirs don't change in between, which holds
@@ -79,9 +79,16 @@ list_all_targets() {
             idxs+=("${b#window_}")
         done
         if [[ ${#idxs[@]} -gt 0 ]]; then
-            printf '%s\n' "${idxs[@]}" | sort -n | while read -r i; do
-                echo "${arm} ${i}"
-            done
+            printf '%s\n' "${idxs[@]}" | sort -n | (cd "$ROOT" && python3 -c '
+import gzip, sys
+sys.path.insert(0, "godambe_correction_LRT/src")
+from inversion_breakpoints import overlaps_any_breakpoint
+windir, arm, buf = sys.argv[1], sys.argv[2], int(sys.argv[3])
+for i in sys.stdin.read().split():
+    pos = [int(l.split("\t", 2)[1]) for l in gzip.open(f"{windir}/window_{i}.vcf.gz", "rt") if l[0] != "#"]
+    if pos and not (buf and overlaps_any_breakpoint(pos[0], pos[-1], arm, buf)):
+        print(arm, i)
+' "${REAL_LD_ROOT}/${arm}/windows" "$arm" "${BREAKPOINT_BUFFER_BP:-0}")
         fi
     done
 }

@@ -29,20 +29,14 @@ mkdir -p logs
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
+source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 SNAKEFILE="$ROOT/Snakefile"
 
-MODEL=$(jq -r '.demographic_model' "$CFG")
+load_real_data_config "$CFG"   # sets MODEL, REAL_INF_ROOT, REAL_LD_ENGINE, REAL_FIT_ROOT, ...
 VARIANT="${VARIANT:-wo_FIM_wo_SFSresids}"
 
-REAL_INF_ROOT="experiments/${MODEL}/real_data_analysis/inferences"
-PRED_DIR="experiments/${MODEL}/real_data_analysis/prediction_${VARIANT}"
-
-readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$CFG")
-REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$CFG")
-REAL_TAG=$(IFS=_; echo "${REAL_ARMS[*]}")
-[[ "$REAL_USE_GENMAP" == "true" ]] && REAL_TAG="${REAL_TAG}_genmap"
-REAL_LD_ENGINE="MomentsLD_${REAL_TAG}"
+PRED_DIR="${REAL_FIT_ROOT}/prediction_${VARIANT}"
 
 cd "$ROOT"
 
@@ -67,9 +61,9 @@ done
 # All 3 engines' full replicate sets, run in parallel using local core
 # parallelism (-j) instead of separate SLURM array jobs per engine.
 TARGETS=(
-  "experiments/${MODEL}/real_data_analysis/calibration_${VARIANT}/dadi/.all_reps_done"
-  "experiments/${MODEL}/real_data_analysis/calibration_${VARIANT}/moments/.all_reps_done"
-  "experiments/${MODEL}/real_data_analysis/calibration_${VARIANT}/momentsLD/.all_reps_done"
+  "${REAL_FIT_ROOT}/calibration_${VARIANT}/dadi/.all_reps_done"
+  "${REAL_FIT_ROOT}/calibration_${VARIANT}/moments/.all_reps_done"
+  "${REAL_FIT_ROOT}/calibration_${VARIANT}/momentsLD/.all_reps_done"
 )
 
 echo "Running calibration_simulate for: ${TARGETS[*]}"

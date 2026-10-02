@@ -10,7 +10,7 @@
 # Usage:
 #   source "$(dirname "${BASH_SOURCE[0]}")/../lib/lib_real_data_config.sh"
 #   load_real_data_config "$CFG"
-#   # now available: MODEL, REAL_ARMS (array), REAL_USE_GENMAP,
+#   # now available: MODEL, REAL_ARMS (array),
 #   # REAL_LD_ENGINE, REAL_LD_ENGINE_ARM, REAL_POOLING_MODE, DROSO_BASE_DIR,
 #   # DROSO_DIR, REAL_FIT_ROOT, REAL_RUN_ROOT, REAL_INF_ROOT, REAL_LD_ROOT,
 #   # REAL_RUN_ROOT_CHROM_TMPL, REAL_INF_ROOT_CHROM_TMPL (both contain a
@@ -21,7 +21,6 @@ load_real_data_config() {
 
     MODEL=$(jq -r '.demographic_model' "$cfg")
     readarray -t REAL_ARMS < <(jq -r '.real_data_analysis.arms // ["Chr3L"] | .[]' "$cfg")
-    REAL_USE_GENMAP=$(jq -r '.real_data_analysis.use_genmap // false' "$cfg")
     REAL_POOLING_MODE=$(jq -r '.real_data_analysis.pooling_mode // "pooled"' "$cfg")
 
     if [[ "$REAL_POOLING_MODE" != "pooled" && "$REAL_POOLING_MODE" != "individual" ]]; then

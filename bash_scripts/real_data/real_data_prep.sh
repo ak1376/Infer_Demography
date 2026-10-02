@@ -37,13 +37,15 @@ load_real_data_config "$CFG"
 
 TARGETS=()
 for arm in "${REAL_ARMS[@]}"; do
-    TARGETS+=("${DROSO_DIR}/${arm}/polarized.diploidGT.vcf.gz")
-    TARGETS+=("${DROSO_DIR}/${arm}/polarized.diploidGT.vcf.gz.tbi")
+    TARGETS+=("${DROSO_DIR}/${arm}/polarized.diploidGT${DIPLOID_SUFFIX}.phased.vcf.gz")
+    TARGETS+=("${DROSO_DIR}/${arm}/polarized.diploidGT${DIPLOID_SUFFIX}.phased.vcf.gz.tbi")
+    TARGETS+=("${GENMAP_DIR}/${arm}/genetic_map.txt")
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded.sfs.pkl")
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded.sfs.meta.json")
 done
 
-ALLOWED_RULES=(annotate_ancestral_allele recode_polarized_to_diploid compute_unfolded_sfs)
+ALLOWED_RULES=(trim_raw_vcf_region annotate_ancestral_allele make_pseudodiploid_pairs
+               recode_polarized_to_diploid build_genetic_map_real compute_unfolded_sfs)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     TARGETS+=("${DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl")
     TARGETS+=("${DROSO_DIR}/combined/autosomes.unfolded.sfs.meta.json")
