@@ -2438,6 +2438,53 @@ rule aggregate_opts_momentsld_real_by_arm:
         print(f"✅ [REAL/{wildcards.arm}] Aggregated {diag['n_entries']} MomentsLD optimization results → {output.best}")
 
 
+# MomentsLD fit vs. data (empirical_vs_theoretical_comparison.pdf layout) for
+# one restart's best_fit.pkl or the aggregated one; also prints the
+# recomputed log-likelihood next to the stored one as a check.
+def _momentsld_fit_plot_shell():
+    return r"""
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/plot_momentsld_fit_real.py \
+            --empirical "{input.mv}" --best-fit "{input.fit}" --config "{params.cfg}" \
+            --r-bins "{params.bins}" --out "{output.pdf}"
+        """
+
+rule plot_momentsld_fit_real_run:
+    input:
+        mv  = f"{REAL_LD_ROOT}/{{arm}}/means.varcovs.pkl",
+        fit = f"{REAL_FIT_ROOT}/{{arm}}/runs/run_{{opt}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
+    output:
+        pdf = f"{REAL_FIT_ROOT}/{{arm}}/runs/run_{{opt}}/inferences/{REAL_LD_ENGINE_ARM}/fit_comparison.pdf",
+    wildcard_constraints:
+        arm = r"Chr(2L|2R|3L|3R|X)",
+    params:
+        cfg  = EXP_CFG,
+        bins = R_BINS_STR,
+    threads: 1
+    shell: _momentsld_fit_plot_shell()
+
+rule plot_momentsld_fit_real_best:
+    input:
+        mv  = f"{REAL_LD_ROOT}/{{arm}}/means.varcovs.pkl",
+        fit = f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
+    output:
+        pdf = f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/fit_comparison.pdf",
+    wildcard_constraints:
+        arm = r"Chr(2L|2R|3L|3R|X)",
+    params:
+        cfg  = EXP_CFG,
+        bins = R_BINS_STR,
+    threads: 1
+    shell: _momentsld_fit_plot_shell()
+
+rule all_momentsld_fit_plots_real:
+    """Convenience target: fit-vs-data plot for every restart and the aggregated best, every arm."""
+    input:
+        expand(f"{REAL_FIT_ROOT}/{{arm}}/runs/run_{{opt}}/inferences/{REAL_LD_ENGINE_ARM}/fit_comparison.pdf",
+               arm=REAL_ARMS, opt=range(NUM_REAL_OPTIMS)),
+        expand(f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/fit_comparison.pdf", arm=REAL_ARMS),
+
+
 ##############################################################################
 # REAL DATA: MomentsLD profile likelihoods (per arm) -- opt-in               #
 # Only defined when real_data_analysis.profile_likelihood is in the config:  #
