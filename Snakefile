@@ -2313,6 +2313,30 @@ rule aggregate_opts_momentsld_real:
 # infer_momentsld_real/aggregate_opts_momentsld_real above, but with an      #
 # {arm} wildcard instead of REAL_TAG-pooling all of REAL_ARMS together.      #
 ##############################################################################
+# LD decay of the real data alone (same layout as
+# empirical_vs_theoretical_comparison.pdf, without a model curve), from the
+# same kept windows aggregate_ld_windows_real_by_arm uses.
+rule plot_ld_decay_real:
+    input:
+        pkls = lambda w: [
+            f"{REAL_LD_ROOT}/{w.arm}/LD_stats/LD_stats_window_{i}.pkl"
+            for i in _real_arm_window_idxs(w.arm)
+        ],
+    output:
+        pdf = f"{REAL_LD_ROOT}/{{arm}}/ld_decay.pdf",
+    wildcard_constraints:
+        arm = r"Chr(2L|2R|3L|3R|X)",
+    params:
+        ld_dir = lambda w: f"{REAL_LD_ROOT}/{w.arm}/LD_stats",
+        bins   = R_BINS_STR,
+    threads: 1
+    shell:
+        r"""
+        python snakemake_scripts/plot_ld_decay_real.py \
+            --ld-stats-dir "{params.ld_dir}" --r-bins "{params.bins}" --out "{output.pdf}"
+        """
+
+
 rule aggregate_ld_windows_real_by_arm:
     input:
         pkls = lambda w: [
