@@ -5,6 +5,7 @@ Defined as functions to build and apply DFE intervals to stdpopsim Contigs.
 """
 
 from typing import Dict, Optional
+import msprime
 import numpy as np
 import stdpopsim as sps
 
@@ -53,12 +54,45 @@ def _intervals_from_coverage(
     return _build_tiling_intervals(int(L), int(exon_bp), tile_bp, jitter_bp=jitter_bp)
 
 
+def _rate_map_from_genetic_map(path: str, region, scale: float = 1.0) -> msprime.RateMap:
+    """
+    msprime.RateMap for region [start, end] (1-based, inclusive bp) of a
+    cumulative genetic map file with columns "pos  Map(cM)" (header line,
+    as written by snakemake_scripts/build_genetic_map.py). Cumulative cM is
+    interpolated at the region ends; rates are per bp per generation
+    (cM/100 per bp) times `scale`. Positions are shifted so the region
+    starts at 0, matching the simulated contig's coordinates.
+    """
+    pos, cm = np.loadtxt(path, skiprows=1, unpack=True)
+    start, end = float(region[0]), float(region[1]) + 1.0
+    inner = pos[(pos > start) & (pos < end)]
+    pts = np.concatenate([[start], inner, [end]])
+    cum = np.interp(pts, pos, cm)
+    rate = np.diff(cum) / 100.0 / np.diff(pts) * float(scale)
+    return msprime.RateMap(position=pts - start, rate=rate)
+
+
 def _contig_from_cfg(cfg: Dict, sel: Dict):
     """
     Synthetic-only contig builder.
     Builds a stdpopsim Contig of length = cfg["sequence_length"],
     with user-specified mutation_rate and recombination_rate.
+
+    Optional cfg["recombination"] = {"type": "map", "file": <genetic_map.txt>,
+    "region": [start, end], "scale": <float>} uses that genetic map over that
+    region instead (contig length = region length; sequence_length and
+    recombination_rate are ignored). Absent, or {"type": "flat"}: the flat
+    recombination_rate behavior above.
     """
+    rec = cfg.get("recombination") or {}
+    if rec.get("type", "flat") == "map":
+        rate_map = _rate_map_from_genetic_map(rec["file"], rec["region"], rec.get("scale", 1.0))
+        print(f"[contig] genetic map {rec['file']} region {rec['region']} scale {rec.get('scale', 1.0)}: "
+              f"{rate_map.sequence_length:,.0f} bp, mean rate {rate_map.mean_rate:.3g}/bp/gen")
+        return sps.Contig(recombination_map=rate_map, mutation_rate=float(cfg["mutation_rate"]))
+    if rec.get("type", "flat") != "flat":
+        raise ValueError(f'recombination.type must be "flat" or "map", got {rec.get("type")!r}')
+
     sp = sps.get_species(sel.get("species", "HomSap"))
 
     L = float(cfg["sequence_length"])

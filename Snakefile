@@ -2986,6 +2986,82 @@ rule calibration_ld_ppc:
         """
 
 ##############################################################################
+# REAL DATA: SFS calibration check for ONE per-arm moments/dadi run          #
+# Simulate the arm under that run's fitted params (sfs_fit.json), with the   #
+# config's "calibration" block (sample_ploidy, recombination map), the       #
+# observed SFS's sample sizes, and the mutation rate scaled by the fraction  #
+# of sites the real data kept -- then compare against that arm's observed    #
+# SFS with calibration_ppc.py. One calibration_simulate_fit job per          #
+# replicate (SLURM array: bash_scripts/real_data/real_calibration_simulate.sh).
+#   snakemake ".../real_trimmed_excl-FR217-FR361/Chr3L/calibration/moments_run11/ppc/calibration_ppc.png"
+##############################################################################
+CALIB_FIT_ROOT = f"{REAL_FIT_ROOT}/{{chrom}}/calibration/{{engine}}_run{{opt}}"
+
+def _calibration_map_matches(w):
+    """The calibration recombination map is per-arm -- refuse to simulate one
+    arm with another arm's map."""
+    rec = CFG.get("calibration", {}).get("recombination") or {}
+    if rec.get("type") == "map" and f"/{w.chrom}/" not in rec["file"]:
+        raise ValueError(f"calibration.recombination.file {rec['file']} is not {w.chrom}'s map")
+    return EXP_CFG
+
+rule calibration_simulate_fit:
+    input:
+        cfg  = _calibration_map_matches,
+        fit  = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
+        sfs  = lambda w: per_chrom_sfs(w.chrom),
+        meta = lambda w: per_chrom_sfs_meta(w.chrom),
+    output:
+        sfs  = f"{CALIB_FIT_ROOT}/replicate_{{rep}}/SFS.pkl",
+        meta = f"{CALIB_FIT_ROOT}/replicate_{{rep}}/meta.json",
+    params:
+        out_dir = lambda w: CALIB_FIT_ROOT.format(chrom=w.chrom, engine=w.engine, opt=w.opt),
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/calibration_simulate.py \
+            --config                "{input.cfg}" \
+            --params-json           "{input.fit}" \
+            --observed-sfs          "{input.sfs}" \
+            --sfs-meta              "{input.meta}" \
+            --out-dir               "{params.out_dir}" \
+            --n-replicates          1 \
+            --start-replicate-index {wildcards.rep} \
+            --no-trees
+        """
+
+rule calibration_ppc_fit:
+    input:
+        cfg  = EXP_CFG,
+        sfs  = lambda w: per_chrom_sfs(w.chrom),
+        meta = lambda w: per_chrom_sfs_meta(w.chrom),
+        reps = lambda w: expand(
+            f"{CALIB_FIT_ROOT.format(chrom=w.chrom, engine=w.engine, opt=w.opt)}/replicate_{{rep}}/SFS.pkl",
+            rep=CALIBRATION_REPS,
+        ),
+    output:
+        png     = f"{CALIB_FIT_ROOT}/ppc/calibration_ppc.png",
+        summary = f"{CALIB_FIT_ROOT}/ppc/calibration_ppc_summary.json",
+    params:
+        calibration_dir = lambda w: CALIB_FIT_ROOT.format(chrom=w.chrom, engine=w.engine, opt=w.opt),
+        title           = lambda w: f"{MODEL} {w.chrom} ({w.engine} run {w.opt})",
+    threads: 1
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/calibration_ppc.py \
+            --config             "{input.cfg}" \
+            --calibration-dir    "{params.calibration_dir}" \
+            --combined-sfs       "{input.sfs}" \
+            --combined-sfs-meta  "{input.meta}" \
+            --out-dir            "$(dirname "{output.png}")" \
+            --title              "{params.title}"
+        """
+
+##############################################################################
 # RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble          #
 # Not in rule all. Not built via combine_features/prepare_sfs_splits (see   #
 # their variant wildcard_constraints) — build_raw_features_dataset and      #

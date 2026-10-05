@@ -32,6 +32,15 @@
   },
   "num_draws": 500,
   "calibration_n_replicates": 100,
+  "calibration": {
+    "sample_ploidy": 1,
+    "recombination": {
+      "type": "map",
+      "file": "real_data_analysis/data/drosophila/genetic_maps/Chr3L/genetic_map.txt",
+      "region": [447386, 18392988],
+      "scale": 0.5
+    }
+  },
   "priors": {
     "N_ANC": [
       3162,

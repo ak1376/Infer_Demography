@@ -18,6 +18,18 @@
 # explicit params dict instead of a prior draw. All physical simulation
 # parameters (sequence_length, mutation_rate, recombination_rate, num_samples,
 # engine) come from --config, same as every other pipeline stage.
+#
+# Calibration-only overrides (never seen by the training simulations): any
+# keys in the config's "calibration" block replace the top-level ones for
+# this script only, e.g.
+#   "calibration": {"sample_ploidy": 1,
+#                   "recombination": {"type": "map", "file": ..., "region": [s, e], "scale": 0.5}}
+# (see src/simulation.py::simulation_runner and src/bgs_intervals.py::_contig_from_cfg).
+# --observed-sfs sets num_samples to the observed SFS's sample sizes (so the
+# simulated sample always matches the data), and --sfs-meta scales the
+# mutation rate by the fraction of sites the real data kept
+# (sequence_length / region_length), so the simulated region yields the same
+# expected SNP count as the effective length the fit used.
 
 from __future__ import annotations
 
@@ -43,9 +55,10 @@ def _parse_args():
                           "sequence_length, mutation_rate, recombination_rate, ...).")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--params-json", type=Path,
-                      help="JSON file with fitted params. Accepts either a flat "
-                           "{param: value} object or a predict_real_data.py output "
-                           "({'predictions': {param: value}, ...}).")
+                      help="JSON file with fitted params. Accepts a flat "
+                           "{param: value} object, a predict_real_data.py output "
+                           "({'predictions': {param: value}, ...}), or a real-data fit "
+                           "summary like sfs_fit.json ({'best_params': {param: value}, ...}).")
     src.add_argument("--params", type=str,
                       help="Fitted params as an inline JSON object string.")
     ap.add_argument("--model-type", default=None,
@@ -63,6 +76,15 @@ def _parse_args():
                      help="Base seed; replicate i uses seed+i. Defaults to config['seed'] "
                           "offset by 1_000_000 (to avoid colliding with training-sim seeds), "
                           "or a random seed if config has none.")
+    ap.add_argument("--observed-sfs", type=Path, default=None,
+                     help="Observed SFS pickle: num_samples is set to its sample sizes "
+                          "(pop order from config num_samples).")
+    ap.add_argument("--sfs-meta", type=Path, default=None,
+                     help="Observed SFS meta JSON: mutation_rate is scaled by "
+                          "sequence_length / region_length (fraction of sites kept).")
+    ap.add_argument("--no-trees", action="store_true",
+                     help="Don't save tree_sequence.trees (SFS-only checks don't need it; "
+                          "whole-chromosome tree sequences are large).")
     ap.add_argument("--coverage-percent", type=float, default=None,
                      help="Fixed BGS coverage percent; only used when engine=='slim'. If "
                           "omitted under slim, coverage is randomly sampled per replicate "
@@ -77,13 +99,15 @@ def _load_params(args) -> dict:
         raw = json.loads(args.params)
     if isinstance(raw, dict) and isinstance(raw.get("predictions"), dict):
         raw = raw["predictions"]
+    elif isinstance(raw, dict) and isinstance(raw.get("best_params"), dict):
+        raw = raw["best_params"]
     if not isinstance(raw, dict):
         raise SystemExit("Fitted params must be a JSON object of {param: value}.")
     return {k: float(v) for k, v in raw.items()}
 
 
 def _simulate_one_replicate(*, rep_dir, rep_index, params, model_type, cfg, engine,
-                             base_seed, coverage_percent):
+                             base_seed, coverage_percent, save_trees=True):
     rep_dir.mkdir(parents=True, exist_ok=True)
 
     if base_seed is not None:
@@ -110,7 +134,8 @@ def _simulate_one_replicate(*, rep_dir, rep_index, params, model_type, cfg, engi
     ts, g = simulation(params, model_type, sim_cfg, sampled_coverage=coverage)
     sfs = create_SFS(ts, pop_names=tuple(cfg["num_samples"].keys()))
 
-    ts.dump(rep_dir / "tree_sequence.trees")
+    if save_trees:
+        ts.dump(rep_dir / "tree_sequence.trees")
     (rep_dir / "SFS.pkl").write_bytes(pickle.dumps(sfs))
     (rep_dir / "meta.json").write_text(json.dumps({
         "model_type": model_type,
@@ -118,10 +143,15 @@ def _simulate_one_replicate(*, rep_dir, rep_index, params, model_type, cfg, engi
         "replicate_index": rep_index,
         "seed": replicate_seed,
         "coverage_percent": coverage,
+        "num_samples": cfg["num_samples"],
+        "sample_ploidy": cfg.get("sample_ploidy", 2),
+        "mutation_rate": cfg["mutation_rate"],
+        "recombination": cfg.get("recombination") or {"type": "flat", "rate": cfg.get("recombination_rate")},
+        "sequence_length": float(ts.sequence_length),
         "params": params,
     }, indent=2))
 
-    print(f"[replicate {rep_index}] wrote {rep_dir}/tree_sequence.trees + SFS.pkl "
+    print(f"[replicate {rep_index}] wrote {rep_dir}/{'tree_sequence.trees + ' if save_trees else ''}SFS.pkl "
           f"(seed={replicate_seed}, sum(SFS)={float(np.asarray(sfs).sum()):.6g})")
 
 
@@ -129,6 +159,20 @@ def main() -> None:
     args = _parse_args()
     cfg = json.loads(args.config.read_text())
     model_type = args.model_type or cfg["demographic_model"]
+
+    calib = cfg.get("calibration") or {}
+    cfg = {**cfg, **calib}
+    if args.observed_sfs is not None:
+        with open(args.observed_sfs, "rb") as fh:
+            obs = pickle.load(fh)
+        cfg["num_samples"] = {p: int(n) - 1 for p, n in zip(cfg["num_samples"], obs.shape)}
+    if args.sfs_meta is not None:
+        meta = json.loads(args.sfs_meta.read_text())
+        kept = float(meta["sequence_length"]) / float(meta["region_length"])
+        cfg["mutation_rate"] = float(cfg["mutation_rate"]) * kept
+        print(f"mutation_rate scaled by kept fraction {kept:.4f} -> {cfg['mutation_rate']:.4g}")
+    print(f"calibration overrides: {sorted(calib)}; num_samples={cfg['num_samples']}, "
+          f"sample_ploidy={cfg.get('sample_ploidy', 2)}")
 
     params = _load_params(args)
     required = list(cfg["priors"].keys())
@@ -164,6 +208,7 @@ def main() -> None:
             engine=engine,
             base_seed=base_seed,
             coverage_percent=args.coverage_percent,
+            save_trees=not args.no_trees,
         )
 
     print(f"✓ calibration simulation done -> {args.out_dir} "

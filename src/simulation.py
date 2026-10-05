@@ -8,6 +8,7 @@ from pathlib import Path
 import demes
 import numpy as np
 import stdpopsim as sps
+import msprime
 import tskit
 import moments
 
@@ -120,6 +121,8 @@ def simulation_runner(
     # )
 
     if experiment_config.get("engine") == "slim":
+        if int(experiment_config.get("sample_ploidy", 2)) != 2:
+            raise ValueError("sample_ploidy != 2 is only supported with engine='msprime'.")
 
         sel_summary = _apply_dfe_intervals(
             contig, sel, sampled_coverage=sampled_coverage
@@ -149,6 +152,16 @@ def simulation_runner(
 
         eng = sps.get_engine("msprime")
 
+        # sample_ploidy: chromosomes taken per sampled individual. The
+        # population itself stays at the contig's ploidy (2); with 1, each
+        # num_samples entry is one haploid genome, as in haploid-sequenced
+        # data. Absent/2: num_samples counts diploid individuals (default).
+        sample_ploidy = int(experiment_config.get("sample_ploidy", 2))
+        if sample_ploidy != 2:
+            samples = [
+                msprime.SampleSet(n, population=pop, ploidy=sample_ploidy)
+                for pop, n in samples.items()
+            ]
         ts = eng.simulate(model, contig, samples, seed=seed)
 
     return ts, g
