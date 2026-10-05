@@ -19,6 +19,10 @@ annotate_ancestral_allele dropped sites with no usable ancestral base), it is
 scaled by (SNPs kept in the SFS / SNPs before polarization), on the assumption
 that sequence is lost in the same proportion as SNPs.
 
+With --output-png it also plots each population's own (marginal) spectrum
+against the neutral constant-size expectation (proportional to 1/i), plus the
+joint SFS as a log-scaled heatmap.
+
 Usage:
   python compute_unfolded_sfs.py \
       --input-vcf  real_data_analysis/data/drosophila/Chr2L.polarized.vcf.gz \
@@ -26,6 +30,8 @@ Usage:
       --output-sfs real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl \
       [--unpolarized-vcf <pre-polarization VCF>]   # optional: scale L by kept SNP fraction
       [--project-to N]   # optional: project each pop down to N haplotypes
+      [--exclude FR217,FR361]   # optional: leave these samples out
+      [--output-png unfolded.sfs.png]   # optional: marginal + joint SFS plot
 """
 
 import argparse
@@ -37,6 +43,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Tuple
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, LogNorm
 import numpy as np
 import moments
 
@@ -60,6 +70,94 @@ def parse_contig_length(vcf_path: Path, opener) -> Tuple[str, int]:
             if m:
                 return m.group(1), int(m.group(2))
     raise ValueError(f"No ##contig header found in {vcf_path}")
+
+
+# Palette (dataviz reference instance, light mode)
+SURFACE, INK, INK_2, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
+POP_COLORS = ["#2a78d6", "#eb6834"]      # categorical slots 1-2, validated (CVD dE 24.7)
+BLUES = LinearSegmentedColormap.from_list(
+    "blue_ramp", ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"])
+
+
+def style(ax):
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(AXIS)
+    ax.tick_params(colors=MUTED, labelcolor=INK_2, labelsize=9)
+    ax.yaxis.grid(True, color=GRID, linewidth=0.6)
+    ax.set_axisbelow(True)
+
+
+def plot_marginal(ax, counts, pop, color, other):
+    n = len(counts) - 1
+    i = np.arange(1, n)
+    seg = counts[1:n]
+    prop = seg / seg.sum()
+    neutral = (1 / i) / np.sum(1 / i)
+    ax.bar(i, prop, width=0.72, color=color, edgecolor=SURFACE, linewidth=2, zorder=2)
+    ax.plot(i, neutral, color=INK_2, linestyle="--", linewidth=1.5, marker="o",
+            markersize=4, markerfacecolor=SURFACE, zorder=3)
+    ax.annotate("neutral, constant size (∝ 1/i)", xy=(i[1], neutral[1]),
+                xytext=(14, 10), textcoords="offset points", ha="left",
+                fontsize=8.5, color=INK_2)
+    style(ax)
+    ax.set_xticks(i)
+    ax.set_xlabel(f"derived allele count in {pop} (of {n})", color=INK_2, fontsize=10)
+    ax.set_ylabel("share of segregating sites", color=INK_2, fontsize=10)
+    ax.set_title(f"{pop}: {int(seg.sum()):,} segregating sites", loc="left",
+                 color=INK, fontsize=11, fontweight="bold", pad=20)
+    ax.text(0, 1.015, f"not shown: {int(counts[0]):,} absent, {int(counts[n]):,} fixed in {pop} "
+                      f"(segregating only in {other})",
+            transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
+
+
+def plot_sfs(fs, chrom: str, L: float, region_length: float, out: Path):
+    """Marginal spectra vs. neutral 1/i, plus the joint SFS heatmap."""
+    pops = list(getattr(fs, "pop_ids", None) or ["pop0", "pop1"])
+    data = np.asarray(fs.data, dtype=float)
+
+    fig = plt.figure(figsize=(15, 4.9), facecolor=SURFACE)
+    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1.1], wspace=0.32)
+    for k in range(2):
+        marginal = np.asarray(fs.marginalize([1 - k]).data, dtype=float)
+        plot_marginal(fig.add_subplot(gs[0, k]), marginal, pops[k], POP_COLORS[k], pops[1 - k])
+
+    # Joint SFS: rows = pop 0 derived count, columns = pop 1 derived count.
+    ax = fig.add_subplot(gs[0, 2])
+    joint = np.ma.masked_where(data <= 0, data)
+    joint[0, 0] = np.ma.masked                       # monomorphic corners carry no information
+    joint[-1, -1] = np.ma.masked
+    cmap = BLUES.copy()
+    cmap.set_bad(SURFACE)
+    im = ax.imshow(joint, origin="lower", cmap=cmap, aspect="auto",
+                   norm=LogNorm(vmin=max(1, joint.min()), vmax=joint.max()))
+    ax.set_xlabel(f"derived allele count in {pops[1]}", color=INK_2, fontsize=10)
+    ax.set_ylabel(f"derived allele count in {pops[0]}", color=INK_2, fontsize=10)
+    ax.set_xticks(range(data.shape[1]))
+    ax.set_yticks(range(data.shape[0]))
+    ax.tick_params(colors=MUTED, labelcolor=INK_2, labelsize=9)
+    for side in ax.spines.values():
+        side.set_visible(False)
+    ax.set_title("joint SFS (sites per cell, log scale)", loc="left", color=INK,
+                 fontsize=11, fontweight="bold", pad=20)
+    cb = fig.colorbar(im, ax=ax, fraction=0.05, pad=0.03)
+    cb.ax.tick_params(colors=MUTED, labelcolor=INK_2, labelsize=8.5)
+    cb.outline.set_visible(False)
+
+    fst = float(fs.Fst()) if hasattr(fs, "Fst") else float("nan")
+    thetas = [float(fs.marginalize([1 - k]).Watterson_theta()) / L for k in range(2)]
+    fig.suptitle(
+        f"{chrom} unfolded SFS  ·  {int(fs.S()):,} segregating sites  ·  Fst = {fst:.3f}  ·  "
+        f"Watterson θ/bp: {pops[0]} {thetas[0]:.2e}, {pops[1]} {thetas[1]:.2e}  "
+        f"(L = {L / 1e6:.2f} Mb effective of {region_length / 1e6:.2f} Mb)",
+        x=0.01, ha="left", y=1.02, color=INK, fontsize=11.5)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=160, bbox_inches="tight", facecolor=SURFACE)
+    plt.close(fig)
+    print(f"Saved -> {out}")
 
 
 def parse_popfile(path: Path):
@@ -94,11 +192,20 @@ def main():
                         "scaled by (SNPs kept / SNPs in this VCF).")
     p.add_argument("--project-to",  type=int, default=None,
                    help="Project each population down to this many haplotypes.")
+    p.add_argument("--exclude",     default="",
+                   help="Comma-separated sample IDs to leave out of the SFS.")
+    p.add_argument("--output-png",  type=Path, default=None,
+                   help="Optional: write the marginal + joint SFS plot here.")
     args = p.parse_args()
 
     args.output_sfs.parent.mkdir(parents=True, exist_ok=True)
 
     pop_names, sample_to_pop = parse_popfile(args.popfile)
+    drop = {s for s in args.exclude.split(",") if s}
+    if drop - set(sample_to_pop):
+        raise SystemExit(f"--exclude samples not in popfile: {sorted(drop - set(sample_to_pop))}")
+    for s in sorted(drop):
+        print(f"[{sample_to_pop.pop(s)}] excluding {s}")
     print(f"Populations: {pop_names}")
 
     opener = gzip.open if str(args.input_vcf).endswith(".gz") else open
@@ -216,9 +323,9 @@ def main():
 
     print(f"\nSaved -> {args.output_sfs}")
 
+    region_length = sequence_length
     if args.output_meta is not None:
         args.output_meta.parent.mkdir(parents=True, exist_ok=True)
-        region_length = sequence_length
         n_before = None
         if args.unpolarized_vcf is not None:
             with gzip.open(args.unpolarized_vcf, "rt") as fh:
@@ -241,6 +348,9 @@ def main():
         with open(args.output_meta, "w") as fh:
             json.dump(meta, fh, indent=2)
         print(f"Saved -> {args.output_meta}")
+
+    if args.output_png is not None:
+        plot_sfs(sfs, chrom, sequence_length, region_length, args.output_png)
 
 
 if __name__ == "__main__":

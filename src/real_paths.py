@@ -15,12 +15,12 @@ Layout (e.g. trimmed data, Chr3L, 100 kb windows):
         popfile.txt, pseudodiploid_*.txt, genetic_maps/{chrom}/genetic_map.txt
     real_data_analysis/data/drosophila_trimmed/            processed data
         settings.json
-        {chrom}/polarized.vcf.gz, polarized.diploidGT.vcf.gz, unfolded.sfs.pkl
-        combined/autosomes.unfolded.sfs.pkl
+        {chrom}/polarized.vcf.gz, polarized.diploidGT[.excl-<ids>].vcf.gz, unfolded[.excl-<ids>].sfs.pkl
+        combined/autosomes.unfolded[.excl-<ids>].sfs.pkl
         ld/Chr3L_100kb/                             one LD run
             settings.json
             {arm}/windows/, {arm}/LD_stats/, {arm}/means.varcovs.pkl
-    experiments/{model}/real_trimmed/                      fits on that data
+    experiments/{model}/real_trimmed[_excl-<ids>]/         fits on that data
         runs/, inferences/                                 combined-autosome SFS fits (+ pooled MomentsLD)
         {chrom}/runs/, {chrom}/inferences/                 per-arm fits
             inferences/moments/, inferences/MomentsLD_100kb/
@@ -76,7 +76,9 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     ld_engine_arm = f"MomentsLD_{win}{tags}"              # per-arm fit subdir
     ld_engine = f"MomentsLD_{ld_name}"                        # pooled fit subdir
 
-    fit_root = f"experiments/{model}/real_{data_label}"
+    # Fits depend on which samples went into the SFS/LD, so the exclusion is
+    # part of the fit folder name, e.g. real_trimmed_excl-FR217-FR361.
+    fit_root = f"experiments/{model}/real_{data_label}{excl_label}"
 
     data_settings = {
         "trim_region": trim,
@@ -103,6 +105,9 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
         "PSEUDODIPLOID_PAIRS": f"{DROSO_BASE_DIR}/pseudodiploid_pairs.seed{PSEUDODIPLOID_SEED}{'.' + excl_tag if excl else ''}.tsv",
         "PSEUDODIPLOID_POPFILE": f"{DROSO_BASE_DIR}/pseudodiploid_popfile.seed{PSEUDODIPLOID_SEED}{'.' + excl_tag if excl else ''}.txt",
         "DIPLOID_SUFFIX": f".{excl_tag}" if excl else "",
+        # same tag in the SFS file names (unfolded<suffix>.sfs.pkl), so an
+        # all-samples SFS and an excluded one never share a file
+        "SFS_SUFFIX": f".{excl_tag}" if excl else "",
         "REAL_LD_ROOT": f"{droso_dir}/ld/{ld_name}",
         "REAL_LD_ENGINE": ld_engine,
         "REAL_LD_ENGINE_ARM": ld_engine_arm,

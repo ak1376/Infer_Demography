@@ -98,14 +98,16 @@ REAL_POPFILE     = f"{DROSO_BASE_DIR}/popfile.txt"
 PSEUDODIPLOID_PAIRS   = RP["PSEUDODIPLOID_PAIRS"]     # tagged .excl-<ids> when real_data_analysis.exclude_samples is set
 PSEUDODIPLOID_POPFILE = RP["PSEUDODIPLOID_POPFILE"]
 DIPLOID_SUFFIX        = RP["DIPLOID_SUFFIX"]          # "" or ".excl-<ids>" in the diploid VCF names
+SFS_SUFFIX            = RP["SFS_SUFFIX"]              # "" or ".excl-<ids>" in the SFS names (same exclude_samples)
 EXCLUDE_SAMPLES       = RP["EXCLUDE_SAMPLES"]
-COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.pkl"     # summed autosomal SFS; used by SFS inference
-COMBINED_SFS_META = f"{DROSO_DIR}/combined/autosomes.unfolded.sfs.meta.json"  # summed sequence_length across AUTOSOMES
+COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded{SFS_SUFFIX}.sfs.pkl"     # summed autosomal SFS; used by SFS inference
+COMBINED_SFS_META = f"{DROSO_DIR}/combined/autosomes.unfolded{SFS_SUFFIX}.sfs.meta.json"  # summed sequence_length across AUTOSOMES
 
 # Per-chromosome path helpers (by-chromosome layout)
 # Phased (a|b) pseudo-diploids: LD stats come from the two known haplotypes.
 def polarized_diploid_vcf(chrom):  return f"{DROSO_DIR}/{chrom}/polarized.diploidGT{DIPLOID_SUFFIX}.phased.vcf.gz"
-def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded.sfs.pkl"
+def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded{SFS_SUFFIX}.sfs.pkl"
+def per_chrom_sfs_meta(chrom):     return f"{DROSO_DIR}/{chrom}/unfolded{SFS_SUFFIX}.sfs.meta.json"
 def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr', 'chr', 1)}.q30.fa"
 
 def _resid_vector_fname():
@@ -1800,12 +1802,18 @@ rule compute_unfolded_sfs:
         unpolarized = lambda w: raw_vcf_for_chrom(w.chrom),
         popfile = REAL_POPFILE,
     output:
-        sfs  = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
+        sfs  = per_chrom_sfs("{chrom}"),
         # sequence_length = region length (this VCF's ##contig header) x the
         # fraction of SNPs that survived polarization -- the real-data
         # inference rules read it back out for theta -> N_ANC, so it always
         # matches whichever VCF actually built the SFS.
-        meta = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json",
+        meta = per_chrom_sfs_meta("{chrom}"),
+        # Each population's own spectrum vs. the neutral 1/i expectation, plus
+        # the joint SFS heatmap (log scale).
+        png  = f"{DROSO_DIR}/{{chrom}}/unfolded{SFS_SUFFIX}.sfs.png",
+    params:
+        # same samples left out as the MomentsLD branch (make_pseudodiploid_pairs)
+        exclude = EXCLUDE_SAMPLES,
     threads: 1
     shell:
         r"""
@@ -1815,24 +1823,10 @@ rule compute_unfolded_sfs:
           --input-vcf   "{input.vcf}" \
           --unpolarized-vcf "{input.unpolarized}" \
           --popfile     "{input.popfile}" \
+          --exclude     "{params.exclude}" \
           --output-sfs  "{output.sfs}" \
-          --output-meta "{output.meta}"
-        """
-
-# Each population's own spectrum vs. the neutral 1/i expectation, plus the
-# joint SFS heatmap (log scale).
-rule plot_unfolded_sfs:
-    input:
-        sfs  = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl",
-        meta = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json",
-    output:
-        png = f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.png",
-    threads: 1
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/plot_unfolded_sfs.py \
-          --sfs "{input.sfs}" --meta "{input.meta}" --out "{output.png}"
+          --output-meta "{output.meta}" \
+          --output-png  "{output.png}"
         """
 
 ##############################################################################
@@ -1842,8 +1836,8 @@ rule plot_unfolded_sfs:
 ##############################################################################
 rule combine_autosomal_sfs:
     input:
-        per_chrom      = expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.pkl", chrom=AUTOSOMES),
-        per_chrom_meta = expand(f"{DROSO_DIR}/{{chrom}}/unfolded.sfs.meta.json", chrom=AUTOSOMES),
+        per_chrom      = [per_chrom_sfs(c) for c in AUTOSOMES],
+        per_chrom_meta = [per_chrom_sfs_meta(c) for c in AUTOSOMES],
     output:
         sfs  = COMBINED_SFS,
         meta = COMBINED_SFS_META,
@@ -1871,9 +1865,12 @@ rule infer_engine_real:
         # TEMPORARY: temp() removed so per-replicate best_fit.pkl files stick
         # around to inspect individual optimizations after the trim-region
         # comparison run. Restore temp(...) once done inspecting.
-        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl"
+        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl",
+        png = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/sfs_fit.png",
+        json = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
+        label    = lambda w: f"autosomes, run {w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"demes_models:{MODEL}_model"
@@ -1895,15 +1892,31 @@ rule infer_engine_real:
           --opt-seed {wildcards.opt} \
           --real-sequence-length "$seq_len" \
           -v
+        # observed vs. best-fit SFS for this run (+ its numbers in sfs_fit.json)
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/plot_sfs_fit_real.py \
+          --fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" \
+          --model-py "{params.model_py}" --label "{params.label}" \
+          --out "{output.png}"
         """
 
 # ── REAL DATA: MOMENTS / DADI ───────────────────────────────────────────────
 rule aggregate_opts_engine_real:
     input:
         runs = lambda w: [f"{REAL_RUN_ROOT}/run_{o}/inferences/{w.engine}/best_fit.pkl"
-                          for o in range(NUM_REAL_OPTIMS)]
+                          for o in range(NUM_REAL_OPTIMS)],
+        sfs  = COMBINED_SFS,
     output:
-        pkl = f"{REAL_INF_ROOT}/{{engine}}/best_fit.pkl"
+        pkl = f"{REAL_INF_ROOT}/{{engine}}/best_fit.pkl",
+        png = f"{REAL_INF_ROOT}/{{engine}}/sfs_fit.png",
+        json = f"{REAL_INF_ROOT}/{{engine}}/sfs_fit.json",
+    params:
+        cfg      = EXP_CFG,
+        model_py = (
+            f"demes_models:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "demes_models:drosophila_three_epoch"
+        ),
     run:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
@@ -1921,6 +1934,14 @@ rule aggregate_opts_engine_real:
 
         print(f"✅ [REAL] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
 
+        # observed vs. best-fit SFS for the top run (+ its numbers in sfs_fit.json)
+        shell(
+            'PYTHONPATH={basedir} python snakemake_scripts/plot_sfs_fit_real.py '
+            '--fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" '
+            '--model-py "{params.model_py}" --label "{label}" --out "{output.png}"',
+            basedir=workflow.basedir, label="autosomes, best of all runs",
+        )
+
 
 ##############################################################################
 # REAL DATA (single chromosome) – NLopt Poisson SFS optimisation             #
@@ -1930,11 +1951,14 @@ rule aggregate_opts_engine_real:
 rule infer_engine_real_chrom:
     input:
         sfs  = lambda w: per_chrom_sfs(w.chrom),
-        meta = lambda w: f"{DROSO_DIR}/{w.chrom}/unfolded.sfs.meta.json",
+        meta = lambda w: per_chrom_sfs_meta(w.chrom),
     output:
-        pkl = temp(f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl")
+        pkl = temp(f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl"),
+        png = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.png",
+        json = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
     params:
         run_dir  = lambda w: f"{REAL_RUN_ROOT_CHROM.format(chrom=w.chrom)}/run_{w.opt}",
+        label    = lambda w: f"{w.chrom}, run {w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"demes_models:{MODEL}_model"
@@ -1956,6 +1980,12 @@ rule infer_engine_real_chrom:
           --opt-seed {wildcards.opt} \
           --real-sequence-length "$seq_len" \
           -v
+        # observed vs. best-fit SFS for this run (+ its numbers in sfs_fit.json)
+        PYTHONPATH={workflow.basedir} \
+        python snakemake_scripts/plot_sfs_fit_real.py \
+          --fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" \
+          --model-py "{params.model_py}" --label "{params.label}" \
+          --out "{output.png}"
         """
 
 rule aggregate_opts_engine_real_chrom:
@@ -1963,9 +1993,19 @@ rule aggregate_opts_engine_real_chrom:
         runs = lambda w: [
             f"{REAL_RUN_ROOT_CHROM.format(chrom=w.chrom)}/run_{o}/inferences/{w.engine}/best_fit.pkl"
             for o in range(NUM_REAL_OPTIMS)
-        ]
+        ],
+        sfs  = lambda w: per_chrom_sfs(w.chrom),
     output:
-        pkl = f"{REAL_INF_ROOT_CHROM}/{{engine}}/best_fit.pkl"
+        pkl = f"{REAL_INF_ROOT_CHROM}/{{engine}}/best_fit.pkl",
+        png = f"{REAL_INF_ROOT_CHROM}/{{engine}}/sfs_fit.png",
+        json = f"{REAL_INF_ROOT_CHROM}/{{engine}}/sfs_fit.json",
+    params:
+        cfg      = EXP_CFG,
+        model_py = (
+            f"demes_models:{MODEL}_model"
+            if MODEL != "drosophila_three_epoch"
+            else "demes_models:drosophila_three_epoch"
+        ),
     run:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
@@ -1982,6 +2022,14 @@ rule aggregate_opts_engine_real_chrom:
         pickle.dump(best, open(output.pkl, "wb"))
 
         print(f"✅ [REAL/{wildcards.chrom}] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
+
+        # observed vs. best-fit SFS for the top run (+ its numbers in sfs_fit.json)
+        shell(
+            'PYTHONPATH={basedir} python snakemake_scripts/plot_sfs_fit_real.py '
+            '--fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" '
+            '--model-py "{params.model_py}" --label "{label}" --out "{output.png}"',
+            basedir=workflow.basedir, label=f"{wildcards.chrom}, best of all runs",
+        )
 
 
 ##############################################################################
