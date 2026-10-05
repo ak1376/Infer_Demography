@@ -1953,7 +1953,9 @@ rule infer_engine_real_chrom:
         sfs  = lambda w: per_chrom_sfs(w.chrom),
         meta = lambda w: per_chrom_sfs_meta(w.chrom),
     output:
-        pkl = temp(f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl"),
+        # kept (not temp) so each restart can be inspected after aggregation,
+        # and so real_sfs_inference.sh's skip-if-exists check stays valid
+        pkl = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl",
         png = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.png",
         json = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
     params:

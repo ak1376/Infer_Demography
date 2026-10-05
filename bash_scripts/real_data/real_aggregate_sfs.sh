@@ -31,18 +31,25 @@ SNAKEFILE="$ROOT/Snakefile"
 
 load_real_data_config "$CFG"
 
+# Same engine selection as real_sfs_inference.sh, e.g. ENGINES=moments
+read -r -a ENGINE_LIST <<< "${ENGINES:-moments dadi}"
+for e in "${ENGINE_LIST[@]}"; do
+    [[ "$e" == moments || "$e" == dadi ]] || { echo "ENGINES must be moments and/or dadi, got: $e" >&2; exit 1; }
+done
+
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
-    TARGETS=(
-        "${REAL_INF_ROOT}/moments/best_fit.pkl"
-        "${REAL_INF_ROOT}/dadi/best_fit.pkl"
-    )
+    TARGETS=()
+    for engine in "${ENGINE_LIST[@]}"; do
+        TARGETS+=("${REAL_INF_ROOT}/${engine}/best_fit.pkl")
+    done
     ALLOWED_RULES=(aggregate_opts_engine_real)
 else
     TARGETS=()
     for arm in "${REAL_ARMS[@]}"; do
         INF_ROOT_ARM="$(real_data_chrom_path "$REAL_INF_ROOT_CHROM_TMPL" "$arm")"
-        TARGETS+=("${INF_ROOT_ARM}/moments/best_fit.pkl")
-        TARGETS+=("${INF_ROOT_ARM}/dadi/best_fit.pkl")
+        for engine in "${ENGINE_LIST[@]}"; do
+            TARGETS+=("${INF_ROOT_ARM}/${engine}/best_fit.pkl")
+        done
     done
     ALLOWED_RULES=(aggregate_opts_engine_real_chrom)
 fi

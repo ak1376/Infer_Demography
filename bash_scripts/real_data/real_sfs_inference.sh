@@ -3,7 +3,7 @@
 #SBATCH --output=logs/real_sfs_infer_%A_%a.out
 #SBATCH --error=logs/real_sfs_infer_%A_%a.err
 #SBATCH --time=15:00:00
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=2   # one restart = 2 threads (infer_engine_real*'s threads: 2)
 #SBATCH --mem=16G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
@@ -41,22 +41,27 @@ export EXP_CFG="$CFG"
 
 load_real_data_config "$CFG"
 NUM_REAL_OPTIMS=$(jq -r '.num_optimizations // 3' "$CFG")
-ENGINES=(moments dadi)
+# Which engines to fit: ENGINES="moments dadi" (default), or just one, e.g.
+#   ENGINES=moments sbatch bash_scripts/real_data/real_sfs_inference.sh
+read -r -a ENGINE_LIST <<< "${ENGINES:-moments dadi}"
+for e in "${ENGINE_LIST[@]}"; do
+    [[ "$e" == moments || "$e" == dadi ]] || { echo "ENGINES must be moments and/or dadi, got: $e" >&2; exit 1; }
+done
 
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
-    TOTAL_TASKS=$(( ${#ENGINES[@]} * NUM_REAL_OPTIMS ))
+    TOTAL_TASKS=$(( ${#ENGINE_LIST[@]} * NUM_REAL_OPTIMS ))
 else
-    TOTAL_TASKS=$(( ${#ENGINES[@]} * NUM_REAL_OPTIMS * ${#REAL_ARMS[@]} ))
+    TOTAL_TASKS=$(( ${#ENGINE_LIST[@]} * NUM_REAL_OPTIMS * ${#REAL_ARMS[@]} ))
 fi
 
 echo "CFG: $CFG"
-echo "MODEL: $MODEL  REAL_POOLING_MODE: $REAL_POOLING_MODE  NUM_REAL_OPTIMS: $NUM_REAL_OPTIMS  TOTAL_TASKS: $TOTAL_TASKS"
+echo "MODEL: $MODEL  REAL_POOLING_MODE: $REAL_POOLING_MODE  ENGINES: ${ENGINE_LIST[*]}  NUM_REAL_OPTIMS: $NUM_REAL_OPTIMS  TOTAL_TASKS: $TOTAL_TASKS"
 echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}  SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-unset}"
 
 if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     NUM_ARRAY=$(( (TOTAL_TASKS + BATCH_SIZE - 1) / BATCH_SIZE - 1 ))
     echo "Submitting array 0..${NUM_ARRAY}"
-    sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
+    ENGINES="${ENGINE_LIST[*]}" sbatch --array=0-"$NUM_ARRAY" "$0" "$@"
     exit 0
 fi
 
@@ -71,7 +76,7 @@ if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
         ENGINE_I=$(( IDX / NUM_REAL_OPTIMS ))
         OPT=$(( IDX % NUM_REAL_OPTIMS ))
-        ENGINE="${ENGINES[$ENGINE_I]}"
+        ENGINE="${ENGINE_LIST[$ENGINE_I]}"
 
         TARGET="${REAL_RUN_ROOT}/run_${OPT}/inferences/${ENGINE}/best_fit.pkl"
         if [[ -s "$ROOT/$TARGET" ]]; then
@@ -84,14 +89,14 @@ if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     ALLOWED_RULES=(infer_engine_real)
 else
     N_ARMS=${#REAL_ARMS[@]}
-    PER_ARM=$(( ${#ENGINES[@]} * NUM_REAL_OPTIMS ))
+    PER_ARM=$(( ${#ENGINE_LIST[@]} * NUM_REAL_OPTIMS ))
     for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
         ARM_I=$(( IDX / PER_ARM ))
         REM=$(( IDX % PER_ARM ))
         ENGINE_I=$(( REM / NUM_REAL_OPTIMS ))
         OPT=$(( REM % NUM_REAL_OPTIMS ))
         ARM="${REAL_ARMS[$ARM_I]}"
-        ENGINE="${ENGINES[$ENGINE_I]}"
+        ENGINE="${ENGINE_LIST[$ENGINE_I]}"
 
         RUN_ROOT_ARM="$(real_data_chrom_path "$REAL_RUN_ROOT_CHROM_TMPL" "$ARM")"
         TARGET="${RUN_ROOT_ARM}/run_${OPT}/inferences/${ENGINE}/best_fit.pkl"
