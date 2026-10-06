@@ -40,6 +40,8 @@ SNAKEFILE="$ROOT/Snakefile"
 
 load_real_data_config "$CFG"
 
+HAS_ORIGINAL_VCF=$(python -c "import json,sys; print(int(bool(json.load(open(sys.argv[1])).get('real_data_analysis', {}).get('original_vcf'))))" "$CFG")
+
 TARGETS=()
 for arm in "${REAL_ARMS[@]}"; do
     TARGETS+=("${DROSO_DIR}/${arm}/polarized.diploidGT${DIPLOID_SUFFIX}.phased.vcf.gz")
@@ -47,6 +49,12 @@ for arm in "${REAL_ARMS[@]}"; do
     TARGETS+=("${GENMAP_DIR}/${arm}/genetic_map.txt")
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded${SFS_SUFFIX}.sfs.pkl")
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded${SFS_SUFFIX}.sfs.meta.json")
+    # Requested explicitly: some Snakemake versions won't build a missing input
+    # of an otherwise up-to-date SFS, so the L correction would never happen.
+    # Once it's (re)built, the SFS meta is older than it and gets rebuilt too.
+    if [[ "$HAS_ORIGINAL_VCF" == "1" ]]; then
+        TARGETS+=("${DROSO_DIR}/${arm}/missing_data_kept_fraction.json")
+    fi
 done
 
 ALLOWED_RULES=(trim_raw_vcf_region missing_data_kept_fraction annotate_ancestral_allele make_pseudodiploid_pairs
