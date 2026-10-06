@@ -238,14 +238,15 @@ def fit_model_realdata_scaled(
             print(f"loglik: {ll:.6g}  log10_params: {log10_params}")
         return ll
 
-    # Real-data optimizer: config "real_optimizer_algorithm" (any nlopt name;
-    # LD_* ones use the numerical gradient above), "real_optimizer_maxeval"
-    # (0 = no limit). Defaults keep the original behavior: LN_BOBYQA, no limit.
-    algo_name = str(experiment_config.get("real_optimizer_algorithm", "LN_BOBYQA"))
+    # Same optimizer settings as the simulated-data moments fits
+    # (src/moments_inference.py): config "optimizer_algorithm" (any nlopt name;
+    # LD_* ones use the numerical gradient above) and "optimizer_maxeval", so
+    # real and simulated moments estimates come from the same procedure.
+    algo_name = str(experiment_config.get("optimizer_algorithm", "LD_LBFGS"))
     algo = getattr(nlopt, algo_name, None)
     if algo is None:
-        raise ValueError(f"Unknown nlopt algorithm real_optimizer_algorithm={algo_name!r}")
-    maxeval = int(experiment_config.get("real_optimizer_maxeval", 0))
+        raise ValueError(f"Unknown nlopt algorithm optimizer_algorithm={algo_name!r}")
+    maxeval = int(experiment_config.get("optimizer_maxeval", 500))
     print(f"[moments-real] optimizer {algo_name}, maxeval {maxeval or 'unlimited'}")
 
     opt = nlopt.opt(algo, len(param_names))
@@ -255,6 +256,8 @@ def fit_model_realdata_scaled(
     opt.set_ftol_rel(rtol)
     if maxeval > 0:
         opt.set_maxeval(maxeval)
+    if experiment_config.get("optimizer_maxtime") is not None:
+        opt.set_maxtime(float(experiment_config["optimizer_maxtime"]))
 
     try:
         xhat = opt.optimize(x0)

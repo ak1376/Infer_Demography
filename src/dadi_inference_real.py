@@ -305,12 +305,22 @@ def fit_model_realdata_scaled(
             print(f"loglik: {ll:.6g}  log10_params: {np.asarray(log10_params)}")
         return float(ll)
 
-    opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))
+    # Same optimizer settings as every other fit: the config's
+    # "optimizer_algorithm" / "optimizer_maxeval" / "optimizer_maxtime"
+    # (LD_* algorithms use the numerical gradient above).
+    algo_name = str(experiment_config.get("optimizer_algorithm", "LN_BOBYQA"))
+    algo = getattr(nlopt, algo_name, None)
+    if algo is None:
+        raise ValueError(f"Unknown nlopt algorithm optimizer_algorithm={algo_name!r}")
+    print(f"[dadi-real] optimizer {algo_name}")
+    opt = nlopt.opt(algo, len(param_names))
     opt.set_lower_bounds(np.log10(lb))
     opt.set_upper_bounds(np.log10(ub))
     opt.set_max_objective(objective)
     opt.set_ftol_rel(rtol)
-    opt.set_maxeval(int(experiment_config.get("dadi_maxeval", 500)))
+    opt.set_maxeval(int(experiment_config.get("optimizer_maxeval", 500)))
+    if experiment_config.get("optimizer_maxtime") is not None:
+        opt.set_maxtime(float(experiment_config["optimizer_maxtime"]))
 
     # Optional fallback (mirrors your sim code style)
     debug_txt: Optional[str] = None

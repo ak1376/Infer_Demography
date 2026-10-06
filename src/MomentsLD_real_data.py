@@ -467,11 +467,10 @@ def main() -> None:
                      _eval["n"], ll, show, N_ref)
         return ll
 
-    # "momentsld_optimizer_algorithm" overrides for MomentsLD alone; otherwise
-    # falls back to the "optimizer_algorithm" key shared with dadi_inference.py/
-    # moments_inference.py. Defaults to the old hardcoded behavior if neither is set.
-    algo_name = str(cfg.get("momentsld_optimizer_algorithm")
-                    or cfg.get("optimizer_algorithm", "LN_BOBYQA"))
+    # One optimizer setting for every fit (moments/dadi/MomentsLD, simulated and
+    # real): the config's "optimizer_algorithm" / "optimizer_maxeval" /
+    # "optimizer_maxtime".
+    algo_name = str(cfg.get("optimizer_algorithm", "LN_BOBYQA"))
     logging.info("MomentsLD optimizer: %s", algo_name)
     try:
         algo = getattr(nlopt, algo_name)
@@ -486,13 +485,10 @@ def main() -> None:
     # Noisy finite-difference gradients can prevent ftol_rel from ever
     # triggering for LD_* algorithms (same guard as moments_inference.py) --
     # cap evals explicitly so optimization is guaranteed to terminate.
-    # "momentsld_optimizer_maxeval" overrides for MomentsLD alone (derivative-free
-    # LN_BOBYQA needs far more evals than LD_LBFGS); else the shared key.
-    maxeval = int(cfg.get("momentsld_optimizer_maxeval")
-                  or cfg.get("optimizer_maxeval", 500))
+    maxeval = int(cfg.get("optimizer_maxeval", 500))
     logging.info("MomentsLD maxeval: %d", maxeval)
     opt.set_maxeval(maxeval)
-    maxtime = cfg.get("momentsld_optimizer_maxtime") or cfg.get("optimizer_maxtime")
+    maxtime = cfg.get("optimizer_maxtime")
     if maxtime is not None:
         opt.set_maxtime(float(maxtime))
 
