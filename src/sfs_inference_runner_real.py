@@ -79,6 +79,26 @@ def _save_results_real(
     return out_pkl
 
 
+def _x0_log10_from_fit(path: Path, param_order: List[str]) -> List[float]:
+    """log10 SCALED start vector (param_order) from an earlier real fit's
+    ABSOLUTE best_params (best_fit.pkl, single or top-K, or sfs_fit.json)."""
+    import math
+    from src.inference_utils import absolute_to_scaled_params
+
+    if path.suffix == ".json":
+        d = json.loads(path.read_text())
+    else:
+        with open(path, "rb") as fh:
+            d = pickle.load(fh)
+    bp, ll = d["best_params"], d["best_ll"]
+    if isinstance(bp, list):
+        bp = bp[max(range(len(ll)), key=lambda i: ll[i])]
+    p_abs = {k: float(v) for k, v in bp.items()}
+    p_scaled = absolute_to_scaled_params(p_abs, N_anc_abs=p_abs["N_ANC"])
+    p_scaled["N_ANC"] = 1.0   # scaled N_ANC is the unit placeholder
+    return [math.log10(p_scaled[p]) for p in param_order]
+
+
 def run_cli_real(
     *,
     sfs_file: Path,
@@ -89,7 +109,14 @@ def run_cli_real(
     opt_seed: Optional[int] = None,
     real_sequence_length: Optional[float] = None,
     verbose: bool = False,
+    fix: Optional[Dict[str, float]] = None,
+    x0_from: Optional[Path] = None,
 ) -> None:
+    """fix: extra SCALED params to hold constant, on top of the config's
+    fixed_parameters (profile likelihoods pin one at each grid value).
+    x0_from: (moments only) warm-start from an earlier fit -- a best_fit.pkl
+    (single or top-K, the best entry is used) or sfs_fit.json with ABSOLUTE
+    best_params -- converted to scaled units; fixed params override it."""
     with open(sfs_file, "rb") as f:
         sfs = pickle.load(f)
 
@@ -113,6 +140,16 @@ def run_cli_real(
         for k, v in config.get("fixed_parameters", {}).items()
         if isinstance(v, (int, float))
     }
+    fixed_params.update({k: float(v) for k, v in (fix or {}).items()})
+    unknown = sorted(set(fixed_params) - set(param_order))
+    if unknown:
+        raise ValueError(f"fixed params not in parameter_order: {unknown}")
+
+    x0_log10 = None
+    if x0_from is not None:
+        if str(mode).lower().strip() != "moments":
+            raise ValueError("x0_from is only supported for mode='moments'")
+        x0_log10 = _x0_log10_from_fit(Path(x0_from), param_order)
 
     mode = str(mode).lower().strip()
     if mode not in {"moments", "dadi"}:
@@ -132,6 +169,7 @@ def run_cli_real(
             fixed_params=fixed_params,
             verbose=verbose,
             save_dir=outdir / "moments",
+            x0_log10=x0_log10,
         )
 
     else:
@@ -151,9 +189,10 @@ def run_cli_real(
         # if you later want to persist debug_txt, you can return it from fit_dadi_real_scaled;
         # for now, we don't have it unless you extend the function signature.
 
-    # enforce any fixed params if you ever add them
-    for p, v in fixed_params.items():
-        best_params_abs[p] = float(v)
+    # (fixed params need no special handling here: fixed_params are SCALED
+    # values held at lb == ub during the fit, and the fit already converts
+    # every param -- fixed ones included -- to ABSOLUTE units in
+    # best_params_abs. Overwriting them with the scaled value would be wrong.)
 
     _save_results_real(
         outdir=outdir,

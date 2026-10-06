@@ -75,6 +75,21 @@ def _parse_args():
              "N_ANC_implied conversion (typically the ##contig length from the VCF "
              "that produced --sfs-file; see unfolded.sfs.meta.json).",
     )
+    p.add_argument(
+        "--fix",
+        action="append",
+        default=[],
+        metavar="PARAM=VALUE",
+        help="Hold a SCALED parameter constant (repeatable), on top of the config's "
+             "fixed_parameters -- e.g. --fix N_FR0=0.05 pins N_FR0/N_ANC for a profile likelihood.",
+    )
+    p.add_argument(
+        "--x0-from",
+        type=Path,
+        default=None,
+        help="(moments only) start from an earlier fit's best params (best_fit.pkl or "
+             "sfs_fit.json) instead of an LHS draw.",
+    )
     p.add_argument("-v", "--verbose", action="count", default=1)
     return p.parse_args()
 
@@ -89,6 +104,12 @@ def main() -> None:
     sys.path.insert(0, str(PROJECT_ROOT))
 
     args.outdir.mkdir(parents=True, exist_ok=True)
+    fix = {}
+    for item in args.fix:
+        name, _, value = item.partition("=")
+        if not value:
+            raise SystemExit(f"--fix expects PARAM=VALUE, got {item!r}")
+        fix[name.strip()] = float(value)
 
     if args.mode == "both":
         for m in ("moments", "dadi"):
@@ -101,6 +122,8 @@ def main() -> None:
                 opt_seed=args.opt_seed,
                 real_sequence_length=args.real_sequence_length,
                 verbose=bool(args.verbose),
+                fix=fix,
+                x0_from=args.x0_from if m == "moments" else None,
             )
     else:
         run_cli_real(
@@ -112,6 +135,8 @@ def main() -> None:
             opt_seed=args.opt_seed,
             real_sequence_length=args.real_sequence_length,
             verbose=bool(args.verbose),
+            fix=fix,
+            x0_from=args.x0_from,
         )
 
 

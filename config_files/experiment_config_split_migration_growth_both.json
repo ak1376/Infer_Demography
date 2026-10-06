@@ -16,12 +16,17 @@
   "top_k": 5,
   "real_top_k": 5,
   "real_data_analysis": {
-    "arms": ["Chr3L"],
+    "arms": ["Chr2R"],
     "pooling_mode": "individual",
     "window_size_bp": 100000,
     "num_windows": "auto",
-    "exclude_samples": ["FR217", "FR361"],
+    "exclude_samples": [],
     "exclude_breakpoint_buffer_bp": 3000000,
+    "original_vcf": "drosophila_data/dpgp2_vcf/dpgp2_{chrom}_snps.vcf",
+    "sfs_profile_likelihood": {
+      "grids": {"N_FR0": [0.002, 5, 13]},
+      "n_starts": 8
+    },
     "trim_region": {
       "Chr2L": [844225, 19946732],
       "Chr2R": [6063980, 20322335],

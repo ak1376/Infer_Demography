@@ -130,6 +130,7 @@ def fit_model_realdata_scaled(
     eps: float = 1e-12,
     save_dir: Optional[str | Path] = None,
     fixed_params: Optional[Dict[str, float]] = None,
+    x0_log10: Optional[np.ndarray] = None,
 ) -> Tuple[Dict[str, float], float, float, float]:
     """
     Returns:
@@ -138,6 +139,9 @@ def fit_model_realdata_scaled(
     Optimizer runs in scaled space (ratios/tau/M).
     Returned best_params_abs are ABSOLUTE with N_ANC = implied N_ANC.
     fixed_params: scaled-space values to hold constant (lb=ub=value).
+    x0_log10: optional starting point (log10 scaled params, param_order order),
+        e.g. a warm start from an earlier best fit; clipped into the bounds, so
+        fixed params stay at their fixed value. Default: an LHS draw.
     """
     assert isinstance(sfs, moments.Spectrum)
 
@@ -171,7 +175,10 @@ def fit_model_realdata_scaled(
         )
 
     # start = LHS point for this run (diverse, well-spread across prior)
-    x0 = lhs_start_log10(lb, ub, experiment_config)
+    if x0_log10 is None:
+        x0 = lhs_start_log10(lb, ub, experiment_config)
+    else:
+        x0 = np.clip(np.asarray(x0_log10, dtype=float), np.log10(lb), np.log10(ub))
     x0_real = 10**x0
 
     sampled_demes = list(getattr(sfs, "pop_ids", []))
@@ -215,21 +222,47 @@ def fit_model_realdata_scaled(
 
     grad_fn = nd.Gradient(loglikelihood, n=1, step=1e-4)
 
+    # Best point seen, so an nlopt abort (e.g. RoundoffLimited, common with
+    # gradient-based algorithms on a numerically noisy surface) still returns
+    # the best place the search reached instead of crashing the run.
+    best_seen: Dict[str, Any] = {"ll": -np.inf, "x": np.array(x0, copy=True)}
+
     def objective(log10_params: np.ndarray, grad: np.ndarray) -> float:
         ll = loglikelihood(log10_params)
+        if ll > best_seen["ll"]:
+            best_seen["ll"], best_seen["x"] = ll, np.array(log10_params, copy=True)
         if grad.size > 0:
-            grad[:] = grad_fn(log10_params)
+            g = grad_fn(log10_params)
+            grad[:] = g if np.all(np.isfinite(g)) else 0.0
         if verbose:
             print(f"loglik: {ll:.6g}  log10_params: {log10_params}")
         return ll
 
-    opt = nlopt.opt(nlopt.LN_BOBYQA, len(param_names))
+    # Real-data optimizer: config "real_optimizer_algorithm" (any nlopt name;
+    # LD_* ones use the numerical gradient above), "real_optimizer_maxeval"
+    # (0 = no limit). Defaults keep the original behavior: LN_BOBYQA, no limit.
+    algo_name = str(experiment_config.get("real_optimizer_algorithm", "LN_BOBYQA"))
+    algo = getattr(nlopt, algo_name, None)
+    if algo is None:
+        raise ValueError(f"Unknown nlopt algorithm real_optimizer_algorithm={algo_name!r}")
+    maxeval = int(experiment_config.get("real_optimizer_maxeval", 0))
+    print(f"[moments-real] optimizer {algo_name}, maxeval {maxeval or 'unlimited'}")
+
+    opt = nlopt.opt(algo, len(param_names))
     opt.set_lower_bounds(np.log10(lb))
     opt.set_upper_bounds(np.log10(ub))
     opt.set_max_objective(objective)
     opt.set_ftol_rel(rtol)
+    if maxeval > 0:
+        opt.set_maxeval(maxeval)
 
-    xhat = opt.optimize(x0)
+    try:
+        xhat = opt.optimize(x0)
+    except (nlopt.RoundoffLimited, nlopt.ForcedStop, RuntimeError, ValueError) as e:
+        print(f"[moments-real] nlopt stopped early ({type(e).__name__}: {e}); using best point seen")
+        xhat = best_seen["x"]
+    if best_seen["ll"] > float(loglikelihood(xhat)):
+        xhat = best_seen["x"]
     ll_hat = float(loglikelihood(xhat))
 
     # compute theta_hat at optimum

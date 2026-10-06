@@ -1791,6 +1791,37 @@ rule recode_polarized_to_diploid:
         """
 
 ##############################################################################
+# RULE missing_data_kept_fraction  (per-chromosome, optional)
+# The pipeline's input VCFs only contain sites called in EVERY sample: when they
+# were made from the original DPGP2 VCF, any site where one of the samples has
+# an N (a "*" allele from snp-sites) was dropped. Those positions are
+# uncallable and must not count towards the SFS's sequence length L. This rule
+# measures, from the original VCF (real_data_analysis.original_vcf, a
+# "{chrom}" path pattern), the fraction of the region's variable sites that
+# survived that filter, for the trim region and the popfile's samples (the
+# same samples the upstream filter used, whatever exclude_samples says).
+# compute_unfolded_sfs multiplies L by it.
+##############################################################################
+REAL_ORIGINAL_VCF = REAL_DATA_CFG.get("original_vcf")
+
+if REAL_ORIGINAL_VCF:
+    rule missing_data_kept_fraction:
+        input:
+            vcf     = lambda w: REAL_ORIGINAL_VCF.format(chrom=w.chrom),
+            popfile = REAL_POPFILE,
+        output:
+            json = f"{DROSO_DIR}/{{chrom}}/missing_data_kept_fraction.json",
+        params:
+            region = lambda w: (f"--start {REAL_TRIM_REGION[w.chrom][0]} --end {REAL_TRIM_REGION[w.chrom][1]}"
+                                if w.chrom in REAL_TRIM_REGION else ""),
+        threads: 1
+        shell:
+            r"""
+            set -euo pipefail
+            python snakemake_scripts/missing_data_kept_fraction.py               --original-vcf "{input.vcf}" --popfile "{input.popfile}"               --chrom {wildcards.chrom} {params.region} --out "{output.json}"
+            """
+
+##############################################################################
 # RULE compute_unfolded_sfs  (per-chromosome, autosomes)
 # Build the 2D unfolded SFS directly from the polarized haploid VCF.
 # Each sample contributes 1 chromosome (no diploid recoding needed).
@@ -1801,6 +1832,11 @@ rule compute_unfolded_sfs:
         tbi     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
         unpolarized = lambda w: raw_vcf_for_chrom(w.chrom),
         popfile = REAL_POPFILE,
+        # fraction of this region's variable sites that survived the upstream
+        # missing-data filter (rule missing_data_kept_fraction); only when
+        # real_data_analysis.original_vcf is configured, else no correction
+        missing = lambda w: ([f"{DROSO_DIR}/{w.chrom}/missing_data_kept_fraction.json"]
+                             if REAL_ORIGINAL_VCF else []),
     output:
         sfs  = per_chrom_sfs("{chrom}"),
         # sequence_length = region length (this VCF's ##contig header) x the
@@ -1814,6 +1850,7 @@ rule compute_unfolded_sfs:
     params:
         # same samples left out as the MomentsLD branch (make_pseudodiploid_pairs)
         exclude = EXCLUDE_SAMPLES,
+        missing = lambda w, input: f'--missing-data-json "{input.missing[0]}"' if input.missing else "",
     threads: 1
     shell:
         r"""
@@ -1824,6 +1861,7 @@ rule compute_unfolded_sfs:
           --unpolarized-vcf "{input.unpolarized}" \
           --popfile     "{input.popfile}" \
           --exclude     "{params.exclude}" \
+          {params.missing} \
           --output-sfs  "{output.sfs}" \
           --output-meta "{output.meta}" \
           --output-png  "{output.png}"
@@ -2630,6 +2668,108 @@ if PROFILE_GRIDS:
             expand(
                 f"{REAL_FIT_ROOT}/{{arm}}/profiles/{REAL_LD_ENGINE_ARM}/{{pparam}}/profile_{{pparam}}.png",
                 arm=REAL_ARMS, pparam=list(PROFILE_GRIDS),
+            ),
+
+
+##############################################################################
+# REAL DATA: moments SFS profile likelihoods (per arm) -- opt-in             #
+# Only defined when real_data_analysis.sfs_profile_likelihood is set:        #
+#   "sfs_profile_likelihood": {                                             #
+#     "grids":    {"N_FR0": [0.002, 5, 13]},                                #
+#     "n_starts": 8                                                         #
+#   }                                                                       #
+# Same recipe as the MomentsLD profiles above, but for the per-arm moments   #
+# SFS fit -- whose free parameters are SCALED (sizes are N_*/N_ANC, T is     #
+# T/(2 N_ANC), migration is 2 N_ANC m; N_ANC itself comes from theta), so    #
+# grids are in those units. Each grid value pins the parameter and          #
+# re-optimizes the rest from n_starts starts: start 0 warm-starts from the   #
+# arm's aggregated moments best fit, the others are LHS draws.              #
+# Target: all_sfs_profiles_real, or e.g.                                     #
+#   {REAL_FIT_ROOT}/Chr2R/profiles/moments/N_FR0/profile_N_FR0.png          #
+##############################################################################
+_SFS_PROFILE_CFG = REAL_DATA_CFG.get("sfs_profile_likelihood") or {}
+SFS_PROFILE_GRIDS = {
+    p: list(_np.logspace(_np.log10(float(lo)), _np.log10(float(hi)), int(n)))
+    for p, (lo, hi, n) in _SFS_PROFILE_CFG.get("grids", {}).items()
+}
+SFS_PROFILE_N_STARTS = int(_SFS_PROFILE_CFG.get("n_starts", 8))
+
+if SFS_PROFILE_GRIDS:
+    def _sfs_profile_root(w):
+        return f"{REAL_FIT_ROOT}/{w.arm}/profiles/moments/{w.pparam}"
+
+    rule sfs_profile_point_real_by_arm:
+        input:
+            sfs  = lambda w: per_chrom_sfs(w.arm),
+            meta = lambda w: per_chrom_sfs_meta(w.arm),
+            best = f"{REAL_FIT_ROOT}/{{arm}}/inferences/moments/best_fit.pkl",
+        output:
+            pkl = f"{REAL_FIT_ROOT}/{{arm}}/profiles/moments/{{pparam}}/pt{{k}}/start{{s}}/moments/best_fit.pkl",
+        wildcard_constraints:
+            arm    = r"Chr(2L|2R|3L|3R|X)",
+            pparam = "|".join(SFS_PROFILE_GRIDS),
+            k      = r"\d+",
+            s      = r"\d+",
+        params:
+            outdir   = lambda w: f"{_sfs_profile_root(w)}/pt{w.k}/start{w.s}",
+            cfg      = EXP_CFG,
+            model_py = (
+                f"demes_models:{MODEL}_model"
+                if MODEL != "drosophila_three_epoch"
+                else "demes_models:drosophila_three_epoch"
+            ),
+            fix      = lambda w: f"{w.pparam}={SFS_PROFILE_GRIDS[w.pparam][int(w.k)]:.6g}",
+            start    = lambda w, input: (f'--x0-from "{input.best}"' if int(w.s) == 0
+                                         else f"--opt-seed {w.s}"),
+        threads: 2
+        shell:
+            r"""
+            set -euo pipefail
+            seq_len=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['sequence_length'])" "{input.meta}")
+            PYTHONPATH={workflow.basedir} \
+            python snakemake_scripts/moments_dadi_inference_real.py \
+              --mode moments \
+              --sfs-file "{input.sfs}" \
+              --config "{params.cfg}" \
+              --model-py "{params.model_py}" \
+              --outdir "{params.outdir}" \
+              --real-sequence-length "$seq_len" \
+              --fix "{params.fix}" \
+              {params.start}
+            test -f "{output.pkl}"
+            """
+
+    rule sfs_profile_real_by_arm:
+        input:
+            fits = lambda w: [f"{_sfs_profile_root(w)}/pt{k}/start{s}/moments/best_fit.pkl"
+                              for k in range(len(SFS_PROFILE_GRIDS[w.pparam]))
+                              for s in range(SFS_PROFILE_N_STARTS)],
+            best = f"{REAL_FIT_ROOT}/{{arm}}/inferences/moments/best_fit.pkl",
+        output:
+            tsv = f"{REAL_FIT_ROOT}/{{arm}}/profiles/moments/{{pparam}}/profile_{{pparam}}.tsv",
+            png = f"{REAL_FIT_ROOT}/{{arm}}/profiles/moments/{{pparam}}/profile_{{pparam}}.png",
+        wildcard_constraints:
+            arm    = r"Chr(2L|2R|3L|3R|X)",
+            pparam = "|".join(SFS_PROFILE_GRIDS),
+        params:
+            out   = lambda w: f"{_sfs_profile_root(w)}/profile_{w.pparam}",
+            cfg   = EXP_CFG,
+            title = lambda w: f"{w.arm} moments SFS",
+        threads: 1
+        shell:
+            r"""
+            set -euo pipefail
+            python snakemake_scripts/plot_momentsld_profile.py --scaled \
+                --param {wildcards.pparam} --fits {input.fits} --overall-best "{input.best}" \
+                --config "{params.cfg}" --title "{params.title}" --out "{params.out}"
+            """
+
+    rule all_sfs_profiles_real:
+        """Convenience target: every configured SFS profile, for every configured arm."""
+        input:
+            expand(
+                f"{REAL_FIT_ROOT}/{{arm}}/profiles/moments/{{pparam}}/profile_{{pparam}}.png",
+                arm=REAL_ARMS, pparam=list(SFS_PROFILE_GRIDS),
             ),
 
 

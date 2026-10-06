@@ -44,7 +44,7 @@ for arm in "${REAL_ARMS[@]}"; do
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded${SFS_SUFFIX}.sfs.meta.json")
 done
 
-ALLOWED_RULES=(trim_raw_vcf_region annotate_ancestral_allele make_pseudodiploid_pairs
+ALLOWED_RULES=(trim_raw_vcf_region missing_data_kept_fraction annotate_ancestral_allele make_pseudodiploid_pairs
                recode_polarized_to_diploid build_genetic_map_real compute_unfolded_sfs)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     TARGETS+=("${DROSO_DIR}/combined/autosomes.unfolded${SFS_SUFFIX}.sfs.pkl")
