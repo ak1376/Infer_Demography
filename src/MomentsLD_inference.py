@@ -24,6 +24,8 @@ import nlopt
 import numdifftools as nd
 
 from src.inference_utils import (
+    apply_tied,
+    tied_from_config,
     absolute_to_scaled_params,
     scaled_to_absolute_params,
     lhs_start_log10,
@@ -1138,6 +1140,23 @@ def run_momentsld_inference(
         use_scaled_units=use_scaled_units,
     )
 
+    # Absolute units: numeric fixed_parameters (other than N_ANC) are tied to
+    # N_ANC in the real-data fits' relative units (N_CO0: 1.0 -> N_CO0 = N_ANC),
+    # as in the moments/dadi fits -- the model applies the tie and the
+    # parameter's own coordinate is held at a dummy 1.0. (Scaled units already
+    # read those values as N_*/N_ANC etc.)
+    tied = {} if use_scaled_units else tied_from_config(config)
+    if tied:
+        for i, name in enumerate(param_names):
+            if name in tied:
+                fixed_values[i] = 1.0
+        base_demo = demo_function
+
+        def demo_function(param_dict, _f=base_demo):  # noqa: F811
+            return _f(apply_tied(param_dict, tied))
+
+        logging.info("Tying %s to N_ANC (relative units)", tied)
+
     # Run optimization
     logging.info("Starting MomentsLD parameter optimization...")
     optimal_params, max_likelihood, status = optimize_parameters(
@@ -1160,7 +1179,7 @@ def run_momentsld_inference(
 
     # Save results
     results = {
-        "best_params": dict(zip(param_names, optimal_params)),
+        "best_params": apply_tied(dict(zip(param_names, optimal_params)), tied),
         "best_ll": max_likelihood,
         "status": status,
     }

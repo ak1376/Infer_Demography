@@ -36,6 +36,7 @@ from src.demes_models import (  # noqa: E402
 from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals  # noqa: E402
 from src.stdpopsim_wrappers import define_sps_model  # noqa: E402
 from src.rescaling import resolve_scaling_factor  # noqa: E402
+from src.inference_utils import apply_tied, tied_from_config  # noqa: E402
 
 # ============================================================================
 # Sampling helpers (moved from script)
@@ -60,12 +61,16 @@ def sample_params(
             )
         params[k] = float(10 ** rng.uniform(np.log10(lo), np.log10(hi)))
 
-    # Override with any numerically-fixed parameters from the config
+    # Numerically-fixed parameters from the config: N_ANC as an absolute value;
+    # every other one relative to N_ANC, the same units as the real-data fits
+    # (sizes N_*/N_ANC, T/(2 N_ANC), 2 N_ANC m) -- e.g. N_CO0: 1.0 -> N_CO0 = N_ANC.
     if fixed_params:
-        for k, v in fixed_params.items():
-            if isinstance(v, (int, float)):
-                params[k] = float(v)
-                print(f"  [fixed] {k} = {v}")
+        if isinstance(fixed_params.get("N_ANC"), (int, float)):
+            params["N_ANC"] = float(fixed_params["N_ANC"])
+        params = apply_tied(params, tied_from_config({"fixed_parameters": fixed_params}))
+        for k in fixed_params:
+            if k in params:
+                print(f"  [fixed] {k} = {params[k]:.6g} (config {fixed_params[k]})")
 
     return params
 
@@ -319,6 +324,17 @@ def write_bgs_meta_json(
         genome_length=float(cfg.get("sequence_length")),
         mutation_rate=float(cfg.get("mutation_rate")),
         recombination_rate=float(cfg.get("recombination_rate")),
+        # A "map" recombination config overrides the flat rate above, and the
+        # simulated mutation rate is mutation_rate thinned by
+        # genome_length (usable) / sequence_length (simulated region)
+        # (src/bgs_intervals.py::_contig_from_cfg).
+        recombination=(cfg.get("recombination") or {"type": "flat", "rate": cfg.get("recombination_rate")}),
+        simulated_mutation_rate=(
+            float(cfg["mutation_rate"]) * min(1.0, float(cfg["sequence_length"]) / float(ts.sequence_length))
+            if (cfg.get("recombination") or {}).get("type") == "map"
+            else float(cfg["mutation_rate"])
+        ),
+        sample_ploidy=int(cfg.get("sample_ploidy", 2)),
         coverage_fraction=(
             None
             if not is_bgs
