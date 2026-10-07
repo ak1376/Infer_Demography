@@ -1,7 +1,7 @@
 {
-  "sequence_length": 14000000,
-  "ld_sequence_length": 700000,
-  "mutation_rate": 1.45e-09,
+  "sequence_length": 10425662,
+  "ld_sequence_length": 100000,
+  "mutation_rate": 5.49e-09,
   "recombination_rate": 1.45e-09,
   "demographic_model": "split_migration_growth_both",
   "num_samples": {
@@ -10,13 +10,15 @@
   },
   "seed": 42,
   "window_mode": "chunked",
-  "num_windows": 100,
+  "num_windows": 142,
   "num_optimizations": 100,
   "aggregate_min_replicates": 5,
   "top_k": 5,
   "real_top_k": 5,
   "real_data_analysis": {
-    "arms": ["Chr2R"],
+    "arms": [
+      "Chr3L"
+    ],
     "pooling_mode": "individual",
     "window_size_bp": 100000,
     "num_windows": "auto",
@@ -24,15 +26,36 @@
     "exclude_breakpoint_buffer_bp": 3000000,
     "original_vcf": "drosophila_data/dpgp2_vcf/dpgp2_{chrom}_snps.vcf",
     "sfs_profile_likelihood": {
-      "grids": {"N_FR0": [0.002, 5, 13]},
+      "grids": {
+        "N_FR0": [
+          0.002,
+          5,
+          13
+        ]
+      },
       "n_starts": 8
     },
     "trim_region": {
-      "Chr2L": [844225, 19946732],
-      "Chr2R": [6063980, 20322335],
-      "Chr3L": [447386, 18392988],
-      "Chr3R": [7940899, 27237549],
-      "ChrX": [1036552, 20902578]
+      "Chr2L": [
+        844225,
+        19946732
+      ],
+      "Chr2R": [
+        6063980,
+        20322335
+      ],
+      "Chr3L": [
+        447386,
+        18392988
+      ],
+      "Chr3R": [
+        7940899,
+        27237549
+      ],
+      "ChrX": [
+        1036552,
+        20902578
+      ]
     }
   },
   "num_draws": 500,
@@ -42,7 +65,10 @@
     "recombination": {
       "type": "map",
       "file": "real_data_analysis/data/drosophila/genetic_maps/Chr3L/genetic_map.txt",
-      "region": [447386, 18392988],
+      "region": [
+        447386,
+        18392988
+      ],
       "scale": 0.5
     }
   },
@@ -151,6 +177,7 @@
   "momentsld_use_scaled_units": false,
   "ld_diagonal_only_varcov": false,
   "fixed_parameters": {
+    "N_CO0": 1.0
   },
   "parameter_order": [
     "N_ANC",
@@ -182,12 +209,28 @@
   "engine": "msprime",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
-  "pts_base": [20, 30, 40],
+  "pts_base": [
+    20,
+    30,
+    40
+  ],
   "optimizer_algorithm": "LD_LBFGS",
   "optimizer_maxeval": 300,
   "optimizer_maxtime": 1800,
   "prune_mode": "count",
-  "prune_keep_values": [5000],
+  "prune_keep_values": [
+    5000
+  ],
   "gram_schmidt": true,
-  "gram_schmidt_k": 30
+  "gram_schmidt_k": 30,
+  "sample_ploidy": 1,
+  "recombination": {
+    "type": "map",
+    "file": "real_data_analysis/data/drosophila/genetic_maps/Chr2R/genetic_map.txt",
+    "region": [
+      6063980,
+      20322335
+    ],
+    "scale": 0.5
+  }
 }

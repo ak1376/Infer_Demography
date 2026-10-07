@@ -874,7 +874,9 @@ else:
         run:
             from src.windowing import materialize_full_vcf
 
-            materialize_full_vcf(Path(input.trees), Path(params.out_winDir))
+            # cfg: sample_ploidy 1 -> phased pseudo-diploid pairs; a "map"
+            # recombination config -> windows/genetic_map.txt for LD binning.
+            materialize_full_vcf(Path(input.trees), Path(params.out_winDir), cfg=CFG)
 
     rule chunk_window:
         input:

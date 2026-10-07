@@ -45,7 +45,7 @@ import numpy as np
 THIN_FRACTIONS = [0.10, 0.15, 0.20, 0.25, 0.30]
 KEEP_COUNTS: list[int] = []
 SEED = 42
-SUPPORT_FILES = ["samples.txt", "flat_map.txt"]
+SUPPORT_FILES = ["samples.txt", "flat_map.txt", "genetic_map.txt"]
 
 
 def _frac_tag(f: float) -> str:
