@@ -80,16 +80,30 @@ def _contig_from_cfg(cfg: Dict, sel: Dict):
 
     Optional cfg["recombination"] = {"type": "map", "file": <genetic_map.txt>,
     "region": [start, end], "scale": <float>} uses that genetic map over that
-    region instead (contig length = region length; sequence_length and
-    recombination_rate are ignored). Absent, or {"type": "flat"}: the flat
-    recombination_rate behavior above.
+    region instead: the contig is the whole physical region (recombination_rate
+    is ignored), and sequence_length is read as the region's USABLE length --
+    the effective L the SFS fits use (region length x fraction of sites kept
+    after polarization and missing-data filtering). When the region is longer
+    than that, the mutation rate is thinned by sequence_length / region length,
+    so the simulated region carries the same expected number of SNPs as the
+    real data while keeping its full physical span and recombination map.
+    Absent, or {"type": "flat"}: the flat recombination_rate behavior above.
     """
     rec = cfg.get("recombination") or {}
     if rec.get("type", "flat") == "map":
         rate_map = _rate_map_from_genetic_map(rec["file"], rec["region"], rec.get("scale", 1.0))
+        mu = float(cfg["mutation_rate"])
+        region_len = float(rate_map.sequence_length)
+        usable = float(cfg.get("sequence_length", region_len))
+        if usable > region_len:
+            print(f"[contig] WARNING: sequence_length {usable:,.0f} > region length {region_len:,.0f}; "
+                  f"not thinning the mutation rate")
+            usable = region_len
+        mu_sim = mu * usable / region_len
         print(f"[contig] genetic map {rec['file']} region {rec['region']} scale {rec.get('scale', 1.0)}: "
-              f"{rate_map.sequence_length:,.0f} bp, mean rate {rate_map.mean_rate:.3g}/bp/gen")
-        return sps.Contig(recombination_map=rate_map, mutation_rate=float(cfg["mutation_rate"]))
+              f"{region_len:,.0f} bp, mean rate {rate_map.mean_rate:.3g}/bp/gen; "
+              f"usable length {usable:,.0f} bp -> mutation rate {mu:.3g} x {usable / region_len:.4f} = {mu_sim:.4g}")
+        return sps.Contig(recombination_map=rate_map, mutation_rate=mu_sim)
     if rec.get("type", "flat") != "flat":
         raise ValueError(f'recombination.type must be "flat" or "map", got {rec.get("type")!r}')
 
