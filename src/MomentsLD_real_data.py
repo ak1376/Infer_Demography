@@ -39,7 +39,7 @@ import json
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import moments
@@ -93,6 +93,27 @@ def load_demographic_function(config: Dict[str, Any]):
 
 def _build_param_dict(param_names: List[str], vec: np.ndarray) -> Dict[str, float]:
     return {k: float(v) for k, v in zip(param_names, vec)}
+
+
+def _apply_tied(p_abs: Dict[str, float], tied: Optional[Dict[str, float]]) -> Dict[str, float]:
+    """Absolute-units mode: set each tied parameter from N_ANC using the same
+    relative units as the moments/dadi fits' fixed_parameters -- sizes N_* =
+    value * N_ANC, T = value * 2 N_ANC, migration m_* = value / (2 N_ANC).
+    E.g. {"N_CO0": 1.0} makes CO's size at the split equal N_ANC."""
+    if not tied:
+        return p_abs
+    out = dict(p_abs)
+    n_anc = float(out["N_ANC"])
+    for k, v in tied.items():
+        if k.startswith("N_"):
+            out[k] = float(v) * n_anc
+        elif k == "T" or k.startswith("T_"):
+            out[k] = float(v) * 2.0 * n_anc
+        elif k.startswith("m_"):
+            out[k] = float(v) / (2.0 * n_anc)
+        else:
+            raise ValueError(f"don't know how to tie {k} to N_ANC")
+    return out
 
 
 def scaled_to_absolute_params(
@@ -172,6 +193,7 @@ def compute_theoretical_ld(
     N_ref: float,
     use_scaled_units: bool,
     _diagnostic_once: Dict[str, bool],
+    tied: Optional[Dict[str, float]] = None,
 ) -> moments.LD.LDstats:
     """Compute expected sigmaD2. Handles both scaled and absolute parameterisations."""
     vec = 10 ** np.asarray(log10_params, dtype=float)
@@ -180,7 +202,7 @@ def compute_theoretical_ld(
         p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref, time_scale="2N")
         ref = N_ref
     else:
-        p_abs = p_dict
+        p_abs = p_dict = _apply_tied(p_dict, tied)
         ref = float(p_dict.get("N_ANC") or p_dict.get("N0") or next(
             (v for k, v in p_dict.items() if k.startswith("N")), N_ref
         ))
@@ -380,6 +402,7 @@ def main() -> None:
     # Pin any parameters listed in fixed_parameters.
     # Value can be a number or "moments_best" (loaded from --sfs-best-fit-pkl).
     fixed_cfg = cfg.get("fixed_parameters", {})
+    tied: Dict[str, float] = {}
     if fixed_cfg:
         sfs_best_abs: Dict[str, float] = {}
         if args.sfs_best_fit_pkl is not None:
@@ -404,6 +427,15 @@ def main() -> None:
                     val = float(val_abs)
             else:
                 val = float(spec)
+                if not use_scaled_units and pname != "N_ANC":
+                    # Same relative units as the moments/dadi fits (see
+                    # _apply_tied): the parameter follows N_ANC instead of
+                    # being searched; its own coordinate is pinned to a dummy.
+                    tied[pname] = val
+                    idx = param_names.index(pname)
+                    lb[idx] = ub[idx] = 1.0
+                    logging.info("Tying %s = %.6g (relative to N_ANC, as in the moments fits)", pname, val)
+                    continue
             idx = param_names.index(pname)
             lb[idx] = ub[idx] = val
             logging.info("Fixing %s = %.6g (%s)", pname, val, "scaled" if use_scaled_units else "absolute")
@@ -436,6 +468,7 @@ def main() -> None:
             N_ref=N_ref,
             use_scaled_units=use_scaled_units,
             _diagnostic_once=_diag_once,
+            tied=tied,
         )
         theory_arrays, emp_means, emp_covars = prepare_data_for_comparison(
             theo, mv, normalization=int(args.normalization)
@@ -461,7 +494,7 @@ def main() -> None:
             grad[:] = grad_fn(x)
         vec = 10 ** np.asarray(x)
         p_dict = _build_param_dict(param_names, vec)
-        p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref) if use_scaled_units else p_dict
+        p_abs = scaled_to_absolute_params(p_dict, N_ref=N_ref) if use_scaled_units else _apply_tied(p_dict, tied)
         show = ", ".join(f"{k}={p_abs[k]:.3g}" for k in param_names)
         logging.info("eval %4d | LL = %.6f | %s | (N_ref=%.3g)",
                      _eval["n"], ll, show, N_ref)
@@ -524,7 +557,7 @@ def main() -> None:
     best_ll = float(loglik(best_x))
 
     best_dict = _build_param_dict(param_names, 10 ** np.asarray(best_x))
-    best_abs = scaled_to_absolute_params(best_dict, N_ref=N_ref) if use_scaled_units else best_dict
+    best_abs = scaled_to_absolute_params(best_dict, N_ref=N_ref) if use_scaled_units else _apply_tied(best_dict, tied)
 
     if cfg.get("generate_profiles", False):
         logging.info("Computing 1-D profile likelihoods …")
