@@ -77,8 +77,14 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     ld_engine = f"MomentsLD_{ld_name}"                        # pooled fit subdir
 
     # Fits depend on which samples went into the SFS/LD, so the exclusion is
-    # part of the fit folder name, e.g. real_trimmed_excl-FR217-FR361.
-    fit_root = f"experiments/{model}/real_{data_label}{excl_label}"
+    # part of the fit folder name, e.g. real_trimmed_excl-FR217-FR361. Fits
+    # with parameters held fixed (config fixed_parameters, numeric values) are a
+    # different model, so they get their own folder too, e.g.
+    # real_trimmed_excl-FR217-FR361_fix-N_CO0-1 -- never mixed with free fits.
+    fixed = {k: v for k, v in sorted((cfg.get("fixed_parameters") or {}).items())
+             if isinstance(v, (int, float))}
+    fix_label = ("_fix-" + "-".join(f"{k}-{v:g}" for k, v in fixed.items())) if fixed else ""
+    fit_root = f"experiments/{model}/real_{data_label}{excl_label}{fix_label}"
 
     data_settings = {
         "trim_region": trim,
