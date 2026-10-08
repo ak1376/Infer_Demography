@@ -5,10 +5,7 @@ src/sfs_inference_runner.py
 Shared inference “glue” for dadi + moments.
 
 Key behaviors:
-- numeric config["fixed_parameters"] entries (other than N_ANC) are TIED to N_ANC in
-  the real-data fits' relative units (e.g. N_CO0: 1.0 -> N_CO0 = N_ANC throughout
-  the search; inference_utils.apply_tied), so sim fits are the same model as the
-  real fits; any other fixed_parameters entry is filled from ground_truth
+- fixed parameters come from config["fixed_parameters"] and are filled from ground_truth
 - start vector uses fixed values for fixed params
 - the FREE params' start point is a Latin Hypercube draw across the prior box
   (inference_utils.lhs_start_log10, row opt_seed % num_optimizations),
@@ -41,7 +38,7 @@ import matplotlib.pyplot as plt  # noqa: F401
 
 import dadi_inference
 import moments_inference
-from inference_utils import apply_tied, lhs_start_log10, tied_from_config
+from inference_utils import lhs_start_log10
 
 # =============================================================================
 # Parameter ordering / validation helpers
@@ -201,8 +198,7 @@ def run_cli(
     # Step 1: fixed params
     # ------------------------------------------------------------------
     fixed_params: Dict[str, float] = {}
-    tied = tied_from_config(config)
-    fixed_param_names = [p for p in config.get("fixed_parameters", {}) if p not in tied]
+    fixed_param_names = list(config.get("fixed_parameters", {}).keys())
 
     if fixed_param_names:
         if ground_truth is None:
@@ -231,16 +227,7 @@ def run_cli(
     _validate_parameterization(param_order, priors, fixed_params)
 
     # IMPORTANT: create a backend config where fixed params have bounds [v, v]
-    # Tied params follow N_ANC inside the model, so their own coordinate is
-    # pinned to a dummy 1.0 and never searched.
-    config_fit = _apply_fixed_bounds_to_config(
-        config, priors, {**fixed_params, **{p: 1.0 for p in tied}}
-    )
-    if tied:
-        base_model_func = model_func
-
-        def model_func(p_dict, _f=base_model_func):  # noqa: F811
-            return _f(apply_tied(p_dict, tied))
+    config_fit = _apply_fixed_bounds_to_config(config, priors, fixed_params)
     priors_fit = config_fit["priors"]
 
     # ------------------------------------------------------------------
@@ -249,7 +236,6 @@ def run_cli(
     print(f"Model function: {module_name}:{func_name}  signature={sig}")
     print(f"Parameter order: {param_order}")
     print(f"Fixed params: {fixed_params}")
-    print(f"Tied to N_ANC (relative units): {tied}")
 
     lb_arr = np.array([float(priors_fit[p][0]) for p in param_order], dtype=float)
     ub_arr = np.array([float(priors_fit[p][1]) for p in param_order], dtype=float)
@@ -296,14 +282,13 @@ def run_cli(
         # enforce fixed exactly (belt + suspenders)
         for p, v in fixed_params.items():
             best_params[p] = float(v)
-        best_params = apply_tied(best_params, tied)
 
         _save_results(
             mode=mode,
             best_params=best_params,
             best_ll=ll_value,
             param_order=param_order,
-            fixed_params={**fixed_params, **{f"{p} (tied to N_ANC)": v for p, v in tied.items()}},
+            fixed_params=fixed_params,
             outdir=outdir,
         )
         return
@@ -329,14 +314,13 @@ def run_cli(
         }
         for p, v in fixed_params.items():
             best_params[p] = float(v)
-        best_params = apply_tied(best_params, tied)
 
         _save_results(
             mode=mode,
             best_params=best_params,
             best_ll=ll_value,
             param_order=param_order,
-            fixed_params={**fixed_params, **{f"{p} (tied to N_ANC)": v for p, v in tied.items()}},
+            fixed_params=fixed_params,
             outdir=outdir,
         )
 

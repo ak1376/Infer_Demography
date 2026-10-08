@@ -52,7 +52,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from inference_utils import absolute_to_scaled_params, apply_tied, lhs_start_log10, profile_1d, save_profiles  # noqa: E402
+from inference_utils import absolute_to_scaled_params, lhs_start_log10, profile_1d, save_profiles  # noqa: E402
 
 DEFAULT_R_BINS = np.array(
     [0, 1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3],
@@ -95,9 +95,25 @@ def _build_param_dict(param_names: List[str], vec: np.ndarray) -> Dict[str, floa
     return {k: float(v) for k, v in zip(param_names, vec)}
 
 
-# Absolute-units mode: tied parameters follow N_ANC in the same relative units
-# as the moments/dadi fits' fixed_parameters (src/inference_utils.py::apply_tied).
-_apply_tied = apply_tied
+def _apply_tied(p_abs: Dict[str, float], tied: Optional[Dict[str, float]]) -> Dict[str, float]:
+    """Absolute-units mode: set each tied parameter from N_ANC using the same
+    relative units as the moments/dadi fits' fixed_parameters -- sizes N_* =
+    value * N_ANC, T = value * 2 N_ANC, migration m_* = value / (2 N_ANC).
+    E.g. {"N_CO0": 1.0} makes CO's size at the split equal N_ANC."""
+    if not tied:
+        return p_abs
+    out = dict(p_abs)
+    n_anc = float(out["N_ANC"])
+    for k, v in tied.items():
+        if k.startswith("N_"):
+            out[k] = float(v) * n_anc
+        elif k == "T" or k.startswith("T_"):
+            out[k] = float(v) * 2.0 * n_anc
+        elif k.startswith("m_"):
+            out[k] = float(v) / (2.0 * n_anc)
+        else:
+            raise ValueError(f"don't know how to tie {k} to N_ANC")
+    return out
 
 
 def scaled_to_absolute_params(

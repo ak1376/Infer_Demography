@@ -15,36 +15,6 @@ import numpy as np
 SHAPE_N_ANC = 1e4
 
 
-def tied_from_config(config: Dict[str, Any]) -> Dict[str, float]:
-    """Numeric fixed_parameters entries other than N_ANC. They are in the same
-    relative units as the real-data fits -- sizes N_*/N_ANC, T/(2 N_ANC),
-    migration 2 N_ANC m -- so e.g. {"N_CO0": 1.0} means N_CO0 = N_ANC."""
-    return {
-        k: float(v)
-        for k, v in (config.get("fixed_parameters") or {}).items()
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "N_ANC"
-    }
-
-
-def apply_tied(p_abs: Dict[str, float], tied: Dict[str, float] | None) -> Dict[str, float]:
-    """Set each tied parameter from N_ANC (absolute units): sizes N_* =
-    value * N_ANC, T = value * 2 N_ANC, migration m_* = value / (2 N_ANC)."""
-    if not tied:
-        return p_abs
-    out = dict(p_abs)
-    n_anc = float(out["N_ANC"])
-    for k, v in tied.items():
-        if k.startswith("N_"):
-            out[k] = float(v) * n_anc
-        elif k == "T" or k.startswith("T_"):
-            out[k] = float(v) * 2.0 * n_anc
-        elif k.startswith("m_"):
-            out[k] = float(v) / (2.0 * n_anc)
-        else:
-            raise ValueError(f"don't know how to tie {k} to N_ANC")
-    return out
-
-
 def lhs_start_log10(
     lb: np.ndarray,
     ub: np.ndarray,
