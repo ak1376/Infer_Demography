@@ -26,10 +26,10 @@
 #                   "recombination": {"type": "map", "file": ..., "region": [s, e], "scale": 0.5}}
 # (see src/simulation.py::simulation_runner and src/bgs_intervals.py::_contig_from_cfg).
 # --observed-sfs sets num_samples to the observed SFS's sample sizes (so the
-# simulated sample always matches the data), and --sfs-meta sets
-# sequence_length to the data's usable length; the contig builder then thins
-# the mutation rate over the simulated region so it yields the same expected
-# SNP count as the effective length the fit used.
+# simulated sample always matches the data), and --sfs-meta scales the
+# mutation rate by the fraction of sites the real data kept
+# (sequence_length / region_length), so the simulated region yields the same
+# expected SNP count as the effective length the fit used.
 
 from __future__ import annotations
 
@@ -80,9 +80,8 @@ def _parse_args():
                      help="Observed SFS pickle: num_samples is set to its sample sizes "
                           "(pop order from config num_samples).")
     ap.add_argument("--sfs-meta", type=Path, default=None,
-                     help="Observed SFS meta JSON: sequence_length is set to its usable length "
-                          "(region x fraction of sites kept); the simulated region's mutation "
-                          "rate is thinned to match.")
+                     help="Observed SFS meta JSON: mutation_rate is scaled by "
+                          "sequence_length / region_length (fraction of sites kept).")
     ap.add_argument("--no-trees", action="store_true",
                      help="Don't save tree_sequence.trees (SFS-only checks don't need it; "
                           "whole-chromosome tree sequences are large).")
@@ -148,8 +147,7 @@ def _simulate_one_replicate(*, rep_dir, rep_index, params, model_type, cfg, engi
         "sample_ploidy": cfg.get("sample_ploidy", 2),
         "mutation_rate": cfg["mutation_rate"],
         "recombination": cfg.get("recombination") or {"type": "flat", "rate": cfg.get("recombination_rate")},
-        "sequence_length": float(ts.sequence_length),            # simulated (physical) length
-        "usable_sequence_length": float(cfg.get("sequence_length", ts.sequence_length)),
+        "sequence_length": float(ts.sequence_length),
         "params": params,
     }, indent=2))
 
@@ -169,14 +167,10 @@ def main() -> None:
             obs = pickle.load(fh)
         cfg["num_samples"] = {p: int(n) - 1 for p, n in zip(cfg["num_samples"], obs.shape)}
     if args.sfs_meta is not None:
-        # The observed SFS's usable length (region x kept fraction). With a
-        # recombination map, the contig simulates the whole region and thins the
-        # mutation rate by usable/region (src/bgs_intervals.py::_contig_from_cfg);
-        # with a flat rate it simulates the usable length directly.
         meta = json.loads(args.sfs_meta.read_text())
-        cfg["sequence_length"] = float(meta["sequence_length"])
-        print(f"usable sequence_length from {args.sfs_meta}: {cfg['sequence_length']:,.0f} bp "
-              f"(region {float(meta['region_length']):,.0f} bp)")
+        kept = float(meta["sequence_length"]) / float(meta["region_length"])
+        cfg["mutation_rate"] = float(cfg["mutation_rate"]) * kept
+        print(f"mutation_rate scaled by kept fraction {kept:.4f} -> {cfg['mutation_rate']:.4g}")
     print(f"calibration overrides: {sorted(calib)}; num_samples={cfg['num_samples']}, "
           f"sample_ploidy={cfg.get('sample_ploidy', 2)}")
 
