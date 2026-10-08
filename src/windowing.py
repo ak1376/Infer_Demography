@@ -270,84 +270,9 @@ def window_trees(
     return written
 
 
-def _write_region_genetic_map(rec_cfg: dict, out_dir: Path) -> Path:
-    """
-    genetic_map.txt for a simulation run on a real-map region (config
-    "recombination": {"type": "map", "file", "region": [start, end], ...}):
-    the real map file's rows inside the region, shifted so the region starts at
-    0 (the simulation's coordinates). The map is used at the file's own scale --
-    the same file and scale the real-data LD step bins with -- so simulated and
-    real LD stats are binned identically; the simulation's "scale" only sets the
-    recombination rate the data was generated under.
-    """
-    import numpy as np
-
-    start, end = (float(x) for x in rec_cfg["region"])
-    arr = np.loadtxt(rec_cfg["file"], skiprows=1)
-    pos, cm = arr[:, 0], arr[:, 1]
-    inside = (pos > start) & (pos < end)
-    xs = np.concatenate([[start], pos[inside], [end]])
-    ys = np.interp(xs, pos, cm)
-    lines = ["pos\tMap(cM)"] + [f"{x - start:.0f}\t{y - ys[0]:.6f}" for x, y in zip(xs, ys)]
-    map_out = out_dir / "genetic_map.txt"
-    map_out.write_text("\n".join(lines) + "\n")
-    return map_out
-
-
-def _pair_haploid_vcf(raw_vcf: Path, ts: tskit.TreeSequence, out_dir: Path) -> None:
-    """
-    Rewrite a haploid-sample VCF (one column per haploid individual, as
-    ts.write_vcf writes for sample_ploidy=1) in place as phased pseudo-diploids:
-    consecutive haploids within each population become one "a|b" sample, an odd
-    one out is dropped -- the same pairing the real data gets
-    (make_pseudodiploid_pairs.py + recode_haploid_to_diploid.py; simulated
-    haploids are exchangeable, so which ones are paired doesn't matter).
-    samples.txt is rewritten with the pair names.
-    """
-    pop_names = {}
-    for pid in range(ts.num_populations):
-        md = ts.population(pid).metadata
-        pop_names[pid] = (md.get("name") if isinstance(md, dict) else None) or f"pop_{pid}"
-
-    sample_set = {int(u) for u in ts.samples()}
-    cols_by_pop: Dict[str, List[int]] = {}
-    col = 0
-    for ind in ts.individuals():
-        nodes = [int(n) for n in ind.nodes if int(n) in sample_set]
-        if not nodes:
-            continue
-        if len(nodes) != 1:
-            raise ValueError("pseudo-diploid pairing expects haploid individuals (sample_ploidy=1)")
-        cols_by_pop.setdefault(pop_names[ts.node(nodes[0]).population], []).append(9 + col)
-        col += 1
-
-    pairs = []  # (name, pop, col_a, col_b)
-    for pop, cols in cols_by_pop.items():
-        for k in range(len(cols) // 2):
-            pairs.append((f"{pop}_pair{k}", pop, cols[2 * k], cols[2 * k + 1]))
-
-    paired = raw_vcf.with_suffix(".paired.vcf")
-    with raw_vcf.open() as fin, paired.open("w") as fout:
-        for line in fin:
-            if line.startswith("##"):
-                fout.write(line)
-                continue
-            f = line.rstrip("\n").split("\t")
-            if line.startswith("#CHROM"):
-                fout.write("\t".join(f[:9] + [p[0] for p in pairs]) + "\n")
-                continue
-            fout.write("\t".join(f[:8] + ["GT"] + [f"{f[a]}|{f[b]}" for _, _, a, b in pairs]) + "\n")
-    paired.replace(raw_vcf)
-
-    (out_dir / "samples.txt").write_text(
-        "sample\tpop\n" + "".join(f"{name}\t{pop}\n" for name, pop, _, _ in pairs)
-    )
-
-
 def materialize_full_vcf(
     input_trees: Union[PathLike, tskit.TreeSequence],
     out_dir: PathLike,
-    cfg: Optional[dict] = None,
 ) -> Path:
     """
     Write the WHOLE tree sequence to one bgzipped, tabix-indexed VCF, plus
@@ -361,12 +286,6 @@ def materialize_full_vcf(
     is read-only against a finished file, so it's safe to parallelize across
     windows again (each window can be its own independent job).
 
-    With the experiment config `cfg`, the LD inputs are made to match the
-    real data's: sample_ploidy 1 -> the haploid samples are paired into phased
-    pseudo-diploids (LD then computed in haplotype mode), and a
-    "recombination": {"type": "map"} region -> genetic_map.txt (that region of
-    the real map, shifted to start at 0) is written for LD binning.
-
     Returns the path to the indexed full_genome.vcf.gz.
     """
     ts = (
@@ -376,7 +295,6 @@ def materialize_full_vcf(
     )
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cfg = cfg or {}
 
     raw_vcf = out_dir / "full_genome.vcf"
     vcf_gz = out_dir / "full_genome.vcf.gz"
@@ -384,15 +302,10 @@ def materialize_full_vcf(
     with raw_vcf.open("w") as fh:
         ts.write_vcf(fh, allow_position_zero=True)
 
-    _write_samples_from_ts(ts, out_dir)
-    if int(cfg.get("sample_ploidy", 2)) == 1:
-        _pair_haploid_vcf(raw_vcf, ts, out_dir)
-    rec = cfg.get("recombination") or {}
-    if rec.get("type", "flat") == "map":
-        _write_region_genetic_map(rec, out_dir)
-
     _run(f"bgzip -f '{raw_vcf}'")
     _run(f"bcftools index -t '{vcf_gz}'")
+
+    _write_samples_from_ts(ts, out_dir)
 
     return vcf_gz
 
