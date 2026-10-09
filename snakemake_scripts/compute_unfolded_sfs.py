@@ -17,7 +17,12 @@ sequence_length (the L in theta = 4*mu*L*N_ANC) starts as the region length
 from the VCF's ##contig header. With --unpolarized-vcf (the same region before
 annotate_ancestral_allele dropped sites with no usable ancestral base), it is
 scaled by (SNPs kept in the SFS / SNPs before polarization), on the assumption
-that sequence is lost in the same proportion as SNPs.
+that sequence is lost in the same proportion as SNPs. --missing-data-json
+(from missing_data_kept_fraction.py) further scales it by the fraction of
+sites that survived the upstream
+missing-data filter (the input VCF only contains sites called in every
+sample, so positions with an N in any sample were already dropped, and must
+not count towards L either).
 
 With --output-png it also plots each population's own (marginal) spectrum
 against the neutral constant-size expectation (proportional to 1/i), plus the
@@ -192,6 +197,9 @@ def main():
                         "scaled by (SNPs kept / SNPs in this VCF).")
     p.add_argument("--project-to",  type=int, default=None,
                    help="Project each population down to this many haplotypes.")
+    p.add_argument("--missing-data-json", type=Path, default=None,
+                   help="Output of missing_data_kept_fraction.py for this region: sequence_length "
+                        "is multiplied by its missing_data_kept_fraction (default: no correction).")
     p.add_argument("--exclude",     default="",
                    help="Comma-separated sample IDs to leave out of the SFS.")
     p.add_argument("--output-png",  type=Path, default=None,
@@ -332,12 +340,18 @@ def main():
                 n_before = sum(1 for line in fh if line[0] != "#")
             sequence_length = int(round(region_length * kept / n_before))
             print(f"Effective L = {region_length:,} x {kept:,}/{n_before:,} = {sequence_length:,}")
+        missing_kept = (1.0 if args.missing_data_json is None else
+                        float(json.loads(args.missing_data_json.read_text())["missing_data_kept_fraction"]))
+        if missing_kept != 1.0:
+            sequence_length = int(round(sequence_length * missing_kept))
+            print(f"  x missing-data kept fraction {missing_kept:.5f} -> L = {sequence_length:,}")
         meta = {
             "chrom": chrom,
             "sequence_length": sequence_length,
             "region_length": region_length,
             "n_sites_before_polarization": n_before,
             "kept_fraction": None if n_before is None else kept / n_before,   # polarization
+            "missing_data_kept_fraction": missing_kept,
             "source_vcf": str(args.input_vcf),
             "n_sites_total": total,
             "n_sites_kept": kept,
