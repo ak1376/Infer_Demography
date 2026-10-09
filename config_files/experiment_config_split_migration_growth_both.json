@@ -22,7 +22,6 @@
     "num_windows": "auto",
     "exclude_samples": [],
     "exclude_breakpoint_buffer_bp": 3000000,
-    "original_vcf": "drosophila_data/dpgp2_vcf/dpgp2_{chrom}_snps.vcf",
     "sfs_profile_likelihood": {
       "grids": {"N_FR0": [0.002, 5, 13]},
       "n_starts": 8
