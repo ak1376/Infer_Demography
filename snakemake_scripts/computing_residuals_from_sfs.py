@@ -337,7 +337,7 @@ def main():
     priors = cfg["priors"]
 
     # constants
-    mu = _safe_float(cfg.get("mutation_rate"), name="mutation_rate")
+    mu = _safe_float(cfg.get("mutation_rate"), name="mutation_rate") * float(cfg.get("simulation_kept_fraction", 1.0))  # rate the sims used
     L = int(float(cfg.get("sequence_length")))
 
     # Pop order from cfg (we use this to define sampled_demes order)

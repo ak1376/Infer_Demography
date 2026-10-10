@@ -241,7 +241,7 @@ def main():
     # Load
     sfs = pickle.loads(args.sfs_pkl.read_bytes())
     cfg = json.loads(args.config.read_text())
-    mu = float(cfg["mutation_rate"])
+    mu = float(cfg["mutation_rate"]) * float(cfg.get("simulation_kept_fraction", 1.0))  # rate the sims used
     L = int(cfg["sequence_length"])
 
     # Model

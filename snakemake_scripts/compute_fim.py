@@ -147,7 +147,7 @@ def main():
     fit_blob = pickle.load(args.fit_pkl.open("rb"))
     sfs = pickle.load(args.sfs.open("rb"))
     cfg = json.loads(args.config.read_text())
-    mu = float(cfg["mutation_rate"])
+    mu = float(cfg["mutation_rate"]) * float(cfg.get("simulation_kept_fraction", 1.0))  # rate the sims used
     L = int(cfg["sequence_length"])
 
     # Resolve model and wrap to pass config if supported

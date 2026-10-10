@@ -1,7 +1,8 @@
 {
-  "sequence_length": 14000000,
+  "sequence_length": 14258356,
   "ld_sequence_length": 700000,
   "mutation_rate": 1.45e-09,
+  "simulation_kept_fraction": 0.76,
   "recombination_rate": 1.45e-09,
   "demographic_model": "split_migration_growth_both",
   "num_samples": {

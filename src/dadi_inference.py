@@ -103,9 +103,10 @@ def fit_model(
             pts=pts,
         )
 
+        # x simulation_kept_fraction: the rate the simulations used
         muL = float(experiment_config["mutation_rate"]) * float(
-            experiment_config["sequence_length"]
-        )
+            experiment_config.get("simulation_kept_fraction", 1.0)
+        ) * float(experiment_config["sequence_length"])
         theta = 4.0 * float(p_dict[param_names[0]]) * muL
         return fs * theta
 

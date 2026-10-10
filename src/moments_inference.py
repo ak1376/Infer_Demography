@@ -55,9 +55,10 @@ def _diffusion_sfs(
 
     graph = demo_model(p_dict)
 
+    # x simulation_kept_fraction: the rate the simulations used
     muL = float(experiment_config["mutation_rate"]) * float(
-        experiment_config["sequence_length"]
-    )
+        experiment_config.get("simulation_kept_fraction", 1.0)
+    ) * float(experiment_config["sequence_length"])
     # Convention: first parameter is N_ANC/N0 for theta scaling
     N0 = float(p_dict[param_names[0]])
     theta = 4.0 * N0 * muL

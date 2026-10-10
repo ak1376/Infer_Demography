@@ -26,10 +26,11 @@
 #                   "recombination": {"type": "map", "file": ..., "region": [s, e], "scale": 0.5}}
 # (see src/simulation.py::simulation_runner and src/bgs_intervals.py::_contig_from_cfg).
 # --observed-sfs sets num_samples to the observed SFS's sample sizes (so the
-# simulated sample always matches the data), and --sfs-meta scales the
-# mutation rate by the fraction of sites the real data kept
-# (sequence_length / region_length), so the simulated region yields the same
-# expected SNP count as the effective length the fit used.
+# simulated sample always matches the data), and --sfs-meta sets
+# simulation_kept_fraction to the fraction of sites the real data kept
+# (sequence_length / region_length; replacing the config's value), so the
+# simulated region's mutation rate is thinned to yield the same expected SNP
+# count as the effective length the fit used.
 
 from __future__ import annotations
 
@@ -80,7 +81,7 @@ def _parse_args():
                      help="Observed SFS pickle: num_samples is set to its sample sizes "
                           "(pop order from config num_samples).")
     ap.add_argument("--sfs-meta", type=Path, default=None,
-                     help="Observed SFS meta JSON: mutation_rate is scaled by "
+                     help="Observed SFS meta JSON: simulation_kept_fraction is set to "
                           "sequence_length / region_length (fraction of sites kept).")
     ap.add_argument("--no-trees", action="store_true",
                      help="Don't save tree_sequence.trees (SFS-only checks don't need it; "
@@ -146,6 +147,7 @@ def _simulate_one_replicate(*, rep_dir, rep_index, params, model_type, cfg, engi
         "num_samples": cfg["num_samples"],
         "sample_ploidy": cfg.get("sample_ploidy", 2),
         "mutation_rate": cfg["mutation_rate"],
+        "simulation_kept_fraction": cfg.get("simulation_kept_fraction", 1.0),
         "recombination": cfg.get("recombination") or {"type": "flat", "rate": cfg.get("recombination_rate")},
         "sequence_length": float(ts.sequence_length),
         "params": params,
@@ -168,9 +170,9 @@ def main() -> None:
         cfg["num_samples"] = {p: int(n) - 1 for p, n in zip(cfg["num_samples"], obs.shape)}
     if args.sfs_meta is not None:
         meta = json.loads(args.sfs_meta.read_text())
-        kept = float(meta["sequence_length"]) / float(meta["region_length"])
-        cfg["mutation_rate"] = float(cfg["mutation_rate"]) * kept
-        print(f"mutation_rate scaled by kept fraction {kept:.4f} -> {cfg['mutation_rate']:.4g}")
+        cfg["simulation_kept_fraction"] = float(meta["sequence_length"]) / float(meta["region_length"])
+        print(f"simulation_kept_fraction from {args.sfs_meta}: {cfg['simulation_kept_fraction']:.4f} "
+              f"-> simulated mutation rate {float(cfg['mutation_rate']) * cfg['simulation_kept_fraction']:.4g}")
     print(f"calibration overrides: {sorted(calib)}; num_samples={cfg['num_samples']}, "
           f"sample_ploidy={cfg.get('sample_ploidy', 2)}")
 

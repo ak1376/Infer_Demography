@@ -33,7 +33,7 @@ from src.demes_models import (  # noqa: E402
     OOA_three_pop_Gutenkunst,
     OOA_three_pop_model_simplified,
 )
-from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals  # noqa: E402
+from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals, simulation_mutation_rate  # noqa: E402
 from src.stdpopsim_wrappers import define_sps_model  # noqa: E402
 from src.rescaling import resolve_scaling_factor  # noqa: E402
 
@@ -317,7 +317,7 @@ def write_bgs_meta_json(
         right=(sel_cfg.get("right") if is_bgs else None),
         genetic_map=(sel_cfg.get("genetic_map") if is_bgs else None),
         genome_length=float(cfg.get("sequence_length")),
-        mutation_rate=float(cfg.get("mutation_rate")),
+        mutation_rate=simulation_mutation_rate(cfg),
         recombination_rate=float(cfg.get("recombination_rate")),
         coverage_fraction=(
             None
@@ -490,7 +490,7 @@ def run_one_simulation_to_dir(
         span_normalise=False,
     )
 
-    mu = float(sim_cfg["mutation_rate"])
+    mu = simulation_mutation_rate(sim_cfg)
     arr_branch = arr_branch * mu
     sfs_branch = moments.Spectrum(arr_branch)
     sfs_branch.pop_ids = pop_ids
@@ -704,7 +704,7 @@ def simulate_one_window_replicate(
         "base_seed": base_seed,
         "window_seed": w_seed,
         "genome_length": float(window_cfg["genome_length"]),
-        "mutation_rate": float(window_cfg["mutation_rate"]),
+        "mutation_rate": simulation_mutation_rate(window_cfg),
         "recombination_rate": float(window_cfg["recombination_rate"]),
         "num_samples": {k: int(v) for k, v in window_cfg["num_samples"].items()},
         "sampled_params": {k: float(v) for k, v in sampled_params.items()},

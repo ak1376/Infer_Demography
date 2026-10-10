@@ -72,6 +72,11 @@ def _rate_map_from_genetic_map(path: str, region, scale: float = 1.0) -> msprime
     return msprime.RateMap(position=pts - start, rate=rate)
 
 
+def simulation_mutation_rate(cfg: Dict) -> float:
+    """Mutation rate simulations use: mutation_rate x simulation_kept_fraction."""
+    return float(cfg["mutation_rate"]) * float(cfg.get("simulation_kept_fraction", 1.0))
+
+
 def _contig_from_cfg(cfg: Dict, sel: Dict):
     """
     Synthetic-only contig builder.
@@ -83,20 +88,25 @@ def _contig_from_cfg(cfg: Dict, sel: Dict):
     region instead (contig length = region length; sequence_length and
     recombination_rate are ignored). Absent, or {"type": "flat"}: the flat
     recombination_rate behavior above.
+
+    The mutation rate is cfg["mutation_rate"] x cfg["simulation_kept_fraction"]
+    (default 1): the fraction of the real data's SNPs that make it into its
+    SFS, so a simulation of the full region carries the same expected number
+    of SNPs as the filtered real data.
     """
     rec = cfg.get("recombination") or {}
     if rec.get("type", "flat") == "map":
         rate_map = _rate_map_from_genetic_map(rec["file"], rec["region"], rec.get("scale", 1.0))
         print(f"[contig] genetic map {rec['file']} region {rec['region']} scale {rec.get('scale', 1.0)}: "
               f"{rate_map.sequence_length:,.0f} bp, mean rate {rate_map.mean_rate:.3g}/bp/gen")
-        return sps.Contig(recombination_map=rate_map, mutation_rate=float(cfg["mutation_rate"]))
+        return sps.Contig(recombination_map=rate_map, mutation_rate=simulation_mutation_rate(cfg))
     if rec.get("type", "flat") != "flat":
         raise ValueError(f'recombination.type must be "flat" or "map", got {rec.get("type")!r}')
 
     sp = sps.get_species(sel.get("species", "HomSap"))
 
     L = float(cfg["sequence_length"])
-    mu = float(cfg["mutation_rate"]) if "mutation_rate" in cfg else None
+    mu = simulation_mutation_rate(cfg) if "mutation_rate" in cfg else None
     r = float(cfg["recombination_rate"]) if "recombination_rate" in cfg else None
 
     try:
