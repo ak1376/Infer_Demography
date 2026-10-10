@@ -1,6 +1,6 @@
 {
   "sequence_length": 14258356,
-  "ld_sequence_length": 700000,
+  "ld_sequence_length": 100000,
   "mutation_rate": 1.45e-09,
   "simulation_kept_fraction": 0.76,
   "recombination_rate": 1.45e-09,
