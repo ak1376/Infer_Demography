@@ -60,8 +60,6 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     # Haploid samples left out before pairing (e.g. inversion carriers).
     excl = sorted(rd.get("exclude_samples", []))
     excl_tag = ("excl-" + "-".join(excl)) if excl else ""
-    # Drop LD windows within this many bp of any inversion breakpoint on the arm.
-    bp_buffer = int(rd.get("exclude_breakpoint_buffer_bp", 0) or 0)
 
     data_label = "trimmed" if trim else "untrimmed"
     droso_dir = f"{DROSO_BASE_DIR}_trimmed" if trim else DROSO_BASE_DIR
@@ -70,8 +68,7 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     # non-overlapping tiling, so it adds nothing; a fixed count is spelled out.
     win = _bp_label(window_bp) + ("" if nw == "auto" else f"x{nw}")
     excl_label = f"_{excl_tag}" if excl else ""
-    buf_label = f"_bpbuf{_bp_label(bp_buffer)}" if bp_buffer else ""
-    tags = f"{excl_label}{buf_label}"
+    tags = excl_label
     ld_name = f"{_arms_label(arms)}_{win}{tags}"
     ld_engine_arm = f"MomentsLD_{win}{tags}"              # per-arm fit subdir
     ld_engine = f"MomentsLD_{ld_name}"                        # pooled fit subdir
@@ -93,7 +90,6 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     ld_settings = {
         **data_settings,
         "exclude_samples": excl,
-        "exclude_breakpoint_buffer_bp": bp_buffer,
         "arms": arms,
         "window_size_bp": window_bp,
         "num_windows": nw,
@@ -105,7 +101,6 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
         "DROSO_DIR": droso_dir,
         "REAL_LD_NAME": ld_name,
         "EXCLUDE_SAMPLES": ",".join(excl),
-        "BREAKPOINT_BUFFER_BP": bp_buffer,
         # pairing files + diploid-VCF suffix carry the exclusion so runs with
         # different sample sets never share a file
         "PSEUDODIPLOID_PAIRS": f"{DROSO_BASE_DIR}/pseudodiploid_pairs.seed{PSEUDODIPLOID_SEED}{'.' + excl_tag if excl else ''}.tsv",

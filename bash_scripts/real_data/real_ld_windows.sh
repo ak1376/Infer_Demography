@@ -61,8 +61,6 @@ load_real_data_config "$CFG"
 
 # Deterministically list every (arm, window-index) pair actually present on
 # disk, arms in config order and indices numerically sorted within each arm.
-# Windows within BREAKPOINT_BUFFER_BP of an inversion breakpoint are skipped,
-# matching the Snakefile's _real_arm_window_idxs (they are never aggregated).
 # Called both by the dispatcher (to size the array) and by every array task
 # (to pick its slice) so both agree without passing state between them --
 # safe as long as the windows/ dirs don't change in between, which holds
@@ -79,16 +77,7 @@ list_all_targets() {
             idxs+=("${b#window_}")
         done
         if [[ ${#idxs[@]} -gt 0 ]]; then
-            printf '%s\n' "${idxs[@]}" | sort -n | (cd "$ROOT" && python3 -c '
-import gzip, sys
-sys.path.insert(0, "godambe_correction_LRT/src")
-from inversion_breakpoints import overlaps_any_breakpoint
-windir, arm, buf = sys.argv[1], sys.argv[2], int(sys.argv[3])
-for i in sys.stdin.read().split():
-    pos = [int(l.split("\t", 2)[1]) for l in gzip.open(f"{windir}/window_{i}.vcf.gz", "rt") if l[0] != "#"]
-    if pos and not (buf and overlaps_any_breakpoint(pos[0], pos[-1], arm, buf)):
-        print(arm, i)
-' "${REAL_LD_ROOT}/${arm}/windows" "$arm" "${BREAKPOINT_BUFFER_BP:-0}")
+            printf '%s\n' "${idxs[@]}" | sort -n | sed "s/^/${arm} /"
         fi
     done
 }

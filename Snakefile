@@ -2125,40 +2125,12 @@ checkpoint real_vcf_windows:
         """
 
 
-# real_data_analysis.exclude_breakpoint_buffer_bp: windows whose span comes
-# within this many bp of any inversion breakpoint on the arm (table in
-# godambe_correction_LRT/src/inversion_breakpoints.py) are never computed or
-# aggregated. 0 = keep every window.
-BREAKPOINT_BUFFER_BP = RP["BREAKPOINT_BUFFER_BP"]
-sys.path.insert(0, os.path.join(workflow.basedir, "godambe_correction_LRT", "src"))
-from inversion_breakpoints import overlaps_any_breakpoint
-
-def _window_span(vcf_gz):
-    import gzip
-    first = last = None
-    with gzip.open(vcf_gz, "rt") as f:
-        for line in f:
-            if line[0] == "#":
-                continue
-            p = int(line.split("\t", 2)[1])
-            first = p if first is None else first
-            last = p
-    return first, last
-
 def _real_arm_window_idxs(arm):
     ck = checkpoints.real_vcf_windows.get(arm=arm)
-    idxs = sorted(
+    return sorted(
         glob_wildcards(os.path.join(ck.output.windir, "window_{i}.vcf.gz")).i,
         key=int,
     )
-    if not BREAKPOINT_BUFFER_BP:
-        return idxs
-    kept = []
-    for i in idxs:
-        s, e = _window_span(os.path.join(ck.output.windir, f"window_{i}.vcf.gz"))
-        if s is not None and not overlaps_any_breakpoint(s, e, arm, BREAKPOINT_BUFFER_BP):
-            kept.append(i)
-    return kept
 
 
 def gather_all_real_ld_stats(wildcards):
