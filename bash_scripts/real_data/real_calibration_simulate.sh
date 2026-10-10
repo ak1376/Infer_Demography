@@ -14,9 +14,9 @@
 
 # SFS calibration check for ONE real-data per-arm optimization run: simulate
 # the arm at that run's fitted params (its sfs_fit.json), one replicate per
-# SLURM array task, using the config's "calibration" block (sample_ploidy,
-# recombination map) plus the observed SFS's sample sizes and kept-site
-# fraction. Same self-resubmitting array pattern as
+# SLURM array task, using the config's sample_ploidy and recombination map
+# (same as every simulation) plus the observed SFS's sample sizes and
+# kept-site fraction. Same self-resubmitting array pattern as
 # bash_scripts/simulation/calibration_simulate.sh. Then run
 # real_calibration_ppc.sh once every array task has finished.
 #

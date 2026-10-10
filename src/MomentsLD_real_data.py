@@ -22,7 +22,7 @@ Inputs:
 
 Usage example:
   python src/MomentsLD_real_data.py \
-    --config config_files/experiment_config_split_migration_growth.json \
+    --config config_files/experiment_config_IM_FR_grows.json \
     --empirical experiments/split_migration_growth/real_data_analysis/inferences/MomentsLD/means.varcovs.pkl \
     --outdir experiments/split_migration_growth/real_data_analysis/runs/run_0/inferences/MomentsLD \
     --sfs-best-fit-pkl experiments/split_migration_growth/real_data_analysis/inferences/moments/best_fit.pkl \

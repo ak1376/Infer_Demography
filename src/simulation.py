@@ -28,8 +28,9 @@ from src.demes_models import (  # noqa: E402
     IM_symmetric_model,
     IM_asymmetric_model,
     drosophila_three_epoch,
-    split_migration_growth_model,
-    split_migration_growth_both_model,
+    IM_FR_grows_model,
+    IM_both_grow_model,
+    IM_both_grow_from_ancestor_model,
     OOA_three_pop_Gutenkunst,
     OOA_three_pop_model_simplified,
 )
@@ -545,10 +546,12 @@ def build_demes_graph(
         return IM_asymmetric_model(sampled_params, cfg)
     if model_type == "drosophila_three_epoch":
         return drosophila_three_epoch(sampled_params, cfg)
-    if model_type == "split_migration_growth":
-        return split_migration_growth_model(sampled_params, cfg)
-    if model_type == "split_migration_growth_both":
-        return split_migration_growth_both_model(sampled_params, cfg)
+    if model_type == "IM_FR_grows":
+        return IM_FR_grows_model(sampled_params, cfg)
+    if model_type == "IM_both_grow":
+        return IM_both_grow_model(sampled_params, cfg)
+    if model_type == "IM_both_grow_from_ancestor":
+        return IM_both_grow_from_ancestor_model(sampled_params, cfg)
     if model_type == "OOA_three_pop":
         return OOA_three_pop_model_simplified(sampled_params, cfg)
     if model_type == "OOA_three_pop_gutenkunst":

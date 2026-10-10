@@ -208,7 +208,7 @@ def drosophila_three_epoch(
     return b.resolve()
 
 
-def split_migration_growth_model(
+def IM_FR_grows_model(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
 ) -> demes.Graph:
     """
@@ -295,7 +295,7 @@ def split_migration_growth_model(
     return b.resolve()
 
 
-def split_migration_growth_both_model(
+def IM_both_grow_model(
     sampled: Dict[str, float], cfg: Optional[Dict] = None
 ) -> demes.Graph:
     """
@@ -387,6 +387,36 @@ def split_migration_growth_both_model(
         b.add_migration(source="FR", dest="CO", rate=m_FR_CO)
 
     return b.resolve()
+
+
+def IM_both_grow_from_ancestor_model(
+    sampled: Dict[str, float], cfg: Optional[Dict] = None
+) -> demes.Graph:
+    """
+    Same as IM_both_grow_model, except CO starts at the ancestral size: CO is
+    the ancestral population continuing through the split, growing
+    exponentially from N_ANC (at time T) to N_CO1 (present). No N_CO0 parameter.
+
+    Deme names: 'CO' and 'FR'.
+
+    Parameters:
+    - N_ANC:   ancestral size (older than T), and CO's size at the split.
+    - N_CO1:   CO size at present (time 0).
+    - N_FR0:   FR size at split time T.
+    - N_FR1:   FR size at present (time 0).
+    - m_CO_FR: migration CO -> FR (forward time).
+    - m_FR_CO: migration FR -> CO (forward time).
+    - T:       split time (generations ago, backward-time).
+    """
+    if "N_CO0" in sampled or "G_CO" in sampled:
+        raise ValueError("IM_both_grow_from_ancestor has no N_CO0/G_CO: CO starts at N_ANC.")
+    N_ANC = float(sampled.get("N_ANC", sampled.get("N0")))
+    return IM_both_grow_model({**sampled, "N_CO0": N_ANC}, cfg)
+
+
+# Old names, still imported by the godambe_correction_LRT/ side analysis.
+split_migration_growth_model = IM_FR_grows_model
+split_migration_growth_both_model = IM_both_grow_model
 
 
 def OOA_three_pop_model_simplified(

@@ -4,11 +4,17 @@
   "mutation_rate": 1.45e-09,
   "simulation_kept_fraction": 0.76,
   "recombination_rate": 1.45e-09,
-  "demographic_model": "split_migration_growth_both",
-  "num_samples": {
-    "CO": 10,
-    "FR": 9
+  "recombination": {
+    "type": "map",
+    "file": "real_data_analysis/data/drosophila/genetic_maps/Chr2R/genetic_map.txt",
+    "region": [6063980, 20322335]
   },
+  "demographic_model": "IM_both_grow_from_ancestor",
+  "num_samples": {
+    "CO": 9,
+    "FR": 8
+  },
+  "sample_ploidy": 1,
   "seed": 42,
   "window_mode": "chunked",
   "num_windows": 100,
@@ -38,21 +44,8 @@
   },
   "num_draws": 500,
   "calibration_n_replicates": 100,
-  "calibration": {
-    "sample_ploidy": 1,
-    "recombination": {
-      "type": "map",
-      "file": "real_data_analysis/data/drosophila/genetic_maps/Chr3L/genetic_map.txt",
-      "region": [447386, 18392988],
-      "scale": 0.5
-    }
-  },
   "priors": {
     "N_ANC": [
-      3162,
-      3162278
-    ],
-    "N_CO0": [
       3162,
       3162278
     ],
@@ -86,10 +79,6 @@
       1,
       1
     ],
-    "N_CO0": [
-      0.001,
-      30
-    ],
     "N_CO1": [
       0.001,
       30
@@ -119,10 +108,6 @@
     "N_ANC": [
       10000,
       10000000
-    ],
-    "N_CO0": [
-      1000,
-      30000000
     ],
     "N_CO1": [
       1000,
@@ -155,7 +140,6 @@
   },
   "parameter_order": [
     "N_ANC",
-    "N_CO0",
     "N_CO1",
     "N_FR0",
     "N_FR1",

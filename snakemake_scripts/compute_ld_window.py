@@ -7,7 +7,7 @@ Thin wrapper called by Snakemake rule `ld_window`.
 It expects these files under --sim-dir:
   windows/window_<idx>.vcf.gz
   windows/samples.txt
-  windows/flat_map.txt
+  windows/flat_map.txt   (or windows/genetic_map.txt with a "map" recombination config)
 
 It writes:
   LD_stats/LD_stats_window_<idx>.pkl
@@ -46,12 +46,14 @@ def parse_args():
         "--rec-map-file",
         default=None,
         type=Path,
-        help="recombination map to use (default: <sim-dir>/windows/flat_map.txt)",
+        help="recombination map to use (default: <sim-dir>/windows/genetic_map.txt if the "
+        "config's recombination is a map, else <sim-dir>/windows/flat_map.txt)",
     )
     p.add_argument(
         "--haplotypes",
         action="store_true",
-        help="VCF is phased (a|b): compute from haplotypes (use_genotypes=False)",
+        help="VCF is phased (a|b): compute from haplotypes (use_genotypes=False); "
+        "implied when config sample_ploidy is 1",
     )
     return p.parse_args()
 
@@ -67,11 +69,18 @@ def main():
 
     vcf_gz = sim_dir / "windows" / f"window_{idx}.vcf.gz"
     samples_t = sim_dir / "windows" / "samples.txt"
-    rec_map_t = (
-        args.rec_map_file.resolve()
-        if args.rec_map_file is not None
-        else sim_dir / "windows" / "flat_map.txt"
-    )
+    # Simulations on a real-map region get windows/genetic_map.txt (written by
+    # src/windowing.py::materialize_full_vcf) and are binned with it, like the
+    # real data; otherwise the flat map from recombination_rate.
+    genmap = sim_dir / "windows" / "genetic_map.txt"
+    if args.rec_map_file is not None:
+        rec_map_t = args.rec_map_file.resolve()
+    elif (config.get("recombination") or {}).get("type") == "map":
+        rec_map_t = genmap
+    else:
+        rec_map_t = sim_dir / "windows" / "flat_map.txt"
+    # Haploid samples were paired into phased pseudo-diploids -> haplotype mode.
+    haplotypes = args.haplotypes or int(config.get("sample_ploidy", 2)) == 1
     out_dir = sim_dir / "LD_stats"
     out_pkl = out_dir / f"LD_stats_window_{idx}.pkl"
 
@@ -93,7 +102,7 @@ def main():
         rec_map_file=rec_map_t,
         r_bins=r_bins,
         config=config,
-        use_genotypes=not args.haplotypes,
+        use_genotypes=not haplotypes,
     )
 
     with out_pkl.open("wb") as fh:

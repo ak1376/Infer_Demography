@@ -37,14 +37,14 @@ from src.MomentsLD_inference import (
 # ---------------------------------------------------------------------------
 MODEL_CONFIGS = {
     "split_migration_growth": {
-        "config":      "config_files/experiment_config_split_migration_growth.json",
+        "config":      "config_files/experiment_config_IM_FR_grows.json",
         "sim_dir":     "experiments_neutral/split_migration_growth/simulations",
         "real_ld_pkl": "experiments/split_migration_growth/real_data_analysis/inferences/MomentsLD/means.varcovs.pkl",
         "pop_labels":  ["CO", "FR"],
         "out_name":    "neutral_ppc_ld_split_migration_growth.png",
     },
     "split_migration_growth_both": {
-        "config":      "config_files/experiment_config_split_migration_growth_both.json",
+        "config":      "config_files/experiment_config_IM_both_grow.json",
         "sim_dir":     "experiments/split_migration_growth_both/simulations",
         "real_ld_pkl": "experiments/split_migration_growth_both/real_data_analysis/inferences/MomentsLD/means.varcovs.pkl",
         "pop_labels":  ["CO", "FR"],

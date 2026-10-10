@@ -22,8 +22,7 @@
 # Calibration-only overrides (never seen by the training simulations): any
 # keys in the config's "calibration" block replace the top-level ones for
 # this script only, e.g.
-#   "calibration": {"sample_ploidy": 1,
-#                   "recombination": {"type": "map", "file": ..., "region": [s, e], "scale": 0.5}}
+#   "calibration": {"recombination": {"type": "map", "file": ..., "region": [s, e]}}
 # (see src/simulation.py::simulation_runner and src/bgs_intervals.py::_contig_from_cfg).
 # --observed-sfs sets num_samples to the observed SFS's sample sizes (so the
 # simulated sample always matches the data), and --sfs-meta sets

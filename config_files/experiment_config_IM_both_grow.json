@@ -1,0 +1,191 @@
+{
+  "sequence_length": 14258356,
+  "ld_sequence_length": 700000,
+  "mutation_rate": 1.45e-09,
+  "simulation_kept_fraction": 0.76,
+  "recombination_rate": 1.45e-09,
+  "recombination": {
+    "type": "map",
+    "file": "real_data_analysis/data/drosophila/genetic_maps/Chr2R/genetic_map.txt",
+    "region": [6063980, 20322335]
+  },
+  "demographic_model": "IM_both_grow",
+  "num_samples": {
+    "CO": 9,
+    "FR": 8
+  },
+  "sample_ploidy": 1,
+  "seed": 42,
+  "window_mode": "chunked",
+  "num_windows": 100,
+  "num_optimizations": 100,
+  "aggregate_min_replicates": 5,
+  "top_k": 5,
+  "real_top_k": 5,
+  "real_data_analysis": {
+    "arms": ["Chr2R"],
+    "pooling_mode": "individual",
+    "window_size_bp": 100000,
+    "num_windows": "auto",
+    "exclude_samples": [],
+    "original_vcf": "drosophila_data/dpgp2_vcf/dpgp2_{chrom}_snps.vcf",
+    "sfs_projection": {"CO": 9, "FR": 8},
+    "sfs_profile_likelihood": {
+      "grids": {"N_FR0": [0.002, 5, 13]},
+      "n_starts": 8
+    },
+    "trim_region": {
+      "Chr2L": [844225, 19946732],
+      "Chr2R": [6063980, 20322335],
+      "Chr3L": [447386, 18392988],
+      "Chr3R": [7940899, 27237549],
+      "ChrX": [1036552, 20902578]
+    }
+  },
+  "num_draws": 500,
+  "calibration_n_replicates": 100,
+  "priors": {
+    "N_ANC": [
+      3162,
+      3162278
+    ],
+    "N_CO0": [
+      3162,
+      3162278
+    ],
+    "N_CO1": [
+      3162,
+      3162278
+    ],
+    "N_FR0": [
+      3162,
+      3162278
+    ],
+    "N_FR1": [
+      3162,
+      3162278
+    ],
+    "T": [
+      1000,
+      1000000
+    ],
+    "m_CO_FR": [
+      1e-08,
+      0.001
+    ],
+    "m_FR_CO": [
+      1e-08,
+      0.001
+    ]
+  },
+  "priors_real_data_analysis": {
+    "N_ANC": [
+      1,
+      1
+    ],
+    "N_CO0": [
+      0.001,
+      30
+    ],
+    "N_CO1": [
+      0.001,
+      30
+    ],
+    "N_FR0": [
+      0.001,
+      30
+    ],
+    "N_FR1": [
+      0.001,
+      30
+    ],
+    "T": [
+      0.0005,
+      5
+    ],
+    "m_CO_FR": [
+      0.002,
+      200
+    ],
+    "m_FR_CO": [
+      0.002,
+      200
+    ]
+  },
+  "priors_real_data_analysis_absolute": {
+    "N_ANC": [
+      10000,
+      10000000
+    ],
+    "N_CO0": [
+      1000,
+      30000000
+    ],
+    "N_CO1": [
+      1000,
+      30000000
+    ],
+    "N_FR0": [
+      1000,
+      30000000
+    ],
+    "N_FR1": [
+      1000,
+      30000000
+    ],
+    "T": [
+      1000,
+      10000000
+    ],
+    "m_CO_FR": [
+      1e-09,
+      0.0001
+    ],
+    "m_FR_CO": [
+      1e-09,
+      0.0001
+    ]
+  },
+  "momentsld_use_scaled_units": false,
+  "ld_diagonal_only_varcov": false,
+  "fixed_parameters": {
+  },
+  "parameter_order": [
+    "N_ANC",
+    "N_CO0",
+    "N_CO1",
+    "N_FR0",
+    "N_FR1",
+    "T",
+    "m_CO_FR",
+    "m_FR_CO"
+  ],
+  "selection": {
+    "enabled": true,
+    "species": "DroMel",
+    "dfe_id": "Gamma_H17",
+    "coverage_percent": [
+      1,
+      30
+    ],
+    "slim_scaling": 10.0,
+    "slim_burn_in": 5
+  },
+  "use_fim_features": false,
+  "fim_engines": [
+    "moments"
+  ],
+  "use_residuals": false,
+  "residual_engines": "moments",
+  "engine": "msprime",
+  "use_gpu_ld": true,
+  "use_gpu_dadi": false,
+  "pts_base": [20, 30, 40],
+  "optimizer_algorithm": "LD_LBFGS",
+  "optimizer_maxeval": 300,
+  "optimizer_maxtime": 1800,
+  "prune_mode": "count",
+  "prune_keep_values": [5000],
+  "gram_schmidt": true,
+  "gram_schmidt_k": 30
+}

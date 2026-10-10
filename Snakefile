@@ -72,7 +72,12 @@ RP = real_paths(CFG, CFG["demographic_model"])
 # Per-arm input VCF, built from the original DPGP2 VCF (real_data_analysis.
 # original_vcf, a "{chrom}" path pattern; read-only) by rule make_real_vcf.
 # Derived output only -- never written next to the raw data.
-REAL_ORIGINAL_VCF = REAL_DATA_CFG["original_vcf"]
+REAL_ORIGINAL_VCF = REAL_DATA_CFG.get("original_vcf")
+
+def _original_vcf(w):
+    if not REAL_ORIGINAL_VCF:
+        raise ValueError("real_data_analysis.original_vcf is not set in the experiment config")
+    return REAL_ORIGINAL_VCF.format(chrom=w.chrom)
 REAL_VCF_DIR = "real_data_analysis/data/real_vcf"
 
 def real_vcf_for_chrom(chrom):
@@ -878,7 +883,9 @@ else:
         run:
             from src.windowing import materialize_full_vcf
 
-            materialize_full_vcf(Path(input.trees), Path(params.out_winDir))
+            # cfg: sample_ploidy 1 -> phased pseudo-diploid pairs; a "map"
+            # recombination config -> windows/genetic_map.txt for LD binning.
+            materialize_full_vcf(Path(input.trees), Path(params.out_winDir), cfg=CFG)
 
     rule chunk_window:
         input:
@@ -1693,7 +1700,7 @@ rule modeling_all:
 ##############################################################################
 rule make_real_vcf:
     input:
-        vcf     = lambda w: REAL_ORIGINAL_VCF.format(chrom=w.chrom),
+        vcf     = _original_vcf,
         popfile = REAL_POPFILE,
     output:
         vcf = f"{REAL_VCF_DIR}/{{chrom}}.{{region}}.vcf.gz",
@@ -3073,8 +3080,8 @@ rule calibration_ld_ppc:
 ##############################################################################
 # REAL DATA: SFS calibration check for ONE per-arm moments/dadi run          #
 # Simulate the arm under that run's fitted params (sfs_fit.json), with the   #
-# config's "calibration" block (sample_ploidy, recombination map), the       #
-# observed SFS's sample sizes, and the mutation rate scaled by the fraction  #
+# config's sample_ploidy and recombination map (same as every simulation),  #
+# the observed SFS's sample sizes, and the mutation rate scaled by the fraction #
 # of sites the real data kept -- then compare against that arm's observed    #
 # SFS with calibration_ppc.py. One calibration_simulate_fit job per          #
 # replicate (SLURM array: bash_scripts/real_data/real_calibration_simulate.sh).
@@ -3083,11 +3090,11 @@ rule calibration_ld_ppc:
 CALIB_FIT_ROOT = f"{REAL_FIT_ROOT}/{{chrom}}/calibration/{{engine}}_run{{opt}}"
 
 def _calibration_map_matches(w):
-    """The calibration recombination map is per-arm -- refuse to simulate one
-    arm with another arm's map."""
-    rec = CFG.get("calibration", {}).get("recombination") or {}
+    """The recombination map is per-arm -- refuse to simulate one arm with
+    another arm's map."""
+    rec = CFG.get("recombination") or {}
     if rec.get("type") == "map" and f"/{w.chrom}/" not in rec["file"]:
-        raise ValueError(f"calibration.recombination.file {rec['file']} is not {w.chrom}'s map")
+        raise ValueError(f"recombination.file {rec['file']} is not {w.chrom}'s map")
     return EXP_CFG
 
 rule calibration_simulate_fit:
