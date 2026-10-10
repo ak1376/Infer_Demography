@@ -1,8 +1,9 @@
 from __future__ import annotations
-from typing import Dict, Tuple, Optional, List, Any
+from typing import Callable, Dict, Tuple, Optional, List, Any
 
 import json
 import pickle
+import time
 from pathlib import Path
 
 import demes
@@ -98,7 +99,14 @@ def simulation_runner(
     g: demes.Graph,
     experiment_config: Dict[str, Any],
     sampled_coverage: Optional[float] = None,
+    before_simulate: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[tskit.TreeSequence, demes.Graph]:
+    """
+    before_simulate, if given, is called once everything that sets the run's
+    cost is resolved (contig, and for SLiM the selected intervals and Q) and
+    just before the engine starts, with {"contig_length", "sel_summary",
+    "rescaling"} -- e.g. to write metadata before a long simulation.
+    """
 
     model = define_sps_model(g)
 
@@ -137,6 +145,10 @@ def simulation_runner(
         # to thread Q through as extra state.
         resolved_scaling = resolve_scaling_factor(g, sel)
 
+        if before_simulate is not None:
+            before_simulate({"contig_length": float(contig.length),
+                             "sel_summary": sel_summary, "rescaling": resolved_scaling})
+
         eng = sps.get_engine("slim")
         ts = eng.simulate(
             model,
@@ -163,6 +175,9 @@ def simulation_runner(
                 msprime.SampleSet(n, population=pop, ploidy=sample_ploidy)
                 for pop, n in samples.items()
             ]
+        if before_simulate is not None:
+            before_simulate({"contig_length": float(contig.length),
+                             "sel_summary": {}, "rescaling": {}})
         ts = eng.simulate(model, contig, samples, seed=seed)
 
     return ts, g
@@ -173,12 +188,14 @@ def simulation(
     model_type: str,
     experiment_config: Dict[str, Any],
     sampled_coverage: Optional[float] = None,
+    before_simulate: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[tskit.TreeSequence, demes.Graph]:
     # Build demes graph
 
     g = build_demes_graph(model_type, sampled_params, experiment_config)
 
-    return simulation_runner(g, experiment_config, sampled_coverage=sampled_coverage)
+    return simulation_runner(g, experiment_config, sampled_coverage=sampled_coverage,
+                             before_simulate=before_simulate)
 
 
 # ============================================================================
@@ -291,14 +308,24 @@ def write_bgs_meta_json(
     model_type: str,
     engine: str,
     sel_cfg: Dict[str, Any],
-    ts: tskit.TreeSequence,
-    ts_path: Path,
     sampled_params: Dict[str, float],
     simulation_seed: Optional[int],
     sampled_coverage: Optional[float],
+    sel_summary: Dict[str, Any],
+    rescaling_resolved: Dict[str, Any],
+    sequence_length: float,
+    status: str,
+    started_at: float,
+    ts_path: Optional[Path] = None,
 ) -> None:
-    sel_summary = getattr(ts, "_bgs_selection_summary", {}) or {}
-    rescaling_resolved = getattr(ts, "_rescaling_resolved", None) or {}
+    """
+    Write out_dir/bgs.meta.json. Called twice per simulation: with
+    status="running" just before the engine starts (so a long run's settings
+    can be inspected while it runs), then with status="done" afterwards,
+    adding the tree-sequence path and wall time.
+    """
+    sel_summary = sel_summary or {}
+    rescaling_resolved = rescaling_resolved or {}
     is_bgs = engine == "slim"
 
     # slim_scaling reflects the RESOLVED Q (fixed or conditional); falls back
@@ -380,9 +407,13 @@ def write_bgs_meta_json(
         num_samples={k: int(v) for k, v in (cfg.get("num_samples") or {}).items()},
         base_seed=(None if cfg.get("seed") is None else int(cfg.get("seed"))),
         simulation_seed=simulation_seed,
-        sequence_length=float(ts.sequence_length),
-        tree_sequence=str(ts_path),
+        sequence_length=float(sequence_length),
+        tree_sequence=(None if ts_path is None else str(ts_path)),
         sampled_params={k: float(v) for k, v in sampled_params.items()},
+        status=status,
+        started_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started_at)),
+        finished_at=(time.strftime("%Y-%m-%d %H:%M:%S") if status == "done" else None),
+        elapsed_seconds=(round(time.time() - started_at, 1) if status == "done" else None),
     )
 
     (out_dir / "bgs.meta.json").write_text(json.dumps(meta, indent=2))
@@ -458,7 +489,23 @@ def run_one_simulation_to_dir(
     # - Having different parameters in the parameter order vs the sampled params
     # - Ensure the order of the populations (make sure they are not flipped in the SFS)
 
-    ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage)
+    meta_args = dict(
+        out_dir=out_dir, cfg=cfg, model_type=model_type, engine=engine, sel_cfg=sel_cfg,
+        sampled_params=sampled_params, simulation_seed=simulation_seed,
+        sampled_coverage=sampled_coverage,
+    )
+    resolved: Dict[str, Any] = {}
+    started_at = time.time()
+
+    def _write_running_meta(info: Dict[str, Any]) -> None:
+        resolved.update(info)
+        write_bgs_meta_json(**meta_args, sel_summary=info["sel_summary"],
+                            rescaling_resolved=info["rescaling"],
+                            sequence_length=info["contig_length"],
+                            status="running", started_at=started_at)
+
+    ts, g = simulation(sampled_params, model_type, sim_cfg, sampled_coverage,
+                       before_simulate=_write_running_meta)
     sfs = create_SFS(ts, pop_names=tuple(list(cfg["num_samples"].keys())))
 
     # --- DEBUG: site vs branch vs moments expectation ---
@@ -507,18 +554,10 @@ def run_one_simulation_to_dir(
 
     # plot + meta
     save_demes_png(g, out_dir / "demes.png", model_type=model_type)
-    write_bgs_meta_json(
-        out_dir=out_dir,
-        cfg=cfg,
-        model_type=model_type,
-        engine=engine,
-        sel_cfg=sel_cfg,
-        ts=ts,
-        ts_path=ts_path,
-        sampled_params=sampled_params,
-        simulation_seed=simulation_seed,
-        sampled_coverage=sampled_coverage,
-    )
+    write_bgs_meta_json(**meta_args, sel_summary=resolved.get("sel_summary", {}),
+                        rescaling_resolved=resolved.get("rescaling", {}),
+                        sequence_length=float(ts.sequence_length),
+                        status="done", started_at=started_at, ts_path=ts_path)
 
     return out_dir
 
