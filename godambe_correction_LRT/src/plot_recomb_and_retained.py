@@ -17,7 +17,7 @@ Read-only on the VCF and the Comeron xlsx.
 Usage:
   python godambe_correction_LRT/src/plot_recomb_and_retained.py \
       --chrom Chr3L \
-      --xlsx real_data_analysis/data/drosophila/recombination_maps/Comeron_100kb_R5_R6.xlsx \
+      --xlsx drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx \
       --vcf real_data_analysis/data/drosophila/Chr3L/polarized.diploidGT.vcf.gz \
       --popfile real_data_analysis/data/drosophila/popfile.txt \
       --out godambe_correction_LRT/real_arms/Chr3L/recomb_and_retained.png

@@ -31,7 +31,7 @@ from pathlib import Path
 # Paths (relative to repo root)
 # ---------------------------------------------------------------------------
 DROSO         = "real_data_analysis/data/drosophila"
-COMERON_XLSX  = f"{DROSO}/recombination_maps/Comeron_100kb_R5_R6.xlsx"
+COMERON_XLSX  = "drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx"
 POPFILE       = f"{DROSO}/popfile.txt"
 
 # Optional per-arm centromere/telomere trim, mirroring the main repo Snakefile's

@@ -13,7 +13,7 @@ Usage:
   python godambe_correction_LRT/src/plot_bad_boundary_density.py \
       --csv godambe_correction_LRT/real_arms/Chr3L/validated_blocks_boundary_detail.csv \
       --chrom Chr3L \
-      --xlsx real_data_analysis/data/drosophila/recombination_maps/Comeron_100kb_R5_R6.xlsx \
+      --xlsx drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx \
       --window-size 1000000 \
       --out godambe_correction_LRT/real_arms/Chr3L/bad_boundary_density.png
 """

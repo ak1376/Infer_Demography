@@ -277,7 +277,7 @@ REAL_LD_ENGINE_ARM = RP["REAL_LD_ENGINE_ARM"]
 REAL_LD_ROOT = RP["REAL_LD_ROOT"]   # {DROSO_DIR}/ld/{REAL_LD_NAME}
 # Real-data LD always converts bp -> genetic distance with the Comeron (R5/dm3)
 # recombination map (build_genetic_map_real turns this into GENMAP_DIR files).
-COMERON_XLSX       = f"{DROSO_BASE_DIR}/recombination_maps/Comeron_100kb_R5_R6.xlsx"  # shared reference map, region-independent
+COMERON_XLSX       = "drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx"  # input data (like the VCFs), not a pipeline output
 # infer_engine_real/aggregate_opts_engine_real fit COMBINED_SFS, which is
 # itself trim-tagged (built under DROSO_DIR) -- so these fit outputs need the
 # same tag, otherwise a trimmed run would silently overwrite the full-arm

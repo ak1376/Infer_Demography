@@ -15,7 +15,7 @@ inversion list); "In(1)" inversions are on the X chromosome.
 Usage:
   python godambe_correction_LRT/src/plot_inversion_recomb.py \
       --chrom Chr3L \
-      --xlsx real_data_analysis/data/drosophila/recombination_maps/Comeron_100kb_R5_R6.xlsx \
+      --xlsx drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx \
       --out godambe_correction_LRT/real_arms/Chr3L/recomb_inversion.png
 """
 
@@ -132,7 +132,7 @@ def main() -> None:
     ap.add_argument(
         "--xlsx",
         type=Path,
-        default=Path("real_data_analysis/data/drosophila/recombination_maps/Comeron_100kb_R5_R6.xlsx"),
+        default=Path("drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx"),
     )
     ap.add_argument("--sheet-substr", default="R5", help="R5 (dm3) matches this project's VCF coordinates")
     ap.add_argument(
