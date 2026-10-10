@@ -20,8 +20,7 @@
 # own SFS is used directly (by real_sfs_inference.sh's per-chrom targets)
 # and the combined SFS is skipped.
 #
-# Rules run: trim_raw_vcf_region, missing_data_kept_fraction (when
-#            real_data_analysis.original_vcf is set), annotate_ancestral_allele,
+# Rules run: make_real_vcf, annotate_ancestral_allele,
 #            make_pseudodiploid_pairs, recode_polarized_to_diploid,
 #            build_genetic_map_real, compute_unfolded_sfs, and (pooled only)
 #            combine_autosomal_sfs
@@ -40,8 +39,6 @@ SNAKEFILE="$ROOT/Snakefile"
 
 load_real_data_config "$CFG"
 
-HAS_ORIGINAL_VCF=$(python -c "import json,sys; print(int(bool(json.load(open(sys.argv[1])).get('real_data_analysis', {}).get('original_vcf'))))" "$CFG")
-
 TARGETS=()
 for arm in "${REAL_ARMS[@]}"; do
     TARGETS+=("${DROSO_DIR}/${arm}/polarized.diploidGT${DIPLOID_SUFFIX}.phased.vcf.gz")
@@ -49,15 +46,9 @@ for arm in "${REAL_ARMS[@]}"; do
     TARGETS+=("${GENMAP_DIR}/${arm}/genetic_map.txt")
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded${SFS_SUFFIX}.sfs.pkl")
     TARGETS+=("${DROSO_DIR}/${arm}/unfolded${SFS_SUFFIX}.sfs.meta.json")
-    # Requested explicitly: some Snakemake versions won't build a missing input
-    # of an otherwise up-to-date SFS, so the L correction would never happen.
-    # Once it's (re)built, the SFS meta is older than it and gets rebuilt too.
-    if [[ "$HAS_ORIGINAL_VCF" == "1" ]]; then
-        TARGETS+=("${DROSO_DIR}/${arm}/missing_data_kept_fraction.json")
-    fi
 done
 
-ALLOWED_RULES=(trim_raw_vcf_region missing_data_kept_fraction annotate_ancestral_allele make_pseudodiploid_pairs
+ALLOWED_RULES=(make_real_vcf annotate_ancestral_allele make_pseudodiploid_pairs
                recode_polarized_to_diploid build_genetic_map_real compute_unfolded_sfs)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     TARGETS+=("${DROSO_DIR}/combined/autosomes.unfolded${SFS_SUFFIX}.sfs.pkl")
@@ -74,8 +65,8 @@ python - "$CFG" "${REAL_ARMS[@]}" <<'EOF'
 import json, sys
 cfg = json.load(open(sys.argv[1])); rd = cfg.get("real_data_analysis", {})
 print(f"exclude_samples: {rd.get('exclude_samples') or 'none (all flies)'}")
-orig = rd.get("original_vcf")
-print(f"original_vcf:    {orig or 'NOT SET -> no missing-data correction of L'}")
+print(f"original_vcf:    {rd['original_vcf']}")
+print(f"sfs_projection:  {rd.get('sfs_projection') or 'none (full sample; sites with a missing fly skipped)'}")
 for arm in sys.argv[2:]:
     tr = rd.get("trim_region", {}).get(arm)
     print(f"trim_region {arm}: {f'{tr[0]:,}-{tr[1]:,}' if tr else 'none (whole arm)'}")
@@ -108,7 +99,6 @@ for arm in sys.argv[6:]:
     print(f"--- {arm}")
     for f in [d / "polarized.vcf.gz", d / f"polarized.diploidGT{dip_sfx}.phased.vcf.gz",
               Path(root) / genmap / arm / "genetic_map.txt",
-              d / "missing_data_kept_fraction.json",
               d / f"unfolded{sfs_sfx}.sfs.pkl", d / f"unfolded{sfs_sfx}.sfs.meta.json",
               d / f"unfolded{sfs_sfx}.sfs.png"]:
         print(f"  {'OK     ' if f.exists() else 'MISSING'} {f.relative_to(root)}")
@@ -118,16 +108,14 @@ for arm in sys.argv[6:]:
             fs = pickle.load(fh)
         sizes = dict(zip(getattr(fs, "pop_ids", None) or ["pop0", "pop1"], [n - 1 for n in fs.shape]))
         print(f"  SFS: {sizes} haploid samples, {float(fs.S()):,.0f} segregating sites")
-    mj = d / "missing_data_kept_fraction.json"
-    if mj.exists():
-        m = json.loads(mj.read_text())
-        print(f"  missing-data kept fraction: {m['missing_data_kept_fraction']:.5f} "
-              f"({m['variable_sites_no_missing']:,} kept / {m['variable_sites_with_missing']:,} dropped)")
     meta = d / f"unfolded{sfs_sfx}.sfs.meta.json"
     if meta.exists():
         m = json.loads(meta.read_text())
-        print(f"  L: region {m.get('region_length', 0):,} bp x polarization {m.get('kept_fraction') or 1:.4f} "
-              f"x missing data {m.get('missing_data_kept_fraction') or 1:.4f} = {m['sequence_length']:,} bp")
+        print(f"  sites: {m['n_sites_before_polarization']:,} in input -> {m['n_sites_kept']:,} in SFS "
+              f"({m['n_sites_kept_with_missing']:,} of them projected over missing flies; "
+              f"{m['n_sites_skipped_too_few_calls']:,} too few calls for {m.get('projection')})")
+        print(f"  L: region {m.get('region_length', 0):,} bp x kept fraction {m.get('kept_fraction') or 1:.4f} "
+              f"= {m['sequence_length']:,} bp")
 EOF
 echo "========================================================"
 

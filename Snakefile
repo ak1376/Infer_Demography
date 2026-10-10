@@ -54,9 +54,7 @@ USE_GS = bool(CFG.get("gram_schmidt", False))
 # Optional real-data region trim (per-chrom), e.g. to drop centromere/telomere-
 # proximal ends: config_files/*.json -> "real_data_analysis": {"trim_region":
 # {"Chr3L": [447386, 18392988]}}. Keyed by chrom so multiple arms can carry
-# independent bounds. Absent/empty -> today's untagged paths, byte-identical
-# to pre-trim behavior; the new trim_raw_vcf_region rule is only ever pulled
-# in for chroms that have bounds configured (see raw_vcf_for_chrom below).
+# independent bounds. Absent -> the whole arm (see real_vcf_for_chrom below).
 REAL_DATA_CFG = CFG.get("real_data_analysis", {})
 REAL_TRIM_REGION = {
     c: (int(v[0]), int(v[1]))
@@ -71,16 +69,22 @@ sys.path.insert(0, workflow.basedir)
 from src.real_paths import real_paths, check_settings, write_settings, PSEUDODIPLOID_SEED
 RP = real_paths(CFG, CFG["demographic_model"])
 
-RAW_TRIM_DIR = "real_data_analysis/data/trimmed_raw_vcf"  # derived output only -- never drosophila_data/data (read-only mirror of the data share)
+# Per-arm input VCF, built from the original DPGP2 VCF (real_data_analysis.
+# original_vcf, a "{chrom}" path pattern; read-only) by rule make_real_vcf.
+# Derived output only -- never written next to the raw data.
+REAL_ORIGINAL_VCF = REAL_DATA_CFG["original_vcf"]
+REAL_VCF_DIR = "real_data_analysis/data/real_vcf"
 
-def raw_vcf_for_chrom(chrom):
-    """Raw per-chrom VCF path: the region-trimmed copy when trim_region is
-    configured for this chrom, else the original untouched file."""
+def real_vcf_for_chrom(chrom):
+    """Input VCF for this chrom, tagged with its trim region (or "whole")."""
     rng = REAL_TRIM_REGION.get(chrom)
-    if rng is None:
-        return f"drosophila_data/data/{chrom}.vcf.gz"
-    start, end = rng
-    return f"{RAW_TRIM_DIR}/{chrom}.trim{start}-{end}.vcf.gz"
+    region = f"trim{rng[0]}-{rng[1]}" if rng else "whole"
+    return f"{REAL_VCF_DIR}/{chrom}.{region}.vcf.gz"
+
+# real_data_analysis.sfs_projection, e.g. {"CO": 9, "FR": 8}: haplotypes per
+# population the SFS is projected to, so sites with a few missing flies still
+# count. Absent -> full sample size (any site with a missing fly is skipped).
+REAL_SFS_PROJECTION = REAL_DATA_CFG.get("sfs_projection") or {}
 
 # Make sure these match files that actually exist in your repo
 DROSO_BASE_DIR   = RP["DROSO_BASE_DIR"]   # region-independent inputs (popfile, pairing, genetic maps)
@@ -1679,31 +1683,33 @@ rule modeling_all:
 
 
 ##############################################################################
-# RULE trim_raw_vcf_region  (per-chromosome, optional)
-# Restrict the raw haploid VCF to a sub-interval of the arm (e.g. to drop
-# centromere/telomere-proximal regions) before ancestral-allele polarization.
-# Only pulled into the DAG for chroms with bounds set in REAL_TRIM_REGION
-# (see raw_vcf_for_chrom); untrimmed chroms never touch this rule. The
-# ##contig length in the header is rewritten to the trimmed span so
-# compute_unfolded_sfs.py's L (theta = 4*mu*L*N_ANC) reflects the region
-# actually analyzed, not the full arm.
+# RULE make_real_vcf  (per-chromosome)
+# Build the arm's haploid input VCF from the original DPGP2 VCF: popfile
+# samples only, restricted to the trim region (or the whole arm), "*" (N)
+# calls written as missing genotypes, and only sites variable among the
+# called flies. Sites with missing flies are KEPT (compute_unfolded_sfs
+# projects them). The ##contig length is the region span, so
+# compute_unfolded_sfs.py's L (theta = 4*mu*L*N_ANC) is the region analyzed.
 ##############################################################################
-rule trim_raw_vcf_region:
+rule make_real_vcf:
     input:
-        vcf = "drosophila_data/data/{chrom}.vcf.gz",
-        tbi = "drosophila_data/data/{chrom}.vcf.gz.tbi",
+        vcf     = lambda w: REAL_ORIGINAL_VCF.format(chrom=w.chrom),
+        popfile = REAL_POPFILE,
     output:
-        vcf = f"{RAW_TRIM_DIR}/{{chrom}}.trim{{start}}-{{end}}.vcf.gz",
-        tbi = f"{RAW_TRIM_DIR}/{{chrom}}.trim{{start}}-{{end}}.vcf.gz.tbi",
+        vcf = f"{REAL_VCF_DIR}/{{chrom}}.{{region}}.vcf.gz",
+        tbi = f"{REAL_VCF_DIR}/{{chrom}}.{{region}}.vcf.gz.tbi",
+    wildcard_constraints:
+        region = r"whole|trim\d+-\d+",
+    params:
+        bounds = lambda w: ("" if w.region == "whole" else
+                            "--start {} --end {}".format(*w.region[4:].split("-"))),
     threads: 1
     shell:
         r"""
         set -euo pipefail
-        span=$(( {wildcards.end} - {wildcards.start} + 1 ))
-        bcftools view -r "{wildcards.chrom}:{wildcards.start}-{wildcards.end}" "{input.vcf}" \
-          | sed -E "s/^##contig=<ID={wildcards.chrom},length=[0-9]+>/##contig=<ID={wildcards.chrom},length=${{span}}>/" \
-          | bgzip -c > "{output.vcf}"
-        tabix -f -p vcf "{output.vcf}"
+        python snakemake_scripts/make_real_vcf.py \
+          --original-vcf "{input.vcf}" --popfile "{input.popfile}" \
+          --chrom {wildcards.chrom} {params.bounds} --out "{output.vcf}"
         """
 
 ##############################################################################
@@ -1715,8 +1721,8 @@ rule trim_raw_vcf_region:
 ##############################################################################
 rule annotate_ancestral_allele:
     input:
-        vcf   = lambda wc: raw_vcf_for_chrom(wc.chrom),
-        tbi   = lambda wc: raw_vcf_for_chrom(wc.chrom) + ".tbi",
+        vcf   = lambda wc: real_vcf_for_chrom(wc.chrom),
+        tbi   = lambda wc: real_vcf_for_chrom(wc.chrom) + ".tbi",
         fasta = lambda wc: ancestral_fasta(wc.chrom),
     output:
         vcf = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
@@ -1791,37 +1797,6 @@ rule recode_polarized_to_diploid:
         """
 
 ##############################################################################
-# RULE missing_data_kept_fraction  (per-chromosome, optional)
-# The pipeline's input VCFs only contain sites called in EVERY sample: when they
-# were made from the original DPGP2 VCF, any site where one of the samples has
-# an N (a "*" allele from snp-sites) was dropped. Those positions are
-# uncallable and must not count towards the SFS's sequence length L. This rule
-# measures, from the original VCF (real_data_analysis.original_vcf, a
-# "{chrom}" path pattern), the fraction of the region's variable sites that
-# survived that filter, for the trim region and the popfile's samples (the
-# same samples the upstream filter used, whatever exclude_samples says).
-# compute_unfolded_sfs multiplies L by it.
-##############################################################################
-REAL_ORIGINAL_VCF = REAL_DATA_CFG.get("original_vcf")
-
-if REAL_ORIGINAL_VCF:
-    rule missing_data_kept_fraction:
-        input:
-            vcf     = lambda w: REAL_ORIGINAL_VCF.format(chrom=w.chrom),
-            popfile = REAL_POPFILE,
-        output:
-            json = f"{DROSO_DIR}/{{chrom}}/missing_data_kept_fraction.json",
-        params:
-            region = lambda w: (f"--start {REAL_TRIM_REGION[w.chrom][0]} --end {REAL_TRIM_REGION[w.chrom][1]}"
-                                if w.chrom in REAL_TRIM_REGION else ""),
-        threads: 1
-        shell:
-            r"""
-            set -euo pipefail
-            python snakemake_scripts/missing_data_kept_fraction.py               --original-vcf "{input.vcf}" --popfile "{input.popfile}"               --chrom {wildcards.chrom} {params.region} --out "{output.json}"
-            """
-
-##############################################################################
 # RULE compute_unfolded_sfs  (per-chromosome, autosomes)
 # Build the 2D unfolded SFS directly from the polarized haploid VCF.
 # Each sample contributes 1 chromosome (no diploid recoding needed).
@@ -1830,17 +1805,13 @@ rule compute_unfolded_sfs:
     input:
         vcf     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz",
         tbi     = f"{DROSO_DIR}/{{chrom}}/polarized.vcf.gz.tbi",
-        unpolarized = lambda w: raw_vcf_for_chrom(w.chrom),
+        unpolarized = lambda w: real_vcf_for_chrom(w.chrom),
         popfile = REAL_POPFILE,
-        # fraction of this region's variable sites that survived the upstream
-        # missing-data filter (rule missing_data_kept_fraction); only when
-        # real_data_analysis.original_vcf is configured, else no correction
-        missing = lambda w: ([f"{DROSO_DIR}/{w.chrom}/missing_data_kept_fraction.json"]
-                             if REAL_ORIGINAL_VCF else []),
     output:
         sfs  = per_chrom_sfs("{chrom}"),
         # sequence_length = region length (this VCF's ##contig header) x the
-        # fraction of SNPs that survived polarization -- the real-data
+        # fraction of SNPs that made it into the SFS (polarized, and enough
+        # called flies to project) -- the real-data
         # inference rules read it back out for theta -> N_ANC, so it always
         # matches whichever VCF actually built the SFS.
         meta = per_chrom_sfs_meta("{chrom}"),
@@ -1850,7 +1821,7 @@ rule compute_unfolded_sfs:
     params:
         # same samples left out as the MomentsLD branch (make_pseudodiploid_pairs)
         exclude = EXCLUDE_SAMPLES,
-        missing = lambda w, input: f'--missing-data-json "{input.missing[0]}"' if input.missing else "",
+        project = ",".join(f"{p}={n}" for p, n in REAL_SFS_PROJECTION.items()),
     threads: 1
     shell:
         r"""
@@ -1861,7 +1832,7 @@ rule compute_unfolded_sfs:
           --unpolarized-vcf "{input.unpolarized}" \
           --popfile     "{input.popfile}" \
           --exclude     "{params.exclude}" \
-          {params.missing} \
+          --project     "{params.project}" \
           --output-sfs  "{output.sfs}" \
           --output-meta "{output.meta}" \
           --output-png  "{output.png}"

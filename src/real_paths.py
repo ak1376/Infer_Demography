@@ -15,12 +15,12 @@ Layout (e.g. trimmed data, Chr3L, 100 kb windows):
         popfile.txt, pseudodiploid_*.txt, genetic_maps/{chrom}/genetic_map.txt
     real_data_analysis/data/drosophila_trimmed/            processed data
         settings.json
-        {chrom}/polarized.vcf.gz, polarized.diploidGT[.excl-<ids>].vcf.gz, unfolded[.excl-<ids>].sfs.pkl
-        combined/autosomes.unfolded[.excl-<ids>].sfs.pkl
+        {chrom}/polarized.vcf.gz, polarized.diploidGT[.excl-<ids>].vcf.gz, unfolded[.excl-<ids>][.proj<n>x<m>].sfs.pkl
+        combined/autosomes.unfolded[.excl-<ids>][.proj<n>x<m>].sfs.pkl
         ld/Chr3L_100kb/                             one LD run
             settings.json
             {arm}/windows/, {arm}/LD_stats/, {arm}/means.varcovs.pkl
-    experiments/{model}/real_trimmed[_excl-<ids>]/         fits on that data
+    experiments/{model}/real_trimmed[_excl-<ids>][_proj<n>x<m>]/   fits on that data
         runs/, inferences/                                 combined-autosome SFS fits (+ pooled MomentsLD)
         {chrom}/runs/, {chrom}/inferences/                 per-arm fits
             inferences/moments/, inferences/MomentsLD_100kb/
@@ -60,6 +60,9 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     # Haploid samples left out before pairing (e.g. inversion carriers).
     excl = sorted(rd.get("exclude_samples", []))
     excl_tag = ("excl-" + "-".join(excl)) if excl else ""
+    # SFS projection (haplotypes per pop), e.g. {"CO": 9, "FR": 8} -> "proj9x8"
+    proj = rd.get("sfs_projection") or {}
+    proj_tag = ("proj" + "x".join(str(int(n)) for n in proj.values())) if proj else ""
 
     data_label = "trimmed" if trim else "untrimmed"
     droso_dir = f"{DROSO_BASE_DIR}_trimmed" if trim else DROSO_BASE_DIR
@@ -81,7 +84,8 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
     fixed = {k: v for k, v in sorted((cfg.get("fixed_parameters") or {}).items())
              if isinstance(v, (int, float))}
     fix_label = ("_fix-" + "-".join(f"{k}-{v:g}" for k, v in fixed.items())) if fixed else ""
-    fit_root = f"experiments/{model}/real_{data_label}{excl_label}{fix_label}"
+    proj_label = f"_{proj_tag}" if proj else ""
+    fit_root = f"experiments/{model}/real_{data_label}{excl_label}{proj_label}{fix_label}"
 
     data_settings = {
         "trim_region": trim,
@@ -106,9 +110,9 @@ def real_paths(cfg: Dict[str, Any], model: str, r_bins: str = "") -> Dict[str, A
         "PSEUDODIPLOID_PAIRS": f"{DROSO_BASE_DIR}/pseudodiploid_pairs.seed{PSEUDODIPLOID_SEED}{'.' + excl_tag if excl else ''}.tsv",
         "PSEUDODIPLOID_POPFILE": f"{DROSO_BASE_DIR}/pseudodiploid_popfile.seed{PSEUDODIPLOID_SEED}{'.' + excl_tag if excl else ''}.txt",
         "DIPLOID_SUFFIX": f".{excl_tag}" if excl else "",
-        # same tag in the SFS file names (unfolded<suffix>.sfs.pkl), so an
-        # all-samples SFS and an excluded one never share a file
-        "SFS_SUFFIX": f".{excl_tag}" if excl else "",
+        # same tag in the SFS file names (unfolded<suffix>.sfs.pkl), plus the
+        # projection, so SFSs from different sample sets/sizes never share a file
+        "SFS_SUFFIX": "".join(f".{t}" for t in (excl_tag, proj_tag) if t),
         "REAL_LD_ROOT": f"{droso_dir}/ld/{ld_name}",
         "REAL_LD_ENGINE": ld_engine,
         "REAL_LD_ENGINE_ARM": ld_engine_arm,

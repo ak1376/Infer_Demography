@@ -10,19 +10,23 @@ Derived allele count per site is determined by the AA field:
   - AA == REF  ->  derived count = number of samples with GT=1
   - AA == ALT  ->  derived count = number of samples with GT=0  (flip)
 
-Sites with any missing GT ('.') are skipped.
 Sites without an AA field are skipped.
+
+Missing genotypes ('.'): with --project (e.g. CO=9,FR=8) each site is
+projected down to that many haplotypes per population -- its derived count
+among the called flies is spread over the smaller sample by the hypergeometric
+distribution, exactly what moments' Spectrum.project does -- so sites with a
+few missing flies still count. A site with fewer called flies than the
+projection size in any population is skipped. Without --project the full
+sample is used and any site with a missing fly is skipped.
 
 sequence_length (the L in theta = 4*mu*L*N_ANC) starts as the region length
 from the VCF's ##contig header. With --unpolarized-vcf (the same region before
 annotate_ancestral_allele dropped sites with no usable ancestral base), it is
-scaled by (SNPs kept in the SFS / SNPs before polarization), on the assumption
-that sequence is lost in the same proportion as SNPs. --missing-data-json
-(from missing_data_kept_fraction.py) further scales it by the fraction of
-sites that survived the upstream
-missing-data filter (the input VCF only contains sites called in every
-sample, so positions with an N in any sample were already dropped, and must
-not count towards L either).
+scaled by (sites in the SFS / sites before polarization), on the assumption
+that sequence is lost in the same proportion as SNPs. That one fraction covers
+every site dropped on the way: no usable ancestral base, or too few called
+flies to project.
 
 With --output-png it also plots each population's own (marginal) spectrum
 against the neutral constant-size expectation (proportional to 1/i), plus the
@@ -34,7 +38,7 @@ Usage:
       --popfile    real_data_analysis/data/drosophila/popfile.txt \
       --output-sfs real_data_analysis/data/drosophila/drosophila.unfolded.sfs.pkl \
       [--unpolarized-vcf <pre-polarization VCF>]   # optional: scale L by kept SNP fraction
-      [--project-to N]   # optional: project each pop down to N haplotypes
+      [--project CO=9,FR=8]   # optional: project to this many haplotypes per pop
       [--exclude FR217,FR361]   # optional: leave these samples out
       [--output-png unfolded.sfs.png]   # optional: marginal + joint SFS plot
 """
@@ -48,6 +52,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Tuple
 
+from scipy.stats import hypergeom
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -195,11 +200,9 @@ def main():
     p.add_argument("--unpolarized-vcf", type=Path, default=None,
                    help="Optional: the same region before polarization. sequence_length is "
                         "scaled by (SNPs kept / SNPs in this VCF).")
-    p.add_argument("--project-to",  type=int, default=None,
-                   help="Project each population down to this many haplotypes.")
-    p.add_argument("--missing-data-json", type=Path, default=None,
-                   help="Output of missing_data_kept_fraction.py for this region: sequence_length "
-                        "is multiplied by its missing_data_kept_fraction (default: no correction).")
+    p.add_argument("--project",     default="",
+                   help="Haplotypes per population to project to, e.g. CO=9,FR=8 "
+                        "(default: full sample, sites with any missing fly skipped).")
     p.add_argument("--exclude",     default="",
                    help="Comma-separated sample IDs to leave out of the SFS.")
     p.add_argument("--output-png",  type=Path, default=None,
@@ -241,11 +244,27 @@ def main():
     n_per_pop = {pop: len(sample_indices[pop]) for pop in pop_names}
     print(f"Samples per pop: { {p: n_per_pop[p] for p in pop_names} }")
 
-    # SFS array shape: (n_pop0+1) x (n_pop1+1)
-    shape = tuple(n_per_pop[pop] + 1 for pop in pop_names)
-    sfs_arr = np.zeros(shape, dtype=np.float64)
+    proj = {k: int(v) for k, v in (kv.split("=") for kv in args.project.split(",") if kv)}
+    if set(proj) - set(pop_names):
+        raise SystemExit(f"--project pops not in popfile: {sorted(set(proj) - set(pop_names))}")
+    target = [proj.get(pop, n_per_pop[pop]) for pop in pop_names]
+    for pop, m in zip(pop_names, target):
+        if m > n_per_pop[pop]:
+            raise SystemExit(f"--project {pop}={m} but only {n_per_pop[pop]} samples")
+    print(f"Projecting to: {dict(zip(pop_names, target))} haplotypes")
 
-    total = skipped_missing = skipped_no_aa = skipped_no_match = kept = 0
+    # SFS array shape: (target_pop0+1) x (target_pop1+1)
+    sfs_arr = np.zeros(tuple(m + 1 for m in target), dtype=np.float64)
+
+    # P(k derived in a random m of the n called flies | d derived among them)
+    _hyper = {}
+    def projected(n, d, m):
+        key = (n, d, m)
+        if key not in _hyper:
+            _hyper[key] = hypergeom.pmf(np.arange(m + 1), n, d, m)
+        return _hyper[key]
+
+    total = skipped_few_calls = skipped_no_aa = skipped_no_match = kept = kept_with_missing = 0
 
     with opener(str(args.input_vcf), "rt") as f:
         for line in f:
@@ -278,35 +297,33 @@ def main():
                 skipped_no_match += 1
                 continue
 
-            # Count derived alleles per population
-            derived_counts = []
-            skip_site = False
-            for pop in pop_names:
-                idx_list = sample_indices[pop]
-                n = len(idx_list)
-                alt_count = 0
-                for i in idx_list:
-                    gt = gts_all[i]
-                    if gt == ".":
-                        skip_site = True
-                        break
-                    alt_count += int(gt)
-                if skip_site:
+            # Derived-allele count among each population's called flies,
+            # projected down to that population's target size
+            probs = []
+            any_missing = False
+            for pop, m in zip(pop_names, target):
+                gts = [gts_all[i] for i in sample_indices[pop]]
+                called = [g for g in gts if g != "."]
+                n = len(called)
+                if n < m:
                     break
+                any_missing |= n < len(gts)
+                alt_count = sum(int(g) for g in called)
                 derived = (n - alt_count) if flip else alt_count
-                derived_counts.append(derived)
-
-            if skip_site:
-                skipped_missing += 1
+                probs.append(projected(n, derived, m))
+            if len(probs) < len(pop_names):
+                skipped_few_calls += 1
                 continue
 
             kept += 1
-            sfs_arr[tuple(derived_counts)] += 1
+            kept_with_missing += any_missing
+            sfs_arr += np.multiply.outer(probs[0], probs[1]) if len(probs) == 2 else probs[0]
 
     print(f"\nSNP summary:")
     print(f"  Total sites          : {total:>10,}")
     print(f"  Kept                 : {kept:>10,}  ({100*kept/total:.1f}%)")
-    print(f"  Skipped (missing GT) : {skipped_missing:>10,}")
+    print(f"    with a missing fly : {kept_with_missing:>10,}  (projected)")
+    print(f"  Skipped (too few calls to project): {skipped_few_calls:>10,}")
     print(f"  Skipped (no AA)      : {skipped_no_aa:>10,}")
     print(f"  Skipped (AA mismatch): {skipped_no_match:>10,}")
 
@@ -316,10 +333,6 @@ def main():
     # Zero out the corners (fixed sites)
     sfs[0, 0] = 0.0
     sfs[-1, -1] = 0.0
-
-    if args.project_to is not None:
-        print(f"\nProjecting each population to {args.project_to} haplotypes ...")
-        sfs = sfs.project([args.project_to] * len(pop_names))
 
     print(f"\nSFS shape : {sfs.shape}")
     print(f"Folded    : {sfs.folded}")
@@ -340,22 +353,18 @@ def main():
                 n_before = sum(1 for line in fh if line[0] != "#")
             sequence_length = int(round(region_length * kept / n_before))
             print(f"Effective L = {region_length:,} x {kept:,}/{n_before:,} = {sequence_length:,}")
-        missing_kept = (1.0 if args.missing_data_json is None else
-                        float(json.loads(args.missing_data_json.read_text())["missing_data_kept_fraction"]))
-        if missing_kept != 1.0:
-            sequence_length = int(round(sequence_length * missing_kept))
-            print(f"  x missing-data kept fraction {missing_kept:.5f} -> L = {sequence_length:,}")
         meta = {
             "chrom": chrom,
             "sequence_length": sequence_length,
             "region_length": region_length,
             "n_sites_before_polarization": n_before,
-            "kept_fraction": None if n_before is None else kept / n_before,   # polarization
-            "missing_data_kept_fraction": missing_kept,
+            "kept_fraction": None if n_before is None else kept / n_before,   # polarization + projection
+            "projection": dict(zip(pop_names, target)),
             "source_vcf": str(args.input_vcf),
             "n_sites_total": total,
             "n_sites_kept": kept,
-            "n_sites_skipped_missing_gt": skipped_missing,
+            "n_sites_kept_with_missing": kept_with_missing,
+            "n_sites_skipped_too_few_calls": skipped_few_calls,
             "n_sites_skipped_no_aa": skipped_no_aa,
             "n_sites_skipped_aa_mismatch": skipped_no_match,
         }

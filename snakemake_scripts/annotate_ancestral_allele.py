@@ -10,6 +10,7 @@ For each SNP the ancestral base is looked up in the FASTA:
   - ancestral == REF  -> keep site, AA=REF  (ALT is derived)
   - ancestral == ALT  -> keep site, AA=ALT  (REF is derived; flip downstream)
   - ancestral == N or matches neither allele -> skip site
+  - more than one ALT allele (not biallelic) -> skip site
 
 Output is bgzipped and tabix-indexed.
 
@@ -55,7 +56,7 @@ def main():
 
     opener = gzip.open if str(args.input_vcf).endswith(".gz") else open
 
-    total = kept = flipped = skipped_n = skipped_neither = 0
+    total = kept = flipped = skipped_n = skipped_neither = skipped_multi = 0
 
     with opener(str(args.input_vcf), "rt") as fin, open(tmp_vcf, "w") as fout:
         for line in fin:
@@ -75,6 +76,9 @@ def main():
 
             anc = anc_seq[pos - 1] if pos - 1 < len(anc_seq) else "N"
 
+            if "," in alt:
+                skipped_multi += 1
+                continue
             if anc == "N":
                 skipped_n += 1
                 continue
@@ -98,6 +102,7 @@ def main():
     print(f"    ancestral == ALT    : {flipped:>10,}  (these will be flipped)")
     print(f"  Skipped (anc = N)     : {skipped_n:>10,}")
     print(f"  Skipped (no match)    : {skipped_neither:>10,}")
+    print(f"  Skipped (multiallelic): {skipped_multi:>10,}")
 
     print(f"\nbgzipping ...", flush=True)
     subprocess.run(["bgzip", "-f", str(tmp_vcf)], check=True)
