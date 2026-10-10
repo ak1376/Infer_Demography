@@ -94,6 +94,15 @@ def next_sim_number(simulation_dir: Path) -> str:
 # ============================================================================
 
 
+def _one_genome_per_individual(ts: tskit.TreeSequence) -> tskit.TreeSequence:
+    """Keep the first sample genome of every sampled individual (populations
+    kept as-is, so their ids and order don't change)."""
+    sample_set = set(int(u) for u in ts.samples())
+    keep = [min(n for n in ind.nodes if int(n) in sample_set)
+            for ind in ts.individuals() if any(int(n) in sample_set for n in ind.nodes)]
+    return ts.simplify(samples=sorted(keep), filter_populations=False)
+
+
 # Make sampled_coverage optional
 def simulation_runner(
     g: demes.Graph,
@@ -129,9 +138,11 @@ def simulation_runner(
     #     f"parameter_order: {experiment_config.get('parameter_order', [])}"
     # )
 
+    sample_ploidy = int(experiment_config.get("sample_ploidy", 2))
+    if sample_ploidy not in (1, 2):
+        raise ValueError(f"sample_ploidy must be 1 or 2, got {sample_ploidy}.")
+
     if experiment_config.get("engine") == "slim":
-        if int(experiment_config.get("sample_ploidy", 2)) != 2:
-            raise ValueError("sample_ploidy != 2 is only supported with engine='msprime'.")
 
         sel_summary = _apply_dfe_intervals(
             contig, sel, sampled_coverage=sampled_coverage
@@ -158,6 +169,11 @@ def simulation_runner(
             slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
             seed=seed,
         )
+        # SLiM samples diploid individuals only. For sample_ploidy 1 (haploid
+        # data: one genome per fly), keep one genome from each sampled
+        # individual -- num_samples haploid genomes, all from distinct individuals.
+        if sample_ploidy == 1:
+            ts = _one_genome_per_individual(ts)
 
         ts._bgs_selection_summary = sel_summary
         ts._rescaling_resolved = resolved_scaling
@@ -169,7 +185,6 @@ def simulation_runner(
         # population itself stays at the contig's ploidy (2); with 1, each
         # num_samples entry is one haploid genome, as in haploid-sequenced
         # data. Absent/2: num_samples counts diploid individuals (default).
-        sample_ploidy = int(experiment_config.get("sample_ploidy", 2))
         if sample_ploidy != 2:
             samples = [
                 msprime.SampleSet(n, population=pop, ploidy=sample_ploidy)
