@@ -85,7 +85,7 @@ for TASK_ID in $(seq $BATCH_START $BATCH_END); do
     PAD_ID=$(printf "$TASK_ID")   # 0 → 00, 1 → 01 …
 
     snakemake -j "$SLURM_CPUS_PER_TASK" \
-      --snakefile /projects/kernlab/akapoor/Infer_Demography/Snakefile \
+      --snakefile /projects/kernlab/akapoor/Infer_Demography/simulation.smk \
       --directory /projects/kernlab/akapoor/Infer_Demography \
       --nolock \
       --rerun-incomplete \

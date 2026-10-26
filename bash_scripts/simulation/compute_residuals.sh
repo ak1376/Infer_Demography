@@ -26,7 +26,7 @@ SIM_RANGE="${SIM_RANGE:-}"             # optional: "5000-20000"
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/simulation.smk"
 
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
 MODEL=$(jq -r '.demographic_model'      "$CFG")

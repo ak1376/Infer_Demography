@@ -16,7 +16,7 @@ set -euo pipefail
 
 # --- config ---
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/simulation.smk"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 export EXP_CFG="$CFG"

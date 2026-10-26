@@ -35,7 +35,7 @@ ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 source "$ROOT/bash_scripts/lib/lib_real_data_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/real_data.smk"
 
 load_real_data_config "$CFG"   # sets MODEL, REAL_FIT_ROOT, ...
 N_REPS=$(jq -r '.calibration_n_replicates // 20' "$CFG")

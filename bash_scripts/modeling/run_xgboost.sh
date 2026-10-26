@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG_PATH="$(resolve_cfg_path "$ROOT")"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/modeling.smk"
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 
 # Which FIM x SFS-residuals feature-set variants to run (must match

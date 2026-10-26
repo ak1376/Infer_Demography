@@ -21,7 +21,7 @@ source "$REPO/bash_scripts/lib/lib_array_size.sh"
 CFG_PATH="$(resolve_cfg_path "$REPO")"
 export CFG_PATH
 
-snakemake --directory "$REPO" --unlock || true
+snakemake -s "$REPO/simulation.smk" --directory "$REPO" --unlock || true
 
 # Sizes needed to submit each array stage with its correct --array range
 # directly, instead of letting it self-resubmit. Every one of these stage

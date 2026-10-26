@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG_PATH="$(resolve_cfg_path "$ROOT")"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/modeling.smk"
 
 # pull model name from experiment config
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")

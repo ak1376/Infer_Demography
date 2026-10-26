@@ -13,48 +13,17 @@ set -euo pipefail
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG_PATH="$(resolve_cfg_path "$ROOT")"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/modeling.smk"
 MODEL=$(jq -r '.demographic_model' "$CFG_PATH")
 
-# Must match Snakefile's MODELING_VARIANTS — combine_features always requires
-# a variant suffix (modeling_{variant}/datasets/...), there's no bare
-# "modeling/datasets" target.
-MODELING_VARIANTS=(
-  w_FIM_w_SFSresids
-  w_FIM_wo_SFSresids
-  wo_FIM_w_SFSresids
-  wo_FIM_wo_SFSresids
-)
+# Same list modeling.smk builds: the experiment config's "modeling_variants",
+# defaulting to the four inference variants (see rules/common.smk).
+mapfile -t MODELING_VARIANTS < <(jq -r '(.modeling_variants // ["w_FIM_w_SFSresids","w_FIM_wo_SFSresids","wo_FIM_w_SFSresids","wo_FIM_wo_SFSresids"])[]' "$CFG_PATH")
 
+# One combine_features job writes every dataset file for its variant.
 DATA_TARGETS=()
 for variant in "${MODELING_VARIANTS[@]}"; do
-  DATA_TARGETS+=(
-    "experiments/${MODEL}/modeling_${variant}/datasets/features_df.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/targets_df.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/train_features.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/train_targets.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/tune_features.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/tune_targets.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/val_features.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/val_targets.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/normalized_train_features.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/normalized_train_targets.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/normalized_tune_features.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/normalized_tune_targets.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/normalized_val_features.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/normalized_val_targets.pkl"
-    "experiments/${MODEL}/modeling_${variant}/datasets/split_indices.json"
-    "experiments/${MODEL}/modeling_${variant}/datasets/features_scatterplot.png"
-    "experiments/${MODEL}/modeling_${variant}/datasets/mse_bars_train_normalized.png"
-    "experiments/${MODEL}/modeling_${variant}/datasets/mse_bars_val_normalized.png"
-    "experiments/${MODEL}/modeling_${variant}/datasets/metrics_all.json"
-    "experiments/${MODEL}/modeling_${variant}/datasets/metrics_dadi.json"
-    "experiments/${MODEL}/modeling_${variant}/datasets/metrics_moments.json"
-    "experiments/${MODEL}/modeling_${variant}/datasets/metrics_momentsLD.json"
-    "experiments/${MODEL}/modeling_${variant}/datasets/outliers_removed.tsv"
-    "experiments/${MODEL}/modeling_${variant}/datasets/outliers_preview.txt"
-    "experiments/${MODEL}/modeling_${variant}/datasets/empirical_norm_stats.json"
-  )
+  DATA_TARGETS+=("experiments/${MODEL}/modeling_${variant}/datasets/features_df.pkl")
 done
 COLOR_TARGETS=(
   "experiments/${MODEL}/modeling/color_shades.pkl"

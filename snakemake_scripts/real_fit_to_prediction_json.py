@@ -8,10 +8,6 @@
 # tell whether a calibration miscalibration traces back to the ML model or
 # is already present in the underlying dadi/moments/momentsLD fit itself.
 #
-# Mirrors the best_params_from_fit() logic in
-# bash_scripts/real_data/compare_real_fit_params.sh exactly, so results here
-# match what that diagnostic prints.
-#
 # Usage:
 #   python snakemake_scripts/real_fit_to_prediction_json.py \
 #       --best-fit-pkl experiments/<model>/real_data_analysis/inferences/moments/best_fit.pkl \

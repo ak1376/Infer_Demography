@@ -57,7 +57,7 @@ source "$REPO/bash_scripts/lib/lib_array_size.sh"
 CFG_PATH="$(resolve_cfg_path "$REPO")"
 export CFG_PATH
 
-snakemake --directory "$REPO" --unlock || true
+snakemake -s "$REPO/real_data.smk" --directory "$REPO" --unlock || true
 
 NUM_WINDOWS=$(jq -r '.num_windows // 100' "$CFG_PATH")
 USE_GPU_LD=$(jq -r '.use_gpu_ld // false' "$CFG_PATH")

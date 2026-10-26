@@ -26,7 +26,7 @@ BATCH_SIZE="${BATCH_SIZE:-50}"
 # format=Name,MaxTRESPU,MaxJobsPU) before running this at scale.
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/simulation.smk"
 
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"

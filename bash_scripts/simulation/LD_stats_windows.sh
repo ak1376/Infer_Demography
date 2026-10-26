@@ -32,7 +32,7 @@ BATCH_SIZE="${BATCH_SIZE:-50}"
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/simulation.smk"
 
 # -------- everything below is read from the config; nothing hardcoded -------
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")

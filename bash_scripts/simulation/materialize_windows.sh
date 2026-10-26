@@ -23,7 +23,7 @@ set -euo pipefail
 # itself, so those windows would fail to resolve if this hasn't run yet.
 
 ROOT="${ROOT:-/projects/kernlab/akapoor/Infer_Demography}"
-SNAKEFILE="$ROOT/Snakefile"
+SNAKEFILE="$ROOT/simulation.smk"
 source "$ROOT/bash_scripts/lib/lib_active_config.sh"
 CFG="$(resolve_cfg_path "$ROOT")"
 export EXP_CFG="$CFG"
