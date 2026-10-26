@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from ld_paths import momentsld_subdir
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -721,6 +723,8 @@ class DatasetBuildConfig:
     tune_pct: float = 0.1
     # "inference" | "raw_sfs" | "raw_sfs_ld" -- see raw_feature_row()
     feature_source: str = "inference"
+    # MomentsLD output dir under inferences/sim_<sid>/ (src/ld_paths.py)
+    ld_subdir: str = "MomentsLD"
 
 
 def _sfs_interior(sfs) -> np.ndarray:
@@ -754,7 +758,7 @@ def _ld_means_named(mv: dict) -> Dict[str, float]:
 
 
 def raw_feature_row(
-    sim_dir: Path, inf_dir: Path, *, with_ld: bool
+    sim_dir: Path, ld_dir: Path, *, with_ld: bool
 ) -> Dict[str, float] | None:
     """
     Baseline (no-inference) features for one simulation: the observed SFS
@@ -762,7 +766,7 @@ def raw_feature_row(
     _ld_means_named). None if an input is missing or non-finite.
     """
     sfs_path = sim_dir / "SFS.pkl"
-    mv_path = inf_dir / "MomentsLD" / "means.varcovs.pkl"
+    mv_path = ld_dir / "means.varcovs.pkl"
     if not sfs_path.exists() or (with_ld and not mv_path.exists()):
         return None
 
@@ -812,7 +816,7 @@ def build_feature_target_tables(
         if cfg.feature_source != "inference":
             raw_row = raw_feature_row(
                 sim_dir,
-                infer_basedir / f"sim_{sid}",
+                infer_basedir / f"sim_{sid}" / cfg.ld_subdir,
                 with_ld=cfg.feature_source == "raw_sfs_ld",
             )
             if raw_row is None:
@@ -1063,6 +1067,7 @@ def build_modeling_datasets(
         train_pct=train_pct,
         tune_pct=tune_pct,
         feature_source=feature_source,
+        ld_subdir=momentsld_subdir(cfg_raw),
     )
 
     feat_df, targ_df = build_feature_target_tables(

@@ -31,48 +31,22 @@ SIM_BASEDIR = f"experiments/{MODEL}/simulations"
 RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
 LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
 
-wildcard_constraints:
-    frac_tag   = r"thin\d+|n\d+",
 
-# Optional pruning — set "prune_mode": "fraction"|"count" and
-# "prune_keep_values" in EXP_CFG to enable.
-#   fraction: keep a fixed % of sites per window regardless of density
-#             (values are fractions, e.g. [0.15] -> thin15/)
-#   count:    cap each window at min(n_sites, N) -- windows already below N
-#             are left untouched (values are absolute counts, e.g.
-#             [5000, 20000] -> n5000/, n20000/)
-PRUNE_MODE   = CFG.get("prune_mode", "off")
-PRUNE_VALUES = CFG.get("prune_keep_values", [])
-def _frac_tag(f): return f"thin{round(float(f) * 100):02d}"
-def _count_tag(n): return f"n{int(n)}"
-if PRUNE_MODE == "fraction":
-    PRUNE_TAGS = [_frac_tag(v) for v in PRUNE_VALUES]
-elif PRUNE_MODE == "count":
-    PRUNE_TAGS = [_count_tag(v) for v in PRUNE_VALUES]
-else:
-    PRUNE_TAGS = []
+# Optional pruning of each LD window before LD stats are computed: one
+# setting at a time, "prune_mode" ("off" | "fraction" | "count") +
+# "prune_keep_values" ([one value]). With pruning on, every LD output for a
+# sim lives under MomentsLD/pruning/<tag>/ instead of MomentsLD/ -- see
+# src/ld_paths.py. Raw (unthinned) windows always stay in MomentsLD/windows/.
+from src.ld_paths import prune_tag, prune_flag, momentsld_subdir
+PRUNE_TAG  = prune_tag(CFG)             # e.g. "n5000", or None
+LD_SUBDIR  = momentsld_subdir(CFG)      # "MomentsLD" or "MomentsLD/pruning/<tag>"
+LD_DIR     = f"experiments/{MODEL}/inferences/sim_{{sid}}/{LD_SUBDIR}"          # LD stats, means/varcovs, aggregated fit
+LD_RUN_DIR = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/{LD_SUBDIR}"  # one optimizer restart
 
-# What cleanup_optimization_runs (below) waits on / reads for MomentsLD's
-# keep-set: pruned mode aggregates per frac_tag under MomentsLD/pruning/<tag>/
-# instead of directly under MomentsLD/, so there's one target per tag rather
-# than the single unpruned LD_ROOT/best_fit.pkl.
-if PRUNE_TAGS:
-    MOMENTSLD_AGG_TARGETS = [
-        f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{tag}/best_fit.pkl"
-        for tag in PRUNE_TAGS
-    ]
-else:
-    MOMENTSLD_AGG_TARGETS = [f"{LD_ROOT}/best_fit.pkl"]
-
-# The single MomentsLD result combine_results (below) folds in per sim. In
-# pruned mode there's no unpruned MomentsLD/best_fit.pkl at all -- only
-# infer_momentsld_pruned/aggregate_opts_momentsld_pruned ever run -- so this
-# must point at the pruned path; PRUNE_TAGS[0] matches the "one canonical
-# pruning variant feeds downstream" convention aggregate_ld_stats already
-# uses for its --fallback-ld-dir above.
-MOMENTSLD_BEST_FIT = (
-    MOMENTSLD_AGG_TARGETS[0] if PRUNE_TAGS else f"{LD_ROOT}/best_fit.pkl"
-)
+# The MomentsLD fit combine_results folds in (and cleanup_optimization_runs
+# reads its keep-set from).
+MOMENTSLD_BEST_FIT    = f"{LD_DIR}/best_fit.pkl"
+MOMENTSLD_AGG_TARGETS = [MOMENTSLD_BEST_FIT]
 
 
 ##############################################################################
@@ -387,130 +361,50 @@ else:
             )
 
 ##############################################################################
-# RULE ld_window – LD statistics for one window
-# prune_mode "off" (default): computes stats directly on the full window
-# (unchanged, original behavior).
-# prune_mode "fraction"/"count" set: LD pair count scales as
-# density^2, so a dense window (many variants) can make the full
-# computation prohibitively slow. This branch thins the window first
-# (reusing rule prune_window's already-existing pruned VCF) and computes
-# stats on THAT instead, writing to the exact same output path - nothing
-# downstream (aggregate_ld_stats etc.) needs to know pruning happened.
+# RULE prune_window – thin one raw window (only defined when pruning is on)  #
+# src/prune_vcf.py writes <out-dir>/<tag>/window_<win>.vcf.gz, i.e. into    #
+# LD_DIR/windows/. temp(): only ld_window reads it.                         #
 ##############################################################################
-if PRUNE_TAGS:
-    rule ld_window:
-        input:
-            vcf_gz = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{PRUNE_TAGS[0]}/windows/window_{{win}}.vcf.gz",
-        output:
-            pkl = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
-        params:
-            sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}",
-            bins    = R_BINS_STR,
-            cfg     = EXP_CFG,
-        # No threading/multiprocessing code in moments.LD.Parsing.compute_ld_statistics
-        # (the CPU path used when use_gpu_ld=false) -- threads:1 (was 4) so
-        # LD_stats_windows.sh's batched Snakemake call can actually run
-        # multiple windows concurrently per array task instead of one at a
-        # time (was previously exactly matching --cpus-per-task=4, so -j
-        # never had room for a second job).
-        threads: 1
-        resources:
-            ld_cores = 1,
-            gpu      = 1
-        shell:
-            """
-            set -euo pipefail
-            python "{LD_SCRIPT}" \
-                --sim-dir      {params.sim_dir} \
-                --window-index {wildcards.win} \
-                --config-file  {params.cfg} \
-                --r-bins       "{params.bins}"
-
-            mkdir -p "$(dirname "{output.pkl}")"
-            mv "{params.sim_dir}/LD_stats/LD_stats_window_{wildcards.win}.pkl" "{output.pkl}"
-            rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
-            """
-else:
-    rule ld_window:
+if PRUNE_TAG:
+    rule prune_window:
         input:
             vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
         output:
-            pkl    = f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl"
+            pruned_vcf = temp(f"{LD_DIR}/windows/window_{{win}}.vcf.gz"),
         params:
-            sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-            bins    = R_BINS_STR,
-            cfg     = EXP_CFG
-        # No threading/multiprocessing code in moments.LD.Parsing.compute_ld_statistics
-        # (the CPU path used when use_gpu_ld=false) -- threads:1 (was 4) so
-        # LD_stats_windows.sh's batched Snakemake call can actually run
-        # multiple windows concurrently per array task instead of one at a
-        # time (was previously exactly matching --cpus-per-task=4, so -j
-        # never had room for a second job).
+            pruning_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning",
+            prune_flag  = prune_flag(CFG),
         threads: 1
-        resources:
-            ld_cores = 1,
-            gpu      = 1
         shell:
             """
             set -euo pipefail
-            python "{LD_SCRIPT}" \
-                --sim-dir      {params.sim_dir} \
-                --window-index {wildcards.win} \
-                --config-file  {params.cfg} \
-                --r-bins       "{params.bins}"
-
-            # .h5 is written by the LD script but not declared as a Snakemake output;
-            # remove it here so it doesn't accumulate across windows.
-            rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
+            PYTHONPATH={workflow.basedir} \
+            python "src/prune_vcf.py" \
+                --vcf            "{input.vcf_gz}" \
+                --out-dir        "{params.pruning_dir}" \
+                {params.prune_flag}                     \
+                --no-unpruned                           \
+                --workers        1
             """
 
 ##############################################################################
-# RULE prune_window – thin one VCF to a keep-fraction                       #
+# RULE ld_window – LD statistics for one window                              #
+# Reads LD_DIR/windows/window_<win>.vcf.gz: the raw window when pruning is  #
+# off (LD_DIR == LD_ROOT), the thinned one from prune_window when it's on.  #
 ##############################################################################
-rule prune_window:
+rule ld_window:
     input:
-        vcf_gz = f"{LD_ROOT}/windows/window_{{win}}.vcf.gz",
+        vcf_gz = f"{LD_DIR}/windows/window_{{win}}.vcf.gz",
     output:
-        pruned_vcf = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/windows/window_{{win}}.vcf.gz"),
+        pkl = f"{LD_DIR}/LD_stats/LD_stats_window_{{win}}.pkl"
     params:
-        pruning_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning",
-        windows_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/windows",
-        # frac_tag encodes which pruning mode produced it: "thinNN" (keep NN%
-        # of sites) or "nNNN" (cap at NNN sites, min(n_full, NNN) -- see
-        # src/prune_vcf.py's --keep-counts mode).
-        prune_flag  = lambda w: (
-            f"--keep-counts {int(w.frac_tag[1:])}"
-            if w.frac_tag.startswith("n")
-            else f"--keep-fractions {int(w.frac_tag.replace('thin', '')) / 100}"
-        ),
-    threads: 1
-    shell:
-        """
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python "src/prune_vcf.py" \
-            --vcf            "{params.windows_dir}/window_{wildcards.win}.vcf.gz" \
-            --out-dir        "{params.pruning_dir}" \
-            {params.prune_flag}                     \
-            --no-unpruned                           \
-            --workers        1
-        """
-
-##############################################################################
-# RULE ld_window_pruned – LD stats for one pruned window                    #
-##############################################################################
-rule ld_window_pruned:
-    input:
-        vcf_gz = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/windows/window_{{win}}.vcf.gz",
-    output:
-        pkl = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
-    params:
-        sim_dir = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
+        sim_dir = lambda w: LD_DIR.format(sid=w.sid),
         bins    = R_BINS_STR,
-        cfg     = EXP_CFG,
-    # See rule ld_window above: no threading/multiprocessing in
-    # moments.LD.Parsing.compute_ld_statistics, so threads:1 (was 4) lets
-    # LD_stats_windows.sh's batched call run windows concurrently.
+        cfg     = EXP_CFG
+    # No threading/multiprocessing code in moments.LD.Parsing.compute_ld_statistics
+    # (the CPU path used when use_gpu_ld=false) -- threads:1 so
+    # LD_stats_windows.sh's batched Snakemake call can run several windows
+    # concurrently per array task.
     threads: 1
     resources:
         ld_cores = 1,
@@ -524,81 +418,67 @@ rule ld_window_pruned:
             --config-file  {params.cfg} \
             --r-bins       "{params.bins}"
 
+        # .h5 is written by the LD script but not declared as a Snakemake output;
+        # remove it here so it doesn't accumulate across windows.
         rm -f {params.sim_dir}/windows/window_{wildcards.win}.h5
         """
 
 ##############################################################################
 # RULE aggregate_ld_stats – aggregate LD windows into means/varcovs + PDF   #
-# Works for unpruned-only AND mixed (unpruned primary + pruned fallback).   #
 # Runs once per sid; every optimization restart (infer_momentsld, below)    #
 # reuses this cached means.varcovs.pkl instead of re-aggregating.           #
 ##############################################################################
 rule aggregate_ld_stats:
     input:
         pkls = lambda w: expand(
-            f"{LD_ROOT}/LD_stats/LD_stats_window_{{win}}.pkl",
+            f"{LD_DIR}/LD_stats/LD_stats_window_{{win}}.pkl",
             sid=[w.sid],
             win=WINDOWS
         ),
-        pruned_pkls = lambda w: (
-            [
-                f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}/LD_stats/LD_stats_window_{win}.pkl"
-                for win in WINDOWS
-                if not Path(f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/LD_stats/LD_stats_window_{win}.pkl").exists()
-            ]
-            if PRUNE_TAGS else []
-        ),
         cfg = EXP_CFG,
     output:
-        mv   = f"{LD_ROOT}/means.varcovs.pkl",
+        mv   = f"{LD_DIR}/means.varcovs.pkl",
         # Not temp(): aggregate_ld_statistics() checks for this file (alongside
         # means.varcovs.pkl) to short-circuit re-aggregating LD_stats/*.pkl on
         # every downstream infer_momentsld restart. Deleting it right after this
         # rule finished (former temp()) silently broke that cache -- every one
         # of the num_optimizations restarts was re-reading and re-aggregating
         # all window LD_stats from scratch instead of reusing this.
-        boot = f"{LD_ROOT}/bootstrap_sets.pkl",
-        pdf  = f"{LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
+        boot = f"{LD_DIR}/bootstrap_sets.pkl",
+        pdf  = f"{LD_DIR}/empirical_vs_theoretical_comparison.pdf",
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        pruning_dir = lambda w: (
-            f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{PRUNE_TAGS[0]}"
-            if PRUNE_TAGS else ""
-        ),
+        output_root = lambda w: LD_DIR.format(sid=w.sid),
         bins = R_BINS_STR,
         cfg = EXP_CFG,
     threads: 1
-    run:
-        import subprocess
-        cmd = [
-            "python", "snakemake_scripts/LD_inference.py",
-            "--run-dir",     params.sim_dir,
-            "--output-root", params.output_root,
-            "--config-file", params.cfg,
-            "--r-bins",      params.bins,
-            "--skip-optimize",
-        ]
-        if params.pruning_dir:
-            cmd += ["--fallback-ld-dir", params.pruning_dir]
-        env = {**os.environ, "PYTHONPATH": workflow.basedir}
-        subprocess.run(cmd, check=True, env=env)
+    shell:
+        r"""
+        set -euo pipefail
+        PYTHONPATH={workflow.basedir} \
+        python "snakemake_scripts/LD_inference.py" \
+            --run-dir     "{params.sim_dir}" \
+            --output-root "{params.output_root}" \
+            --config-file "{params.cfg}" \
+            --r-bins      "{params.bins}" \
+            --skip-optimize
+        """
 
 ##############################################################################
 # RULE infer_momentsld – one LHS-seeded MomentsLD restart                   #
-# Mirrors infer_moments/infer_dadi: one Snakemake job per {opt}, each a     #
-# single nlopt run from a distinct start point keyed by opt_seed.           #
+# Mirrors infer_engine: one Snakemake job per {opt}, each a single nlopt    #
+# run from a distinct start point keyed by opt_seed.                        #
 ##############################################################################
 rule infer_momentsld:
     input:
-        mv  = f"{LD_ROOT}/means.varcovs.pkl",
+        mv  = f"{LD_DIR}/means.varcovs.pkl",
         cfg = EXP_CFG,
     output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/MomentsLD/best_fit.pkl"
+        pkl = f"{LD_RUN_DIR}/best_fit.pkl"
     params:
         sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD",
-        results_dir = lambda w: f"experiments/{MODEL}/runs/run_{w.sid}_{w.opt}/inferences/MomentsLD",
+        output_root = lambda w: LD_DIR.format(sid=w.sid),
+        results_dir = lambda w: LD_RUN_DIR.format(sid=w.sid, opt=w.opt),
         bins = R_BINS_STR,
         cfg = EXP_CFG,
     threads: 1
@@ -621,18 +501,15 @@ rule infer_momentsld:
 
 ##############################################################################
 # RULE aggregate_opts_momentsld – pick top-K across LHS restarts            #
-# Mirrors aggregate_opts_moments/aggregate_opts_dadi exactly (same TOP_K,   #
-# same best_params/best_ll/opt_index list schema).                         #
+# Same TOP_K and best_params/best_ll/opt_index schema as                    #
+# aggregate_opts_engine.                                                    #
 ##############################################################################
 rule aggregate_opts_momentsld:
     input:
         cfg = EXP_CFG,
-        opts = lambda w: expand(
-            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/MomentsLD/best_fit.pkl",
-            opt=OPTIMS,
-        ),
+        opts = lambda w: expand(LD_RUN_DIR + "/best_fit.pkl", sid=[w.sid], opt=OPTIMS),
     output:
-        best = f"{LD_ROOT}/best_fit.pkl",
+        best = MOMENTSLD_BEST_FIT,
     run:
         import pickle, pathlib
         from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
@@ -641,8 +518,8 @@ rule aggregate_opts_momentsld:
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
         records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/MomentsLD/best_fit.pkl",
-            rf"/run_{sid}_(\d+)/inferences/MomentsLD/best_fit\.pkl$",
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{LD_SUBDIR}/best_fit.pkl",
+            rf"/run_{sid}_(\d+)/inferences/{LD_SUBDIR}/best_fit\.pkl$",
         )
 
         best, diag = aggregate_top_k(
@@ -657,134 +534,8 @@ rule aggregate_opts_momentsld:
         with open(output.best, "wb") as fh:
             pickle.dump(best, fh)
 
-        print(f"✅ momentsLD: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.best}")
-        print(f"✅ momentsLD: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
-
-##############################################################################
-# RULE aggregate_ld_stats_pruned – aggregate PRUNED per-window LD stats into  #
-# means/varcovs (pruned-only; mirrors aggregate_ld_stats but reads pruned    #
-# LD_stats and never runs the optimizer itself -- that's now a separate,     #
-# multi-restart stage below (infer_momentsld_pruned / aggregate_opts_        #
-# momentsld_pruned), same split as the unpruned aggregate_ld_stats /         #
-# infer_momentsld / aggregate_opts_momentsld pattern.                        #
-##############################################################################
-rule aggregate_ld_stats_pruned:
-    input:
-        pruned_pkls = lambda w: expand(
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/LD_stats/LD_stats_window_{{win}}.pkl",
-            sid=[w.sid],
-            frac_tag=[w.frac_tag],
-            win=WINDOWS,
-        ),
-        cfg = EXP_CFG,
-    output:
-        mv   = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl",
-        # Not temp() -- see aggregate_ld_stats's identical note above.
-        boot = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/bootstrap_sets.pkl",
-        pdf  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/empirical_vs_theoretical_comparison.pdf",
-    params:
-        sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
-        bins = R_BINS_STR,
-        cfg = EXP_CFG,
-    threads: 1
-    run:
-        import subprocess
-        # output_root drives everything: LD_inference reads output_root/LD_stats/*.pkl
-        # (the pruned stats) and writes means/varcovs/bootstrap/pdf there.
-        # No --fallback-ld-dir: in pruned-only mode there are no unpruned stats.
-        # --skip-optimize: aggregation only here, same as aggregate_ld_stats;
-        # optimization is the separate multi-restart stage below.
-        cmd = [
-            "python", "snakemake_scripts/LD_inference.py",
-            "--run-dir",     params.sim_dir,
-            "--output-root", params.output_root,
-            "--config-file", params.cfg,
-            "--r-bins",      params.bins,
-            "--skip-optimize",
-        ]
-        env = {**os.environ, "PYTHONPATH": workflow.basedir}
-        subprocess.run(cmd, check=True, env=env)
-
-##############################################################################
-# RULE infer_momentsld_pruned – one LHS-seeded MomentsLD restart,            #
-# pruned stats. Mirrors infer_momentsld exactly, keyed additionally by       #
-# {frac_tag}.                                                                #
-##############################################################################
-rule infer_momentsld_pruned:
-    input:
-        mv  = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/means.varcovs.pkl",
-        cfg = EXP_CFG,
-    output:
-        pkl = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl"
-    params:
-        sim_dir     = lambda w: f"{SIM_BASEDIR}/{w.sid}",
-        output_root = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/MomentsLD/pruning/{w.frac_tag}",
-        results_dir = lambda w: f"experiments/{MODEL}/runs/run_{w.sid}_{w.opt}/inferences/MomentsLD/pruning/{w.frac_tag}",
-        bins = R_BINS_STR,
-        cfg = EXP_CFG,
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.results_dir}"
-
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/LD_inference.py" \
-            --run-dir     "{params.sim_dir}" \
-            --output-root "{params.output_root}" \
-            --results-dir "{params.results_dir}" \
-            --config-file "{params.cfg}" \
-            --r-bins      "{params.bins}" \
-            --opt-seed    {wildcards.opt}
-
-        test -f "{output.pkl}"
-        """
-
-##############################################################################
-# RULE aggregate_opts_momentsld_pruned – pick top-K across LHS               #
-# restarts, pruned stats. Mirrors aggregate_opts_momentsld exactly, keyed    #
-# additionally by {frac_tag}. Output path is unchanged from the old         #
-# optimize_momentsld_mixed target, so MomentsLD.sh's TARGET doesn't need to  #
-# change -- only its --allowed-rules list does.                             #
-##############################################################################
-rule aggregate_opts_momentsld_pruned:
-    input:
-        cfg = EXP_CFG,
-        opts = lambda w: expand(
-            f"experiments/{MODEL}/runs/run_{w.sid}_{{opt}}/inferences/MomentsLD/pruning/{w.frac_tag}/best_fit.pkl",
-            opt=OPTIMS,
-        ),
-    output:
-        best = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{{frac_tag}}/best_fit.pkl",
-    run:
-        import pickle, pathlib
-        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
-
-        sid = wildcards.sid
-        frac_tag = wildcards.frac_tag
-        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
-
-        records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/MomentsLD/pruning/{frac_tag}/best_fit.pkl",
-            rf"/run_{sid}_(\d+)/inferences/MomentsLD/pruning/{frac_tag}/best_fit\.pkl$",
-        )
-
-        best, diag = aggregate_top_k(
-            records, TOP_K, min_nonempty=MIN_FILES,
-            err_label="aggregate_opts_momentsld_pruned", err_engine="MomentsLD",
-            err_context=f"for sid={sid} frac_tag={frac_tag}",
-        )
-        best["n_files_found"] = diag["n_records"]
-        best["n_nonempty"]    = diag["n_nonempty"]
-        best["min_required"]  = int(TOP_K)
-
-        pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.best, "wb") as fh:
-            pickle.dump(best, fh)
-
-        print(f"✅ momentsLD (pruned, {frac_tag}): found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.best}")
-        print(f"✅ momentsLD (pruned, {frac_tag}): kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
+        print(f"✅ momentsLD ({LD_SUBDIR}): found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.best}")
+        print(f"✅ momentsLD ({LD_SUBDIR}): kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 ##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}             #
