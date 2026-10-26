@@ -20,7 +20,7 @@
 #
 # Rule run (pooled):     aggregate_ld_windows_real (one combined fit across
 #                         every configured arm)
-# Rule run (individual): aggregate_ld_windows_real_by_arm, once per arm (no
+# Rule run (individual): aggregate_ld_windows_real, once per arm (no
 #                         cross-arm combining)
 #
 # REAL_LD_ROOT is NOT model-scoped -- the aggregated means/varcovs/bootstrap
@@ -46,7 +46,7 @@ else
     for arm in "${REAL_ARMS[@]}"; do
         TARGETS+=("${REAL_LD_ROOT}/${arm}/means.varcovs.pkl")
     done
-    ALLOWED_RULES=(aggregate_ld_windows_real_by_arm)
+    ALLOWED_RULES=(aggregate_ld_windows_real)
 fi
 
 echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"

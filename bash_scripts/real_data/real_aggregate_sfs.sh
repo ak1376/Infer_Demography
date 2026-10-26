@@ -18,7 +18,7 @@
 # from moments.sh/dadi.sh for the simulated pipeline).
 #
 # Rule run (pooled):     aggregate_opts_engine_real
-# Rule run (individual): aggregate_opts_engine_real_chrom, once per arm
+# Rule run (individual): aggregate_opts_engine_real, once per arm
 
 set -euo pipefail
 mkdir -p logs
@@ -51,7 +51,7 @@ else
             TARGETS+=("${INF_ROOT_ARM}/${engine}/best_fit.pkl")
         done
     done
-    ALLOWED_RULES=(aggregate_opts_engine_real_chrom)
+    ALLOWED_RULES=(aggregate_opts_engine_real)
 fi
 
 echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"

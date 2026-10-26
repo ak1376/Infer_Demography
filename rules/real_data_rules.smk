@@ -102,8 +102,8 @@ REAL_ARMS       = REAL_DATA_CFG.get("arms", ["Chr3L"])
 # flattened together (materialize_real_ld_stats) and fit as ONE combined
 # MomentsLD model. "individual": each arm keeps its own windows/LD_stats
 # (already arm-separated upstream) AND its own means/varcovs/bootstrap/
-# optimization -- see aggregate_ld_windows_real_by_arm/infer_momentsld_real_by_arm/
-# aggregate_opts_momentsld_real_by_arm below. Nothing is combined across arms
+# optimization -- the {scope}="<arm>/" case of aggregate_ld_windows_real /
+# infer_momentsld_real / aggregate_opts_momentsld_real. Nothing is combined across arms
 # in "individual" mode until/unless you explicitly request the pooled target.
 REAL_POOLING_MODE = REAL_DATA_CFG.get("pooling_mode", "pooled")
 if REAL_POOLING_MODE not in ("pooled", "individual"):
@@ -204,6 +204,29 @@ CALIBRATION_ROOT = f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/repli
 NUM_CALIBRATION_REPLICATES = int(CFG.get("calibration_n_replicates", 20))
 CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
 
+# {scope}: "" for the pooled fit (combined autosomes / all REAL_ARMS together),
+# "<arm>/" for one arm's own fit. It slots straight into the existing layouts
+# (<root>/runs vs <root>/<arm>/runs, REAL_LD_ROOT vs REAL_LD_ROOT/<arm>), so one
+# rule serves both pooling modes.
+def _scope_arm(scope):
+    return scope.rstrip("/")            # "" when pooled
+
+def _scope_sfs(scope):
+    arm = _scope_arm(scope)
+    return per_chrom_sfs(arm) if arm else COMBINED_SFS
+
+def _scope_sfs_meta(scope):
+    arm = _scope_arm(scope)
+    return per_chrom_sfs_meta(arm) if arm else COMBINED_SFS_META
+
+def _ld_engine(scope):
+    """MomentsLD fit folder name: the pooled one also encodes the arm set."""
+    return REAL_LD_ENGINE_ARM if scope else REAL_LD_ENGINE
+
+def _check_ld_engine(w):
+    if w.ld_engine != _ld_engine(w.scope):
+        raise ValueError(f"MomentsLD folder {w.ld_engine!r} doesn't belong to scope {w.scope!r}; expected {_ld_engine(w.scope)!r}")
+
 wildcard_constraints:
     chrom      = r"Chr(2L|2R|3L|3R|X)",
     arm        = r"Chr(2L|2R|3L|3R|X)",
@@ -215,6 +238,8 @@ wildcard_constraints:
     # the direct SFS/LD fit for comparison against the ML surrogate's PPC.
     # Revert to just REAL_MODEL_KEYS once that comparison is done.
     model_key  = "|".join(REAL_MODEL_KEYS) + "|dadi|moments|momentsLD",
+    scope      = r"(Chr(2L|2R|3L|3R|X)/)?",
+    ld_engine  = "|".join(re.escape(e) for e in sorted({REAL_LD_ENGINE, REAL_LD_ENGINE_ARM})),
     rep        = r"\d+",
 
 # Refuse to reuse a real-data folder whose settings.json disagrees with the
@@ -414,112 +439,22 @@ rule combine_autosomal_sfs:
         """
 
 ##############################################################################
-# REAL DATA – NLopt Poisson SFS optimisation (moments / dadi)
+# REAL DATA – NLopt Poisson SFS optimisation (moments / dadi), one restart.
+# {scope} "" fits the combined autosomal SFS; "<arm>/" fits that arm's own SFS.
 ##############################################################################
 rule infer_engine_real:
     input:
-        sfs  = COMBINED_SFS,
-        meta = COMBINED_SFS_META,
-    output:
-        # TEMPORARY: temp() removed so per-replicate best_fit.pkl files stick
-        # around to inspect individual optimizations after the trim-region
-        # comparison run. Restore temp(...) once done inspecting.
-        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl",
-        png = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/sfs_fit.png",
-        json = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
-    params:
-        run_dir  = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}",
-        label    = lambda w: f"autosomes, run {w.opt}",
-        cfg      = EXP_CFG,
-        model_py = (
-            f"demes_models:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "demes_models:drosophila_three_epoch"
-        ),
-    threads: 2
-    shell:
-        r"""
-        set -euo pipefail
-        seq_len=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['sequence_length'])" "{input.meta}")
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/moments_dadi_inference_real.py \
-          --mode {wildcards.engine} \
-          --sfs-file "{input.sfs}" \
-          --config "{params.cfg}" \
-          --model-py "{params.model_py}" \
-          --outdir "{params.run_dir}/inferences" \
-          --opt-seed {wildcards.opt} \
-          --real-sequence-length "$seq_len" \
-          -v
-        # observed vs. best-fit SFS for this run (+ its numbers in sfs_fit.json)
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/plot_sfs_fit_real.py \
-          --fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" \
-          --model-py "{params.model_py}" --label "{params.label}" \
-          --out "{output.png}"
-        """
-
-# ── REAL DATA: MOMENTS / DADI ───────────────────────────────────────────────
-rule aggregate_opts_engine_real:
-    input:
-        runs = lambda w: [f"{REAL_RUN_ROOT}/run_{o}/inferences/{w.engine}/best_fit.pkl"
-                          for o in range(NUM_REAL_OPTIMS)],
-        sfs  = COMBINED_SFS,
-    output:
-        pkl = f"{REAL_INF_ROOT}/{{engine}}/best_fit.pkl",
-        png = f"{REAL_INF_ROOT}/{{engine}}/sfs_fit.png",
-        json = f"{REAL_INF_ROOT}/{{engine}}/sfs_fit.json",
-    params:
-        cfg      = EXP_CFG,
-        model_py = (
-            f"demes_models:{MODEL}_model"
-            if MODEL != "drosophila_three_epoch"
-            else "demes_models:drosophila_three_epoch"
-        ),
-    run:
-        import pickle, pathlib
-        from src.aggregate_utils import aggregate_top_k
-
-        records = [(p, i) for i, p in enumerate(input.runs)]
-
-        best, diag = aggregate_top_k(
-            records, REAL_TOP_K,
-            extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
-        )
-        best = {"mode": wildcards.engine, **best}
-
-        pathlib.Path(output.pkl).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.pkl, "wb"))
-
-        print(f"✅ [REAL] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
-
-        # observed vs. best-fit SFS for the top run (+ its numbers in sfs_fit.json)
-        shell(
-            'PYTHONPATH={basedir} python snakemake_scripts/plot_sfs_fit_real.py '
-            '--fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" '
-            '--model-py "{params.model_py}" --label "{label}" --out "{output.png}"',
-            basedir=workflow.basedir, label="autosomes, best of all runs",
-        )
-
-
-##############################################################################
-# REAL DATA (single chromosome) – NLopt Poisson SFS optimisation             #
-# (moments / dadi), fit against one chromosome's SFS instead of the         #
-# combined-autosome COMBINED_SFS used by infer_engine_real above.           #
-##############################################################################
-rule infer_engine_real_chrom:
-    input:
-        sfs  = lambda w: per_chrom_sfs(w.chrom),
-        meta = lambda w: per_chrom_sfs_meta(w.chrom),
+        sfs  = lambda w: _scope_sfs(w.scope),
+        meta = lambda w: _scope_sfs_meta(w.scope),
     output:
         # kept (not temp) so each restart can be inspected after aggregation,
         # and so real_sfs_inference.sh's skip-if-exists check stays valid
-        pkl = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/best_fit.pkl",
-        png = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.png",
-        json = f"{REAL_RUN_ROOT_CHROM}/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
+        pkl = f"{REAL_FIT_ROOT}/{{scope}}runs/run_{{opt}}/inferences/{{engine}}/best_fit.pkl",
+        png = f"{REAL_FIT_ROOT}/{{scope}}runs/run_{{opt}}/inferences/{{engine}}/sfs_fit.png",
+        json = f"{REAL_FIT_ROOT}/{{scope}}runs/run_{{opt}}/inferences/{{engine}}/sfs_fit.json",
     params:
-        run_dir  = lambda w: f"{REAL_RUN_ROOT_CHROM.format(chrom=w.chrom)}/run_{w.opt}",
-        label    = lambda w: f"{w.chrom}, run {w.opt}",
+        run_dir  = lambda w: f"{REAL_FIT_ROOT}/{w.scope}runs/run_{w.opt}",
+        label    = lambda w: f"{_scope_arm(w.scope) or 'autosomes'}, run {w.opt}",
         cfg      = EXP_CFG,
         model_py = (
             f"demes_models:{MODEL}_model"
@@ -549,17 +484,16 @@ rule infer_engine_real_chrom:
           --out "{output.png}"
         """
 
-rule aggregate_opts_engine_real_chrom:
+# ── REAL DATA: MOMENTS / DADI top-K across restarts (pooled or one arm) ─────
+rule aggregate_opts_engine_real:
     input:
-        runs = lambda w: [
-            f"{REAL_RUN_ROOT_CHROM.format(chrom=w.chrom)}/run_{o}/inferences/{w.engine}/best_fit.pkl"
-            for o in range(NUM_REAL_OPTIMS)
-        ],
-        sfs  = lambda w: per_chrom_sfs(w.chrom),
+        runs = lambda w: [f"{REAL_FIT_ROOT}/{w.scope}runs/run_{o}/inferences/{w.engine}/best_fit.pkl"
+                          for o in range(NUM_REAL_OPTIMS)],
+        sfs  = lambda w: _scope_sfs(w.scope),
     output:
-        pkl = f"{REAL_INF_ROOT_CHROM}/{{engine}}/best_fit.pkl",
-        png = f"{REAL_INF_ROOT_CHROM}/{{engine}}/sfs_fit.png",
-        json = f"{REAL_INF_ROOT_CHROM}/{{engine}}/sfs_fit.json",
+        pkl = f"{REAL_FIT_ROOT}/{{scope}}inferences/{{engine}}/best_fit.pkl",
+        png = f"{REAL_FIT_ROOT}/{{scope}}inferences/{{engine}}/sfs_fit.png",
+        json = f"{REAL_FIT_ROOT}/{{scope}}inferences/{{engine}}/sfs_fit.json",
     params:
         cfg      = EXP_CFG,
         model_py = (
@@ -571,25 +505,26 @@ rule aggregate_opts_engine_real_chrom:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
 
+        arm = _scope_arm(wildcards.scope)
         records = [(p, i) for i, p in enumerate(input.runs)]
 
         best, diag = aggregate_top_k(
             records, REAL_TOP_K,
             extra_fields=("theta_hat", "N_ANC_implied_from_theta"),
         )
-        best = {"mode": wildcards.engine, "chrom": wildcards.chrom, **best}
+        best = {"mode": wildcards.engine, **({"chrom": arm} if arm else {}), **best}
 
         pathlib.Path(output.pkl).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.pkl, "wb"))
 
-        print(f"✅ [REAL/{wildcards.chrom}] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
+        print(f"✅ [REAL{'/' + arm if arm else ''}] Aggregated {diag['n_entries']} {wildcards.engine} optimization results → {output.pkl}")
 
         # observed vs. best-fit SFS for the top run (+ its numbers in sfs_fit.json)
         shell(
             'PYTHONPATH={basedir} python snakemake_scripts/plot_sfs_fit_real.py '
             '--fit-pkl "{output.pkl}" --sfs "{input.sfs}" --config "{params.cfg}" '
             '--model-py "{params.model_py}" --label "{label}" --out "{output.png}"',
-            basedir=workflow.basedir, label=f"{wildcards.chrom}, best of all runs",
+            basedir=workflow.basedir, label=f"{arm or 'autosomes'}, best of all runs",
         )
 
 
@@ -772,22 +707,31 @@ rule compute_fim_real:
         """
 
 ##############################################################################
-# REAL DATA: aggregate_ld_windows_real – aggregate LD windows (once)         #
+# REAL DATA: aggregate_ld_windows_real – LD windows -> means/varcovs (once)   #
+# {scope} "" pools every REAL_ARMS window (materialize_real_ld_stats);       #
+# "<arm>/" uses that arm's own windows.                                      #
 ##############################################################################
+def _scope_ld_stats(w):
+    arm = _scope_arm(w.scope)
+    if not arm:
+        return real_flat_ld_stats(w)
+    return [f"{REAL_LD_ROOT}/{arm}/LD_stats/LD_stats_window_{i}.pkl" for i in _real_arm_window_idxs(arm)]
+
 rule aggregate_ld_windows_real:
     """
     Aggregate per-window LD stats into means/varcovs and write comparison PDF.
-    Runs once; the per-opt optimisation rules consume the means.varcovs.pkl output.
+    Runs once per scope; the per-opt optimisation rules consume the means.varcovs.pkl output.
     """
     input:
-        pkls = real_flat_ld_stats,
+        pkls = _scope_ld_stats,
     output:
-        mv   = f"{REAL_LD_ROOT}/means.varcovs.pkl",
-        boot = f"{REAL_LD_ROOT}/bootstrap_sets.pkl",
-        pdf  = f"{REAL_LD_ROOT}/empirical_vs_theoretical_comparison.pdf",
+        mv   = f"{REAL_LD_ROOT}/{{scope}}means.varcovs.pkl",
+        boot = f"{REAL_LD_ROOT}/{{scope}}bootstrap_sets.pkl",
+        pdf  = f"{REAL_LD_ROOT}/{{scope}}empirical_vs_theoretical_comparison.pdf",
     params:
-        run_dir     = REAL_INF_ROOT,
-        output_root = REAL_LD_ROOT,
+        # --run-dir is ignored with --real-data; values kept as before
+        run_dir     = lambda w: f"{REAL_INF_ROOT}/{w.scope}".rstrip("/"),
+        output_root = lambda w: f"{REAL_LD_ROOT}/{w.scope}".rstrip("/"),
         cfg         = EXP_CFG,
         bins        = R_BINS_STR,
     threads: 1
@@ -809,27 +753,31 @@ rule aggregate_ld_windows_real:
 
 ##############################################################################
 # REAL DATA: infer_momentsld_real – one LHS start per opt wildcard           #
+# {ld_engine} must match {scope}: REAL_LD_ENGINE pooled, REAL_LD_ENGINE_ARM  #
+# per arm (_ld_engine).                                                      #
 ##############################################################################
+def _scope_means_varcovs(w):
+    _check_ld_engine(w)
+    return f"{REAL_LD_ROOT}/{w.scope}means.varcovs.pkl"
+
 rule infer_momentsld_real:
     input:
-        mv       = f"{REAL_LD_ROOT}/means.varcovs.pkl",
-        # Always sourced from the moments best-fit. Needed regardless of
-        # momentsld_use_scaled_units: in scaled mode it anchors N_ref; in
-        # absolute mode it's still required whenever fixed_parameters pins a
-        # param via "moments_best" (e.g. N_ANC) -- that lookup reads
-        # --sfs-best-fit-pkl independently of N_ref/rho scaling, which in
-        # absolute mode tracks the optimizer's own current N_ANC guess
-        # instead. Marked ancient() so regenerating the moments fit (e.g.
-        # changing REAL_TOP_K) does not needlessly re-trigger LD inference --
-        # the best (rep_0) moments params are unchanged.
-        sfs_best = [ancient(f"{REAL_INF_ROOT}/moments/best_fit.pkl")] if MOMENTSLD_NEEDS_SFS_FIT else [],
+        mv       = _scope_means_varcovs,
+        # The moments best fit of the same scope (pooled or this arm). Needed
+        # regardless of momentsld_use_scaled_units: in scaled mode it anchors
+        # N_ref; in absolute mode it's still required whenever
+        # fixed_parameters pins a param via "moments_best" (e.g. N_ANC) --
+        # that lookup reads --sfs-best-fit-pkl independently of N_ref/rho
+        # scaling. ancient() so regenerating the moments fit (e.g. changing
+        # REAL_TOP_K) doesn't needlessly re-trigger LD inference -- the best
+        # (rep_0) moments params are unchanged.
+        sfs_best = lambda w: [ancient(f"{REAL_FIT_ROOT}/{w.scope}inferences/moments/best_fit.pkl")] if MOMENTSLD_NEEDS_SFS_FIT else [],
     output:
         # Not temp(): kept per-restart so per-opt N_ANC/T/etc. trends can be
-        # inspected directly (as we've been doing) without waiting on
-        # aggregate_opts_momentsld_real to finish.
-        pkl = f"{REAL_RUN_ROOT}/run_{{opt}}/inferences/{REAL_LD_ENGINE}/best_fit.pkl",
+        # inspected without waiting on aggregate_opts_momentsld_real.
+        pkl = f"{REAL_FIT_ROOT}/{{scope}}runs/run_{{opt}}/inferences/{{ld_engine}}/best_fit.pkl",
     params:
-        outdir = lambda w: f"{REAL_RUN_ROOT}/run_{w.opt}/inferences/{REAL_LD_ENGINE}",
+        outdir = lambda w: f"{REAL_FIT_ROOT}/{w.scope}runs/run_{w.opt}/inferences/{w.ld_engine}",
         cfg    = EXP_CFG,
         bins   = R_BINS_STR,
         seed_flag = _momentsld_seed_flag,
@@ -857,46 +805,46 @@ rule infer_momentsld_real:
 ##############################################################################
 # REAL DATA: aggregate_opts_momentsld_real – pick best across LHS restarts   #
 ##############################################################################
+def _scope_momentsld_runs(w):
+    _check_ld_engine(w)
+    return [f"{REAL_FIT_ROOT}/{w.scope}runs/run_{o}/inferences/{w.ld_engine}/best_fit.pkl"
+            for o in range(NUM_REAL_OPTIMS)]
+
 rule aggregate_opts_momentsld_real:
     input:
-        runs = [f"{REAL_RUN_ROOT}/run_{o}/inferences/{REAL_LD_ENGINE}/best_fit.pkl"
-                for o in range(NUM_REAL_OPTIMS)],
+        runs = _scope_momentsld_runs,
     output:
-        # Model-specific (unlike REAL_LD_ROOT above) -- this is the fitted
-        # MomentsLD result under the active demographic model, so it belongs
-        # under REAL_INF_ROOT alongside the moments/dadi best_fit.pkl.
-        best = f"{REAL_INF_ROOT}/{REAL_LD_ENGINE}/best_fit.pkl",
+        # Model-specific (unlike REAL_LD_ROOT above) -- the fitted MomentsLD
+        # result under the active demographic model, next to the moments/dadi
+        # best_fit.pkl of the same scope.
+        best = f"{REAL_FIT_ROOT}/{{scope}}inferences/{{ld_engine}}/best_fit.pkl",
     run:
         import pickle, pathlib
         from src.aggregate_utils import aggregate_top_k
 
+        arm = _scope_arm(wildcards.scope)
         records = [(p, i) for i, p in enumerate(input.runs)]
 
         # No theta_hat/N_ANC_implied_from_theta here (unlike moments/dadi real):
         # MomentsLD has no direct access to theta, so there's no absolute-scale
         # implication to carry through.
         best, diag = aggregate_top_k(records, REAL_TOP_K)
-        best = {"mode": "momentsLD", **best}
+        best = {"mode": "momentsLD", **({"arm": arm} if arm else {}), **best}
 
         pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
         pickle.dump(best, open(output.best, "wb"))
 
-        print(f"✅ [REAL] Aggregated {diag['n_entries']} MomentsLD optimization results → {output.best}")
+        print(f"✅ [REAL{'/' + arm if arm else ''}] Aggregated {diag['n_entries']} MomentsLD optimization results → {output.best}")
 
 
 ##############################################################################
-# REAL DATA (pooling_mode="individual"): per-arm MomentsLD, no cross-arm      #
-# pooling. Each arm's own windows/LD_stats already live separately under     #
-# {REAL_LD_ROOT}/{arm}/LD_stats/ (compute_ld_real, arm-count-agnostic) --     #
-# these three rules add an arm-scoped means/varcovs+bootstrap and an         #
-# arm-scoped MomentsLD optimization on top of that, so nothing is combined   #
-# across arms anywhere in this path. Mirrors aggregate_ld_windows_real/      #
-# infer_momentsld_real/aggregate_opts_momentsld_real above, but with an      #
-# {arm} wildcard instead of REAL_TAG-pooling all of REAL_ARMS together.      #
+# REAL DATA: per-arm LD / MomentsLD plots. (The per-arm fits themselves are   #
+# the {scope}="<arm>/" case of aggregate_ld_windows_real /                    #
+# infer_momentsld_real / aggregate_opts_momentsld_real above.)                #
 ##############################################################################
 # LD decay of the real data alone (same layout as
 # empirical_vs_theoretical_comparison.pdf, without a model curve), from the
-# same kept windows aggregate_ld_windows_real_by_arm uses.
+# same kept windows aggregate_ld_windows_real uses for that arm.
 rule plot_ld_decay_real:
     input:
         pkls = lambda w: [
@@ -917,107 +865,6 @@ rule plot_ld_decay_real:
         python snakemake_scripts/plot_ld_decay_real.py \
             --ld-stats-dir "{params.ld_dir}" --r-bins "{params.bins}" --seed {params.seed} --out "{output.pdf}"
         """
-
-
-rule aggregate_ld_windows_real_by_arm:
-    input:
-        pkls = lambda w: [
-            f"{REAL_LD_ROOT}/{w.arm}/LD_stats/LD_stats_window_{i}.pkl"
-            for i in _real_arm_window_idxs(w.arm)
-        ],
-    output:
-        mv   = f"{REAL_LD_ROOT}/{{arm}}/means.varcovs.pkl",
-        boot = f"{REAL_LD_ROOT}/{{arm}}/bootstrap_sets.pkl",
-        pdf  = f"{REAL_LD_ROOT}/{{arm}}/empirical_vs_theoretical_comparison.pdf",
-    wildcard_constraints:
-        arm = r"Chr(2L|2R|3L|3R|X)",
-    params:
-        run_dir     = lambda w: f"{REAL_INF_ROOT}/{w.arm}",
-        output_root = lambda w: f"{REAL_LD_ROOT}/{w.arm}",
-        cfg         = EXP_CFG,
-        bins        = R_BINS_STR,
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.output_root}"
-
-        PYTHONPATH={workflow.basedir} \
-        python "snakemake_scripts/LD_inference.py" \
-            --run-dir       "{params.run_dir}" \
-            --output-root   "{params.output_root}" \
-            --config-file   "{params.cfg}" \
-            --r-bins        "{params.bins}" \
-            --real-data \
-            --skip-optimize
-        """
-
-
-rule infer_momentsld_real_by_arm:
-    input:
-        mv       = f"{REAL_LD_ROOT}/{{arm}}/means.varcovs.pkl",
-        # Always sourced from this SAME arm's own (unpooled) moments fit --
-        # see infer_engine_real_chrom/aggregate_opts_engine_real_chrom, which
-        # fit per_chrom_sfs(arm) directly rather than the pooled COMBINED_SFS.
-        # Needed regardless of momentsld_use_scaled_units: in scaled mode it
-        # anchors N_ref; in absolute mode it's still required whenever
-        # fixed_parameters pins a param via "moments_best" (e.g. N_ANC) --
-        # that lookup reads --sfs-best-fit-pkl independently of N_ref/rho
-        # scaling, which in absolute mode tracks the optimizer's own current
-        # N_ANC guess instead (see infer_momentsld_real above).
-        sfs_best = lambda w: [ancient(f"{REAL_FIT_ROOT}/{w.arm}/inferences/moments/best_fit.pkl")] if MOMENTSLD_NEEDS_SFS_FIT else [],
-    output:
-        pkl = f"{REAL_FIT_ROOT}/{{arm}}/runs/run_{{opt}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
-    wildcard_constraints:
-        arm = r"Chr(2L|2R|3L|3R|X)",
-    params:
-        outdir = lambda w: f"{REAL_FIT_ROOT}/{w.arm}/runs/run_{w.opt}/inferences/{REAL_LD_ENGINE_ARM}",
-        cfg    = EXP_CFG,
-        bins   = R_BINS_STR,
-        seed_flag = _momentsld_seed_flag,
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        mkdir -p "{params.outdir}"
-
-        PYTHONPATH={workflow.basedir} \
-        python "src/MomentsLD_real_data.py" \
-            --config           "{params.cfg}" \
-            --empirical        "{input.mv}" \
-            --outdir           "{params.outdir}" \
-            {params.seed_flag} \
-            --r-bins           "{params.bins}" \
-            --normalization    0 \
-            --opt-seed         {wildcards.opt} \
-            --verbose
-
-        test -f "{output.pkl}"
-        """
-
-
-rule aggregate_opts_momentsld_real_by_arm:
-    input:
-        runs = lambda w: [
-            f"{REAL_FIT_ROOT}/{w.arm}/runs/run_{o}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl"
-            for o in range(NUM_REAL_OPTIMS)
-        ],
-    output:
-        best = f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
-    wildcard_constraints:
-        arm = r"Chr(2L|2R|3L|3R|X)",
-    run:
-        import pickle, pathlib
-        from src.aggregate_utils import aggregate_top_k
-
-        records = [(p, i) for i, p in enumerate(input.runs)]
-        best, diag = aggregate_top_k(records, REAL_TOP_K)
-        best = {"mode": "momentsLD", "arm": wildcards.arm, **best}
-
-        pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
-        pickle.dump(best, open(output.best, "wb"))
-
-        print(f"✅ [REAL/{wildcards.arm}] Aggregated {diag['n_entries']} MomentsLD optimization results → {output.best}")
 
 
 # MomentsLD fit vs. data (empirical_vs_theoretical_comparison.pdf layout) for

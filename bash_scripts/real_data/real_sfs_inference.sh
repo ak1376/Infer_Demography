@@ -20,7 +20,7 @@
 # mode, the combined autosomal SFS).
 #
 # Rule run (pooled):     infer_engine_real
-# Rule run (individual): infer_engine_real_chrom
+# Rule run (individual): infer_engine_real
 # (the aggregate step is a separate job -- see real_aggregate_sfs.sh --
 # exactly like aggregate_opts.sh is separate from moments.sh/dadi.sh)
 #
@@ -107,7 +107,7 @@ else
         echo "QUEUE: ARM=$ARM ENGINE=$ENGINE OPT=$OPT -> $TARGET"
         TARGETS+=("$TARGET")
     done
-    ALLOWED_RULES=(infer_engine_real_chrom)
+    ALLOWED_RULES=(infer_engine_real)
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then

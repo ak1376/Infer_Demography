@@ -20,7 +20,7 @@
 # finished.
 #
 # Rule run (pooled):     infer_momentsld_real
-# Rule run (individual): infer_momentsld_real_by_arm (no cross-arm pooling
+# Rule run (individual): infer_momentsld_real (no cross-arm pooling
 #                         anywhere in this stage)
 
 set -euo pipefail
@@ -87,7 +87,7 @@ else
         echo "QUEUE: ARM=$ARM OPT=$OPT -> $TARGET"
         TARGETS+=("$TARGET")
     done
-    ALLOWED_RULES=(infer_momentsld_real_by_arm)
+    ALLOWED_RULES=(infer_momentsld_real)
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then

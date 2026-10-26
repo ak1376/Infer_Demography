@@ -18,7 +18,7 @@
 # from MomentsLD.sh for the simulated pipeline).
 #
 # Rule run (pooled):     aggregate_opts_momentsld_real
-# Rule run (individual): aggregate_opts_momentsld_real_by_arm, once per arm
+# Rule run (individual): aggregate_opts_momentsld_real, once per arm
 #
 # Output IS model-scoped (experiments/{MODEL}/...): it's the fitted
 # MomentsLD params under the active demographic model, not a property of
@@ -44,7 +44,7 @@ else
         INF_ROOT_ARM="$(real_data_chrom_path "$REAL_INF_ROOT_CHROM_TMPL" "$arm")"
         TARGETS+=("${INF_ROOT_ARM}/${REAL_LD_ENGINE_ARM}/best_fit.pkl")
     done
-    ALLOWED_RULES=(aggregate_opts_momentsld_real_by_arm)
+    ALLOWED_RULES=(aggregate_opts_momentsld_real)
 fi
 
 echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"
