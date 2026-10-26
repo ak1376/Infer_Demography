@@ -16,7 +16,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Builds means.varcovs.pkl (+ bootstrap sets) once per sim, BEFORE the
 # multi-restart optimization stage (MomentsLD.sh) runs. Splitting this out
-# means every infer_momentsld/infer_momentsld_pruned restart across the
+# means every infer_momentsld restart across the
 # NUM_DRAWS*NUM_OPTIMS array in MomentsLD.sh can rely on this file already
 # existing instead of racing to build it as a shared Snakemake dependency
 # when multiple opts for the same sid land in concurrent array tasks.
@@ -64,7 +64,7 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
                       --directory "$ROOT" \
                       --rerun-incomplete \
                       --nolock \
-                      --allowed-rules aggregate_ld_stats_pruned \
+                      --allowed-rules aggregate_ld_stats \
                       -j "$SLURM_CPUS_PER_TASK" \
                       "$TARGET" \
                       || { echo "Snakemake failed for SID=$SID FRAC=$FRAC_TAG"; exit 1; }

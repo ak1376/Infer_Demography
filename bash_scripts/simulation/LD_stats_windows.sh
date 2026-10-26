@@ -123,7 +123,7 @@ fi
 # single Snakemake invocation (see below) instead of spawning one Snakemake
 # process per target. Same rationale as build_windows.sh: cuts redundant
 # DAG-parse/startup overhead and the number of concurrent --nolock processes
-# hitting shared .snakemake/ metadata. Note ld_window/ld_window_pruned are
+# hitting shared .snakemake/ metadata. Note ld_window is
 # threads:4 (== $SLURM_CPUS_PER_TASK), so unlike build_windows.sh this won't
 # let multiple LD-stat jobs run concurrently within one array task -- the
 # win here is purely the removed per-target startup overhead.
@@ -148,12 +148,12 @@ for IDX in $(seq "$START" "$END"); do
                 continue
             fi
             echo "QUEUE: pruned ($tag)  SID=$SID WIN=$WIN"
-            # prune_window (temp pruned VCF) → ld_window_pruned; both inherit
+            # prune_window (temp pruned VCF) → ld_window; both inherit
             # r_bins from the Snakefile.
             TARGETS+=("${MLD_REL}/pruning/${tag}/LD_stats/LD_stats_window_${WIN}.pkl")
             # Pruned VCF is temp() and normally cleaned inside the Snakemake run;
             # queue it for an explicit leftover-cleanup pass in case
-            # ld_window_pruned fails mid-way for this specific target.
+            # ld_window fails mid-way for this specific target.
             PRUNED_VCF_CLEANUP+=("${MLD_ABS}/pruning/${tag}/windows/window_${WIN}.vcf.gz")
         done
         # TEMPORARILY DISABLED (comparing prune_keep_fractions across separate

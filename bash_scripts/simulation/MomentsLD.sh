@@ -19,7 +19,7 @@ set -euo pipefail
 # so all num_optimizations restarts per sim actually run in parallel across
 # the array instead of serially inside one per-sim task. Requires
 # MomentsLD_prep.sh to have already built means.varcovs.pkl for every sim
-# (this script's infer_momentsld/infer_momentsld_pruned targets depend on
+# (this script's infer_momentsld targets depend on
 # it but never build it themselves, so concurrent opts for the same sid
 # never race on creating it). Aggregation across opts happens afterward in
 # aggregate_momentsld.sh.
@@ -27,7 +27,7 @@ set -euo pipefail
 # All targets in one array task's batch are collected first and built in a
 # SINGLE Snakemake call (same rationale as LD_stats_windows.sh/
 # build_windows.sh: cuts redundant per-target DAG-parse/startup overhead).
-# Each infer_momentsld[_pruned] job only needs threads:1, so passing
+# Each infer_momentsld job only needs threads:1, so passing
 # -j $SLURM_CPUS_PER_TASK (now 8, was 1) also lets up to that many restarts
 # in the batch run concurrently instead of strictly one at a time.
 # NOTE: raising cpus-per-task multiplies this stage's total concurrent core
@@ -84,7 +84,7 @@ fi
 # Snakemake call (see header comment for rationale).
 TARGETS=()
 if [[ -n "$PRUNE_FRACS" ]]; then
-    ALLOWED_RULE="infer_momentsld_pruned"
+    ALLOWED_RULE="infer_momentsld"
 else
     ALLOWED_RULE="infer_momentsld"
 fi
