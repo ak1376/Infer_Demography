@@ -14,7 +14,7 @@
 
 # Stage D3: pick the top-k MomentsLD restart across all num_optimizations
 # real_momentsld.sh array slots. Separate job so D2's array can be pure
-# per-restart parallelism (mirrors aggregate_momentsld.sh being separate
+# per-restart parallelism (mirrors aggregate_opts.sh being separate
 # from MomentsLD.sh for the simulated pipeline).
 #
 # Rule run (pooled):     aggregate_opts_momentsld_real

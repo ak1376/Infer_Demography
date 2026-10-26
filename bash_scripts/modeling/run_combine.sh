@@ -105,16 +105,13 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
 
   SFS_FILE="experiments/${MODEL}/simulations/${sid}/SFS.pkl"
   TARGET_COMBO="experiments/${MODEL}/inferences/sim_${sid}/all_inferences.pkl"
-  TARGET_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
-  TARGET_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
-  TARGET_LD="experiments/${MODEL}/inferences/sim_${sid}/MomentsLD/best_fit.pkl"
 
   if [[ ! -f "$SFS_FILE" ]]; then
     echo "ERROR: Missing simulation for sim_${sid}"
     continue
   fi
 
-  snakemake --cleanup-metadata \
+  snakemake --snakefile "$SNAKEFILE" --directory "$ROOT" --cleanup-metadata \
     "experiments/${MODEL}/simulations/${sid}/SFS.pkl" \
     "experiments/${MODEL}/simulations/${sid}/sampled_params.pkl" \
     "experiments/${MODEL}/simulations/${sid}/tree_sequence.trees" \

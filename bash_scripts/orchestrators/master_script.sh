@@ -86,7 +86,7 @@ ld_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_WINDOWS ))" "$BATCH_SIZE
   $(dep_afterany "$win_id") "${LD_STATS_SBATCH_OPTS[@]}" bash_scripts/simulation/LD_stats_windows.sh); [[ -n "$ld_id" ]]
 
 # --- 5. Moments-LD optimization ---
-# Split into prep -> restarts -> aggregate so the num_optimizations restarts
+# Split into prep -> restarts (aggregation is step 8) so the num_optimizations restarts
 # per sim actually run in parallel across the array (NUM_DRAWS * NUM_OPTIMS)
 # instead of serially inside one per-sim task.
 export BATCH_SIZE=1
@@ -97,9 +97,6 @@ export BATCH_SIZE=50
 momLD_id=$(submit_array "$(array_spec "$(( NUM_DRAWS * NUM_OPTIMS ))" "$BATCH_SIZE" 5000)" \
   $(dep_afterany "$momLD_prep_id") bash_scripts/simulation/MomentsLD.sh); [[ -n "$momLD_id" ]]
 
-export BATCH_SIZE=1
-momLD_agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  $(dep_afterany "$momLD_id") bash_scripts/simulation/aggregate_momentsld.sh); [[ -n "$momLD_agg_id" ]]
 
 # --- 6/7. moments + dadi SFS inference ---
 export BATCH_SIZE=50
@@ -115,13 +112,12 @@ else
     $(dep_afterany "$mom_id") bash_scripts/simulation/dadi.sh); [[ -n "$dadi_id" ]]
 fi
 
-# --- 8. aggregate moments+dadi top-K, cleanup ---
-# Must also wait on momLD_agg_id: cleanup_optimization_runs deletes any
-# run_{sid}_{opt} dir not in the union of dadi/moments/MomentsLD top-K, so
-# it can't run until MomentsLD has already picked its own keep-set.
+# --- 8. aggregate moments/dadi/MomentsLD top-K, then cleanup ---
+# Waits on all three inference stages: cleanup_optimization_runs deletes any
+# run_{sid}_{opt} dir not in the union of the three top-K sets.
 export BATCH_SIZE=1
 agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  --dependency=afterany:$mom_id:$dadi_id:$momLD_agg_id bash_scripts/simulation/aggregate_moments_dadi.sh); [[ -n "$agg_id" ]]
+  --dependency=afterany:$mom_id:$dadi_id:$momLD_id bash_scripts/simulation/aggregate_opts.sh); [[ -n "$agg_id" ]]
 
 # --- 8b/8c. FIM + SFS-residuals (always computed, regardless of
 #            use_fim_features/use_residuals -- those flags only control
@@ -135,7 +131,7 @@ resid_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
 # --- 9. combine_results ---
 export BATCH_SIZE=1
 comb_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  --dependency=afterany:$momLD_agg_id:$agg_id:$fim_id:$resid_id bash_scripts/modeling/run_combine.sh); [[ -n "$comb_id" ]]
+  --dependency=afterany:$agg_id:$fim_id:$resid_id bash_scripts/modeling/run_combine.sh); [[ -n "$comb_id" ]]
 
 # --- 10. build modeling dataset (single job, no array) ---
 feat_id=$(submit --dependency=afterany:$comb_id bash_scripts/modeling/aggregate_features.sh); [[ -n "$feat_id" ]]

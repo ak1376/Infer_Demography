@@ -94,7 +94,7 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
   declare -a TARGETS=()
 
   for eng in "${ENGINES[@]}"; do
-    fit="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/${eng}/fit_params.pkl"
+    fit="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/${eng}/best_fit.pkl"
     if [[ -f "$fit" ]]; then
       TARGETS+=("experiments/${MODEL}/inferences/sim_${sid}/fim/${eng}.fim.npy")
     else

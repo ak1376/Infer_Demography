@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=agg_opts_both
-#SBATCH --output=logs/agg_both_%A_%a.out
-#SBATCH --error=logs/agg_both_%A_%a.err
+#SBATCH --job-name=agg_opts
+#SBATCH --output=logs/agg_opts_%A_%a.out
+#SBATCH --error=logs/agg_opts_%A_%a.err
 #SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=2G
@@ -13,6 +13,12 @@
 #SBATCH --verbose
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Per sim: keep the top-K optimizer restarts of moments, dadi and MomentsLD
+# (rule aggregate_opts -> inferences/sim_<sid>/<fit>/best_fit.pkl), then
+# cleanup_optimization_runs. Run after moments.sh, dadi.sh and MomentsLD.sh.
+# ---------------------------------------------------------------------------
 
 # -----------------------------
 # Tunables
@@ -33,6 +39,9 @@ export EXP_CFG="$CFG"
 
 NUM_DRAWS=$(jq -r '.num_draws'          "$CFG")
 MODEL=$(jq -r '.demographic_model'      "$CFG")
+# MomentsLD or MomentsLD/pruning/<tag> -- same helper the Snakemake rules use
+LD_SUBDIR=$(PYTHONPATH="$ROOT/src" python3 -c 'import json, sys; from ld_paths import momentsld_subdir; print(momentsld_subdir(json.load(open(sys.argv[1]))))' "$CFG")
+FITS=(moments dadi "$LD_SUBDIR")
 
 mkdir -p logs
 
@@ -139,7 +148,7 @@ SMK_ARGS=(
   --rerun-incomplete
   --nolock
   --rerun-triggers mtime
-  --allowed-rules aggregate_opts_engine aggregate_opts_momentsld cleanup_optimization_runs
+  --allowed-rules aggregate_opts cleanup_optimization_runs
   --keep-going
 )
 (( DRYRUN )) && SMK_ARGS+=(-n)
@@ -148,38 +157,28 @@ SMK_ARGS=(
 # Loop over sims
 # -----------------------------
 for sid in $(seq "$RUN_START" "$RUN_END"); do
-  echo "aggregate_opts (both engines): sid=$sid"
-
-  CANON_MOM="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
-  CANON_DADI="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
-  CLEANUP="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
-
-  mom_ok=0
-  dadi_ok=0
-  is_nonempty_canon "$CANON_MOM"  && mom_ok=1
-  is_nonempty_canon "$CANON_DADI" && dadi_ok=1
-  cleanup_exists=0
-  [[ -f "$CLEANUP" ]] && cleanup_exists=1
-
-  if (( FORCE == 0 && mom_ok == 1 && dadi_ok == 1 && cleanup_exists == 1 )); then
-    echo "SKIP: sim_${sid} has NON-EMPTY canonical moments+dadi pkls and cleanup_done.txt"
-    continue
-  fi
-
-  if (( FORCE == 1 )); then
-    echo "FORCE=1: rerunning aggregation/cleanup for sim_${sid}"
-  else
-    echo "RE-RUN: sim_${sid} needs work (mom_ok=$mom_ok dadi_ok=$dadi_ok cleanup_exists=$cleanup_exists)"
-  fi
+  echo "aggregate_opts: sid=$sid"
 
   # IMPORTANT: always pass explicit targets so snakemake never defaults to rule all
-  TGT_MOM="experiments/${MODEL}/inferences/sim_${sid}/moments/fit_params.pkl"
-  TGT_DADI="experiments/${MODEL}/inferences/sim_${sid}/dadi/fit_params.pkl"
+  TARGETS=()
+  all_ok=1
+  for fit in "${FITS[@]}"; do
+    tgt="experiments/${MODEL}/inferences/sim_${sid}/${fit}/best_fit.pkl"
+    TARGETS+=("$tgt")
+    is_nonempty_canon "$ROOT/$tgt" || all_ok=0
+  done
   TGT_CLEAN="experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
+  TARGETS+=("$TGT_CLEAN")
+  [[ -f "$ROOT/$TGT_CLEAN" ]] || all_ok=0
 
-  echo "Targets: $TGT_MOM  $TGT_DADI  $TGT_CLEAN"
+  if (( FORCE == 0 && all_ok == 1 )); then
+    echo "SKIP: sim_${sid} has non-empty aggregated fits (${FITS[*]}) and cleanup_done.txt"
+    continue
+  fi
+  (( FORCE == 1 )) && echo "FORCE=1: rerunning aggregation/cleanup for sim_${sid}"
 
-  snakemake "${SMK_ARGS[@]}" "$TGT_MOM" "$TGT_DADI" "$TGT_CLEAN" \
+  echo "Targets: ${TARGETS[*]}"
+  snakemake "${SMK_ARGS[@]}" "${TARGETS[@]}" \
     || { echo "Snakemake failed for sid=$sid"; exit 1; }
 done
 

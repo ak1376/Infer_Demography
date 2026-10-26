@@ -4,7 +4,7 @@
 # r-bins, modeling variants, and the wildcard patterns used by >1 workflow.
 # Anything used by only one workflow lives at the top of its rules/*_rules.smk.
 ##############################################################################
-import json, math, sys, os
+import json, math, re, sys, os
 from pathlib import Path
 from snakemake.io import protected, ancient
 

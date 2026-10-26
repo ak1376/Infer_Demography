@@ -104,7 +104,12 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   OPT=$(( IDX % NUM_OPTIMS ))
 
   # ---- canonical "sim_XX" output we use to decide whether to skip ----
-  CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/dadi/fit_params.pkl"
+  CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/dadi/best_fit.pkl"
+  # Sims aggregated before the fit_params.pkl -> best_fit.pkl rename only have
+  # the old name; count those as aggregated too, so their (already cleaned-up)
+  # restarts aren't recomputed.
+  LEGACY_OUT="${CANON_OUT%/best_fit.pkl}/fit_params.pkl"
+  [[ ! -f "$CANON_OUT" && -f "$LEGACY_OUT" ]] && CANON_OUT="$LEGACY_OUT"
 
   # Skip ONLY if canonical exists AND is non-empty.
   # If canonical missing OR "empty" (like your example) OR unreadable -> recompute.

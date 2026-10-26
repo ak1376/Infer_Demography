@@ -14,7 +14,7 @@
 
 # Stage B2: pick the top-k moments/dadi restart across all num_optimizations
 # real_sfs_inference.sh array slots. Separate job so B1's array can be pure
-# per-restart parallelism (mirrors aggregate_moments_dadi.sh being separate
+# per-restart parallelism (mirrors aggregate_opts.sh being separate
 # from moments.sh/dadi.sh for the simulated pipeline).
 #
 # Rule run (pooled):     aggregate_opts_engine_real

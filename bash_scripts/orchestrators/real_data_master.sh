@@ -15,8 +15,8 @@
 # every multi-restart stage (SFS inference, MomentsLD) is split into an
 # array job that runs each restart in its own SLURM task, followed by a
 # separate small aggregate job, exactly like moments.sh/dadi.sh +
-# aggregate_moments_dadi.sh and MomentsLD_prep.sh/MomentsLD.sh +
-# aggregate_momentsld.sh do for the simulated pipeline:
+# aggregate_opts.sh and MomentsLD_prep.sh/MomentsLD.sh +
+# aggregate_opts.sh do for the simulated pipeline:
 #
 #   A.  real_data_prep.sh          -- polarize VCFs, per-arm (+ combined, if
 #                                      pooled) SFS

@@ -22,7 +22,7 @@ set -euo pipefail
 # (this script's infer_momentsld targets depend on
 # it but never build it themselves, so concurrent opts for the same sid
 # never race on creating it). Aggregation across opts happens afterward in
-# aggregate_momentsld.sh.
+# aggregate_opts.sh (together with moments/dadi).
 #
 # All targets in one array task's batch are collected first and built in a
 # SINGLE Snakemake call (same rationale as LD_stats_windows.sh/

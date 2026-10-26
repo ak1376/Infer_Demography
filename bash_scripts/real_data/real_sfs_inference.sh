@@ -22,7 +22,7 @@
 # Rule run (pooled):     infer_engine_real
 # Rule run (individual): infer_engine_real_chrom
 # (the aggregate step is a separate job -- see real_aggregate_sfs.sh --
-# exactly like aggregate_moments_dadi.sh is separate from moments.sh/dadi.sh)
+# exactly like aggregate_opts.sh is separate from moments.sh/dadi.sh)
 #
 # pooled index space: engine*NUM_REAL_OPTIMS + opt, engine in {moments, dadi}.
 # individual index space additionally multiplies in arm: arm and engine are

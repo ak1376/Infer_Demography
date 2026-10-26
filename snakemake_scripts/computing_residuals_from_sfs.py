@@ -136,12 +136,13 @@ def load_best_params_from_inference(
 ) -> Tuple[Dict[str, float], float | None, str]:
     """
     Accept:
-      - fit_params.pkl with {'best_params': list[dict], 'best_ll': list[float]}
       - best_fit.pkl   with {'best_params': dict,       'best_ll': float}
       - best_fit.pkl   with {'best_params': list[dict], 'best_ll': list[float]}
+      - fit_params.pkl (older name of the aggregated sim fit, same schema)
+    best_fit.pkl wins when both exist, so a stale fit_params.pkl is ignored.
     Returns: (best_params_dict_filtered, best_ll_or_None, which_file_used)
     """
-    for fname in ("fit_params.pkl", "best_fit.pkl"):
+    for fname in ("best_fit.pkl", "fit_params.pkl"):
         path = method_dir / fname
         obj = _maybe_load_pickle(path)
         if not isinstance(obj, dict):

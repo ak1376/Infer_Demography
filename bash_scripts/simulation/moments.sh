@@ -128,7 +128,12 @@ for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
   # NOTE: this says nothing about whether THIS specific opt is done — it's a
   # whole-simulation check. It only lets us skip a sim entirely once every
   # opt in it has finished and been rolled up into the top-k summary.
-  CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/moments/fit_params.pkl"
+  CANON_OUT="$ROOT/experiments/${MODEL}/inferences/sim_${SID}/moments/best_fit.pkl"
+  # Sims aggregated before the fit_params.pkl -> best_fit.pkl rename only have
+  # the old name; count those as aggregated too, so their (already cleaned-up)
+  # restarts aren't recomputed.
+  LEGACY_OUT="${CANON_OUT%/best_fit.pkl}/fit_params.pkl"
+  [[ ! -f "$CANON_OUT" && -f "$LEGACY_OUT" ]] && CANON_OUT="$LEGACY_OUT"
 
   if is_nonempty_canon "$CANON_OUT"; then
     echo "[sim_${SID}] already aggregated ($CANON_OUT) -> skipping all remaining opts for this sim, including OPT=$OPT"

@@ -43,10 +43,14 @@ LD_SUBDIR  = momentsld_subdir(CFG)      # "MomentsLD" or "MomentsLD/pruning/<tag
 LD_DIR     = f"experiments/{MODEL}/inferences/sim_{{sid}}/{LD_SUBDIR}"          # LD stats, means/varcovs, aggregated fit
 LD_RUN_DIR = f"experiments/{MODEL}/runs/run_{{sid}}_{{opt}}/inferences/{LD_SUBDIR}"  # one optimizer restart
 
-# The MomentsLD fit combine_results folds in (and cleanup_optimization_runs
-# reads its keep-set from).
-MOMENTSLD_BEST_FIT    = f"{LD_DIR}/best_fit.pkl"
-MOMENTSLD_AGG_TARGETS = [MOMENTSLD_BEST_FIT]
+# Aggregated (top-K) fit per tool and sim (rule aggregate_opts). {fit} is
+# moments, dadi or LD_SUBDIR, so the MomentsLD one is LD_DIR/best_fit.pkl.
+SIM_FITS = ["moments", "dadi", LD_SUBDIR]
+AGG_FIT  = f"experiments/{MODEL}/inferences/sim_{{sid}}/{{fit}}/best_fit.pkl"
+MOMENTSLD_BEST_FIT = AGG_FIT.replace("{fit}", LD_SUBDIR)
+
+wildcard_constraints:
+    fit = "|".join(re.escape(f) for f in SIM_FITS),
 
 
 ##############################################################################
@@ -153,33 +157,37 @@ rule infer_engine:
           --opt-seed {wildcards.opt} {params.fix}
         """
 
-# ── MOMENTS / DADI (sim) ────────────────────────────────────────────────────
-rule aggregate_opts_engine:
+##############################################################################
+# RULE aggregate_opts – keep the top-K optimizer restarts for one tool/sim   #
+# {fit} is moments, dadi, or LD_SUBDIR (MomentsLD[/pruning/<tag>]); reads   #
+# runs/run_<sid>_<opt>/inferences/<fit>/best_fit.pkl and writes            #
+# inferences/sim_<sid>/<fit>/best_fit.pkl.                                  #
+# No hard dependency on the per-restart files on purpose: aggregation works #
+# on however many restarts currently exist (found by glob below), so it     #
+# never re-triggers restarts that were removed. aggregate_opts.sh's FORCE=1 #
+# re-aggregates once more restarts have finished.                           #
+##############################################################################
+rule aggregate_opts:
     input:
         cfg = EXP_CFG,
-        # No hard dependency on the full OPTIMS range here on purpose: aggregation
-        # should work on however many per-opt files currently exist (discovered via
-        # glob in the run: block below), not force every optimization to finish
-        # first. aggregate_moments_dadi.sh's FORCE=1 is what triggers a fresh
-        # aggregation pass once more opts have completed.
     output:
-        pkl = f"experiments/{MODEL}/inferences/sim_{{sid}}/{{engine}}/fit_params.pkl"
+        pkl = AGG_FIT,
     run:
-        import pickle, pathlib
+        import pickle, pathlib, re
         from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
 
-        sid = wildcards.sid
-        engine = wildcards.engine
+        sid, fit = wildcards.sid, wildcards.fit
+        tool = fit.split("/")[0]   # moments | dadi | MomentsLD
         MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
 
         records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{engine}/best_fit.pkl",
-            rf"/run_{sid}_(\d+)/inferences/{engine}/best_fit\.pkl$",
+            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{fit}/best_fit.pkl",
+            rf"/run_{sid}_(\d+)/inferences/{re.escape(fit)}/best_fit\.pkl$",
         )
 
         best, diag = aggregate_top_k(
             records, TOP_K, min_nonempty=MIN_FILES,
-            err_label=f"aggregate_opts_{engine}", err_engine=engine, err_context=f"for sid={sid}",
+            err_label=f"aggregate_opts ({fit})", err_engine=tool, err_context=f"for sid={sid}",
         )
         best["n_files_found"] = diag["n_records"]
         best["n_nonempty"]    = diag["n_nonempty"]
@@ -189,8 +197,8 @@ rule aggregate_opts_engine:
         with open(output.pkl, "wb") as fh:
             pickle.dump(best, fh)
 
-        print(f"✅ {engine}: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.pkl}")
-        print(f"✅ {engine}: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
+        print(f"✅ {fit}: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.pkl}")
+        print(f"✅ {fit}: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
 
 # ── CLEANUP RULE: Remove non-top-K optimization runs after all three
 #    engines (dadi, moments, MomentsLD) have finished aggregating. Must wait
@@ -200,9 +208,9 @@ rule aggregate_opts_engine:
 #    away a restart MomentsLD still needed. ─────────────────────────────────
 rule cleanup_optimization_runs:
     input:
-        dadi       = f"experiments/{MODEL}/inferences/sim_{{sid}}/dadi/fit_params.pkl",
-        moments    = f"experiments/{MODEL}/inferences/sim_{{sid}}/moments/fit_params.pkl",
-        momentsld  = MOMENTSLD_AGG_TARGETS,
+        dadi       = AGG_FIT.replace("{fit}", "dadi"),
+        moments    = AGG_FIT.replace("{fit}", "moments"),
+        momentsld  = MOMENTSLD_BEST_FIT,
     output:
         cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
     run:
@@ -224,11 +232,9 @@ rule cleanup_optimization_runs:
             dadi_data = pickle.load(f)
         with open(input.moments, "rb") as f:
             moments_data = pickle.load(f)
-        momentsld_keep = set()
-        for momentsld_path in input.momentsld:
-            with open(momentsld_path, "rb") as f:
-                momentsld_data = pickle.load(f)
-            momentsld_keep |= set((momentsld_data.get("opt_index") or [])[:TOP_K])
+        with open(input.momentsld, "rb") as f:
+            momentsld_data = pickle.load(f)
+        momentsld_keep = set((momentsld_data.get("opt_index") or [])[:TOP_K])
 
         dadi_keep    = set((dadi_data.get("opt_index") or [])[:TOP_K])
         moments_keep = set((moments_data.get("opt_index") or [])[:TOP_K])
@@ -500,49 +506,11 @@ rule infer_momentsld:
         """
 
 ##############################################################################
-# RULE aggregate_opts_momentsld – pick top-K across LHS restarts            #
-# Same TOP_K and best_params/best_ll/opt_index schema as                    #
-# aggregate_opts_engine.                                                    #
-##############################################################################
-rule aggregate_opts_momentsld:
-    input:
-        cfg = EXP_CFG,
-        opts = lambda w: expand(LD_RUN_DIR + "/best_fit.pkl", sid=[w.sid], opt=OPTIMS),
-    output:
-        best = MOMENTSLD_BEST_FIT,
-    run:
-        import pickle, pathlib
-        from src.aggregate_utils import discover_opt_pkls, aggregate_top_k
-
-        sid = wildcards.sid
-        MIN_FILES = int(CFG.get("aggregate_min_replicates", 5))
-
-        records = discover_opt_pkls(
-            f"experiments/{MODEL}/runs/run_{sid}_*/inferences/{LD_SUBDIR}/best_fit.pkl",
-            rf"/run_{sid}_(\d+)/inferences/{LD_SUBDIR}/best_fit\.pkl$",
-        )
-
-        best, diag = aggregate_top_k(
-            records, TOP_K, min_nonempty=MIN_FILES,
-            err_label="aggregate_opts_momentsld", err_engine="MomentsLD", err_context=f"for sid={sid}",
-        )
-        best["n_files_found"] = diag["n_records"]
-        best["n_nonempty"]    = diag["n_nonempty"]
-        best["min_required"]  = int(TOP_K)
-
-        pathlib.Path(output.best).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.best, "wb") as fh:
-            pickle.dump(best, fh)
-
-        print(f"✅ momentsLD ({LD_SUBDIR}): found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.best}")
-        print(f"✅ momentsLD ({LD_SUBDIR}): kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
-
-##############################################################################
 # RULE compute_fim – observed FIM at best-LL params for {engine}             #
 ##############################################################################
 rule compute_fim:
     input:
-        fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
+        fit = lambda w: AGG_FIT.format(sid=w.sid, fit=w.engine),
         sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl"
     output:
         fim  = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/fim/{{engine}}.fim.npy"),
@@ -570,7 +538,7 @@ rule compute_fim:
 rule sfs_residuals:
     input:
         obs_sfs = f"{SIM_BASEDIR}/{{sid}}/SFS.pkl",
-        agg_fit = lambda w: f"experiments/{MODEL}/inferences/sim_{w.sid}/{w.engine}/fit_params.pkl",
+        agg_fit = lambda w: AGG_FIT.format(sid=w.sid, fit=w.engine),
     output:
         res_arr   = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals.npy",
         res_flat  = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy"),
@@ -616,10 +584,10 @@ rule sfs_residuals:
 rule combine_results:
     input:
         cfg       = EXP_CFG,
-        dadi      = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl")
-                    if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/dadi/fit_params.pkl") else [],
-        moments   = lambda w: ancient(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl")
-                    if os.path.exists(f"experiments/{MODEL}/inferences/sim_{w.sid}/moments/fit_params.pkl") else [],
+        dadi      = lambda w: ancient(AGG_FIT.format(sid=w.sid, fit="dadi"))
+                    if os.path.exists(AGG_FIT.format(sid=w.sid, fit="dadi")) else [],
+        moments   = lambda w: ancient(AGG_FIT.format(sid=w.sid, fit="moments"))
+                    if os.path.exists(AGG_FIT.format(sid=w.sid, fit="moments")) else [],
         momentsLD = lambda w: ancient(MOMENTSLD_BEST_FIT.format(sid=w.sid))
                     if os.path.exists(MOMENTSLD_BEST_FIT.format(sid=w.sid)) else [],
         # FIM/residuals are always computed (see FIM_ENGINES/RESIDUAL_ENGINES
