@@ -1,5 +1,5 @@
 ##############################################################################
-# ML modeling: combine_features -> linear / random forest / xgboost
+# ML modeling: combine_features -> train_model (linear / random forest / xgboost)
 ##############################################################################
 
 ##############################################################################
@@ -42,7 +42,6 @@ def _xgb_opt_flags():
     ]).strip()
 
 # Regressors
-REG_TYPES = config["linear"]["types"]  # e.g., ["standard","ridge","lasso","elasticnet"]
 
 
 ##############################################################################
@@ -83,58 +82,59 @@ rule combine_features:
         """
 
 ##############################################################################
-# RULE make_color_scheme – build color_shades.pkl & main_colors.pkl
+# RULE train_model – fit one model on one variant's dataset                  #
+# {model_key}: linear_<reg> (REG_TYPES), random_forest or xgboost. Script,  #
+# threads and model-specific flags come from the tables below.              #
 ##############################################################################
-rule make_color_scheme:
-    output:
-        shades = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        mains  = f"experiments/{MODEL}/modeling/main_colors.pkl"
-    params:
-        script = "snakemake_scripts/setup_colors.py",
-        cfg    = EXP_CFG
-    threads: 1
-    benchmark:
-        "benchmarks/make_color_scheme.tsv"
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
-            --config "{params.cfg}" \
-            --out-dir "$(dirname {output.shades})"
-        """
+DATASET = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_{{split}}_{{xy}}.pkl"
 
-##############################################################################
-# RULE linear_regression                                                     #
-##############################################################################
-rule linear_regression:
+TRAIN_SCRIPTS = {
+    "linear":        "snakemake_scripts/linear_evaluation.py",
+    "random_forest": "snakemake_scripts/random_forest.py",
+    "xgboost":       "snakemake_scripts/xgboost_evaluation.py",
+}
+TRAIN_THREADS = {"linear": 2, "random_forest": 8, "xgboost": 4}
+
+def _model_family(model_key):
+    return "linear" if model_key.startswith("linear_") else model_key
+
+def _model_flags(w):
+    if w.model_key.startswith("linear_"):
+        reg = w.model_key[len("linear_"):]
+        opts = config["linear"].get(reg, {})
+        return " ".join([
+            f"--regression_type {reg}",
+            f"--alpha {opts.get('alpha', 0.0)}",
+            f"--l1_ratio {opts.get('l1_ratio', 0.5)}",
+            "--do_grid_search" if opts.get("grid_search", False) else "",
+        ]).strip()
+    return _rf_opt_flags() if w.model_key == "random_forest" else _xgb_opt_flags()
+
+wildcard_constraints:
+    model_key = "|".join(MODEL_KEYS),
+
+rule train_model:
     input:
-        X_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
-        y_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
-
-        # ✅ add tune
-        X_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
-
-        X_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
-        shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        mdlcfg  = "config_files/model_config.yaml"
+        X_train = DATASET.replace("{split}", "train").replace("{xy}", "features"),
+        y_train = DATASET.replace("{split}", "train").replace("{xy}", "targets"),
+        X_tune  = DATASET.replace("{split}", "tune").replace("{xy}", "features"),
+        y_tune  = DATASET.replace("{split}", "tune").replace("{xy}", "targets"),
+        X_val   = DATASET.replace("{split}", "val").replace("{xy}", "features"),
+        y_val   = DATASET.replace("{split}", "val").replace("{xy}", "targets"),
+        expcfg  = EXP_CFG,
+        mdlcfg  = "config_files/model_config.yaml",
     output:
-        obj   = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
-        errjs = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_model_error_{{reg}}.json",
-        mdl   = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_regression_model_{{reg}}.pkl",
-        plot  = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_results_{{reg}}.png"
+        obj   = f"{TRAINED_MODEL_DIR}/mdl_obj.pkl",
+        errjs = f"{TRAINED_MODEL_DIR}/model_error.json",
+        mdl   = f"{TRAINED_MODEL_DIR}/model.pkl",
+        plot  = f"{TRAINED_MODEL_DIR}/results.png",
     params:
-        script    = "snakemake_scripts/linear_evaluation.py",
-        expcfg    = EXP_CFG,
-        model_dir = f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}",
-        alpha    = lambda w: config["linear"].get(w.reg, {}).get("alpha", 0.0),
-        l1_ratio = lambda w: config["linear"].get(w.reg, {}).get("l1_ratio", 0.5),
-        gridflag = lambda w: "--do_grid_search" if config["linear"].get(w.reg, {}).get("grid_search", False) else ""
-    threads: 2
+        script    = lambda w: TRAIN_SCRIPTS[_model_family(w.model_key)],
+        model_dir = lambda w: TRAINED_MODEL_DIR.format(variant=w.variant, model_key=w.model_key),
+        flags     = _model_flags,
+    threads: lambda w: TRAIN_THREADS[_model_family(w.model_key)]
     benchmark:
-        f"benchmarks/linear_regression_{{variant}}_{{reg}}.tsv"
+        "benchmarks/train_model_{variant}_{model_key}.tsv"
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
@@ -145,124 +145,16 @@ rule linear_regression:
             --y_tune_path  "{input.y_tune}" \
             --X_val_path   "{input.X_val}" \
             --y_val_path   "{input.y_val}" \
-            --experiment_config_path "{params.expcfg}" \
+            --experiment_config_path "{input.expcfg}" \
             --model_config_path      "{input.mdlcfg}" \
-            --color_shades_file      "{input.shades}" \
-            --main_colors_file       "{input.colors}" \
-            --regression_type "{wildcards.reg}" \
             --model_directory "{params.model_dir}" \
-            {params.gridflag} \
-            --alpha {params.alpha} \
-            --l1_ratio {params.l1_ratio}
+            {params.flags}
         """
 
 ##############################################################################
-# RULE random_forest                                                         #
-##############################################################################
-rule random_forest:
-    input:
-        X_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
-        y_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
-        X_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
-        shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        expcfg  = EXP_CFG,
-        mdlcfg  = "config_files/model_config.yaml"
-    output:
-        obj   = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_mdl_obj.pkl",
-        errjs = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_model_error.json",
-        mdl   = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_model.pkl",
-        plot  = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_results.png",
-        fi    = f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_feature_importances.png"
-    params:
-        script    = "snakemake_scripts/random_forest.py",
-        model_dir = f"experiments/{MODEL}/modeling_{{variant}}/random_forest",
-        opt_flags = lambda w: _rf_opt_flags(),
-    threads: 8
-    benchmark:
-        f"benchmarks/random_forest_{{variant}}.tsv"
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
-            --X_train_path "{input.X_train}" \
-            --y_train_path "{input.y_train}" \
-            --X_tune_path  "{input.X_tune}" \
-            --y_tune_path  "{input.y_tune}" \
-            --X_val_path   "{input.X_val}" \
-            --y_val_path   "{input.y_val}" \
-            --experiment_config_path "{input.expcfg}" \
-            --model_config_path      "{input.mdlcfg}" \
-            --color_shades_file      "{input.shades}" \
-            --main_colors_file       "{input.colors}" \
-            {params.opt_flags} \
-            --model_directory "{params.model_dir}"
-        """
-
-##############################################################################
-# RULE xgboost                                                               #
-##############################################################################
-rule xgboost:
-    input:
-        X_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
-        y_train = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
-        X_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
-        y_tune  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
-        X_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
-        y_val   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
-        shades  = f"experiments/{MODEL}/modeling/color_shades.pkl",
-        colors  = f"experiments/{MODEL}/modeling/main_colors.pkl",
-        expcfg  = EXP_CFG,
-        mdlcfg  = "config_files/model_config.yaml"
-    output:
-        obj   = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_mdl_obj.pkl",
-        errjs = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_model_error.json",
-        mdl   = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_model.pkl",
-        plot  = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_results.png",
-        fi    = f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_feature_importances.png"
-    params:
-        script    = "snakemake_scripts/xgboost_evaluation.py",
-        model_dir = f"experiments/{MODEL}/modeling_{{variant}}/xgboost",
-        opt_flags = lambda w: _xgb_opt_flags(),
-    threads: 4
-    benchmark:
-        f"benchmarks/xgboost_{{variant}}.tsv"
-    shell:
-        r"""
-        PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
-            --X_train_path "{input.X_train}" \
-            --y_train_path "{input.y_train}" \
-            --X_tune_path  "{input.X_tune}" \
-            --y_tune_path  "{input.y_tune}" \
-            --X_val_path   "{input.X_val}" \
-            --y_val_path   "{input.y_val}" \
-            --experiment_config_path "{input.expcfg}" \
-            --model_config_path      "{input.mdlcfg}" \
-            --color_shades_file      "{input.shades}" \
-            --main_colors_file       "{input.colors}" \
-            {params.opt_flags} \
-            --model_directory "{params.model_dir}"
-        """
-
-##############################################################################
-# RULE modeling_all – build every FIM×residuals modeling variant in one run  #
-# Usage:  snakemake -j <N> modeling_all                                       #
+# RULE modeling_all – every model for every MODELING_VARIANTS entry          #
+# Usage:  snakemake -s modeling.smk -j <N> modeling_all                     #
 ##############################################################################
 rule modeling_all:
     input:
-        expand(
-            f"experiments/{MODEL}/modeling_{{variant}}/linear_{{reg}}/linear_mdl_obj_{{reg}}.pkl",
-            variant=MODELING_VARIANTS, reg=REG_TYPES,
-        ),
-        expand(
-            f"experiments/{MODEL}/modeling_{{variant}}/random_forest/random_forest_mdl_obj.pkl",
-            variant=MODELING_VARIANTS,
-        ),
-        expand(
-            f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_mdl_obj.pkl",
-            variant=MODELING_VARIANTS,
-        ),
+        expand(f"{TRAINED_MODEL_DIR}/mdl_obj.pkl", variant=MODELING_VARIANTS, model_key=MODEL_KEYS),

@@ -30,7 +30,7 @@
 #
 # predict_real_data needs a trained model (from the sim modeling pipeline)
 # for each (variant, model_key) -- this script silently skips any combination
-# whose trained *_mdl_obj.pkl doesn't exist yet rather than failing the job.
+# whose trained <model_key>/mdl_obj.pkl doesn't exist yet rather than failing the job.
 #
 # NOTE: build_real_prediction_dataset assembles its feature row from the
 # pooled moments/dadi/MomentsLD fits + FIM + residuals regardless of
@@ -82,11 +82,7 @@ for variant in "${MODELING_VARIANTS[@]}"; do
         "${REAL_PRED_ROOT}/real_features_df.pkl"
 
     for model_key in "${MODEL_KEYS[@]}"; do
-        case "$model_key" in
-            linear_*) model_pkl="${MODELING_DIR}/${model_key}/linear_mdl_obj_${model_key#linear_}.pkl" ;;
-            xgboost)  model_pkl="${MODELING_DIR}/xgboost/xgb_mdl_obj.pkl" ;;
-            *)        model_pkl="${MODELING_DIR}/${model_key}/${model_key}_mdl_obj.pkl" ;;
-        esac
+        model_pkl="${MODELING_DIR}/${model_key}/mdl_obj.pkl"   # rule train_model
 
         if [[ ! -f "$ROOT/$model_pkl" ]]; then
             echo "SKIP: [$variant] $model_key (no trained model at $model_pkl)"

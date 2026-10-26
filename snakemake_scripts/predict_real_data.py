@@ -4,7 +4,7 @@
 # Push the real-data feature row (built by build_real_prediction_dataset.py)
 # through a trained model object and write physical-unit predictions.
 #
-# Works with the *_mdl_obj.pkl objects produced by random_forest.py,
+# Works with the mdl_obj.pkl objects (rule train_model) produced by random_forest.py,
 # xgboost_evaluation.py and linear_evaluation.py. They all store the fitted
 # estimator under "model"; RF/XGB also store "feature_names"/"target_order",
 # while linear stores only "param_names" (feature order falls back to the
@@ -25,7 +25,7 @@ import pandas as pd
 def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-obj", required=True, type=Path,
-                    help="Trained *_mdl_obj.pkl (RF / XGB / linear).")
+                    help="Trained mdl_obj.pkl from rule train_model (RF / XGB / linear).")
     ap.add_argument("--real-features", required=True, type=Path,
                     help="Normalized real features pkl (real_features_df.pkl).")
     ap.add_argument("--train-features", required=True, type=Path,

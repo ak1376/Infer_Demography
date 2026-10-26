@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Shared body for the Snakefile's sfs_residuals / sfs_residuals_real rules.
 # The two rules differ only in which paths they pass in, so this script
-# takes those as positional args and does the run + output-verification /
-# Gram-Schmidt-sentinel logic that used to be duplicated in both rules.
+# takes those as positional args and does the run + output verification
+# that used to be duplicated in both rules.
 #
 # Usage: run_sfs_residuals.sh <engine> <cfg> <model_py> <obs_sfs> <inf_dir> \
 #            <out_dir> <use_gs> <resid_script> <basedir> [n_bins]
@@ -42,10 +42,8 @@ test -f "$out_dir/residuals_flat.npy"
 test -f "$out_dir/meta.json"
 test -f "$out_dir/residuals_histogram.png"
 
-# GS outputs: if enabled, require real artifacts; else create sentinels
+# GS outputs (only declared by the rules when gram_schmidt is on)
 if [ "$use_gs" = "True" ]; then
     test -f "$out_dir/residuals_gs_coeffs.npy"
     test -f "$out_dir/residuals_gs_basis.npy"
-else
-    touch "$out_dir/.gs_disabled" "$out_dir/.gs_basis_disabled"
 fi

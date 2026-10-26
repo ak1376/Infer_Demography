@@ -112,9 +112,7 @@ else
     $(dep_afterany "$mom_id") bash_scripts/simulation/dadi.sh); [[ -n "$dadi_id" ]]
 fi
 
-# --- 8. aggregate moments/dadi/MomentsLD top-K, then cleanup ---
-# Waits on all three inference stages: cleanup_optimization_runs deletes any
-# run_{sid}_{opt} dir not in the union of the three top-K sets.
+# --- 8. aggregate moments/dadi/MomentsLD top-K ---
 export BATCH_SIZE=1
 agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
   --dependency=afterany:$mom_id:$dadi_id:$momLD_id bash_scripts/simulation/aggregate_opts.sh); [[ -n "$agg_id" ]]
@@ -123,15 +121,13 @@ agg_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
 #            use_fim_features/use_residuals -- those flags only control
 #            whether feature_extraction.py later uses them as features) ---
 export BATCH_SIZE=1
-fim_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  $(dep_afterany "$agg_id") bash_scripts/simulation/compute_fim.sh); [[ -n "$fim_id" ]]
-resid_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  $(dep_afterany "$agg_id") bash_scripts/simulation/compute_residuals.sh); [[ -n "$resid_id" ]]
+diag_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
+  $(dep_afterany "$agg_id") bash_scripts/simulation/fit_diagnostics.sh); [[ -n "$diag_id" ]]
 
 # --- 9. combine_results ---
 export BATCH_SIZE=1
 comb_id=$(submit_array "$(array_spec "$NUM_DRAWS" "$BATCH_SIZE")" \
-  --dependency=afterany:$agg_id:$fim_id:$resid_id bash_scripts/modeling/run_combine.sh); [[ -n "$comb_id" ]]
+  --dependency=afterany:$agg_id:$diag_id bash_scripts/modeling/run_combine.sh); [[ -n "$comb_id" ]]
 
 # --- 10. build modeling dataset (single job, no array) ---
 feat_id=$(submit --dependency=afterany:$comb_id bash_scripts/modeling/aggregate_features.sh); [[ -n "$feat_id" ]]

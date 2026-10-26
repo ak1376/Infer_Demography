@@ -189,20 +189,12 @@ def _real_empirical_norm_stats(variant):
 def _real_norm_train_features(variant):
     return f"{_real_modeling_dir(variant)}/datasets/normalized_train_features.pkl"
 
-# model_key wildcard -> trained *_mdl_obj.pkl path, for a given variant
+# model_key wildcard -> trained mdl_obj.pkl path (rule train_model), for a given variant
 def _real_model_objs(variant):
-    d = _real_modeling_dir(variant)
-    return {
-        "random_forest":     f"{d}/random_forest/random_forest_mdl_obj.pkl",
-        "xgboost":           f"{d}/xgboost/xgb_mdl_obj.pkl",
-        "linear_standard":   f"{d}/linear_standard/linear_mdl_obj_standard.pkl",
-        "linear_ridge":      f"{d}/linear_ridge/linear_mdl_obj_ridge.pkl",
-        "linear_lasso":      f"{d}/linear_lasso/linear_mdl_obj_lasso.pkl",
-        "linear_elasticnet": f"{d}/linear_elasticnet/linear_mdl_obj_elasticnet.pkl",
-    }
+    return {k: f"{TRAINED_MODEL_DIR.format(variant=variant, model_key=k)}/mdl_obj.pkl" for k in MODEL_KEYS}
 
-# model_key set is the same across variants -- any variant's keys will do.
-REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
+# model_key set is the same across variants.
+REAL_MODEL_KEYS = MODEL_KEYS
 
 # Model-calibration check (posterior-predictive): simulate at the real-data
 # fitted params, one job per (variant, model_key, rep) so replicates can run
@@ -1296,18 +1288,7 @@ rule sfs_residuals_real:
         res_flat  = temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_flat.npy"),
         meta_json = temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/meta.json"),
         hist_png  = f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_histogram.png",
-
-        # Only required when gram_schmidt=true; otherwise create temp sentinels
-        gs_coeffs = (
-            temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy")
-            if USE_GS
-            else temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/.gs_disabled")
-        ),
-        gs_basis = (
-            f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/residuals_gs_basis.npy"
-            if USE_GS
-            else temp(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}/.gs_basis_disabled")
-        ),
+        **gs_outputs(f"{REAL_INF_ROOT}/sfs_residuals/{{engine}}"),
     params:
         cfg      = EXP_CFG,
         model_py = (

@@ -16,8 +16,8 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Per sim: keep the top-K optimizer restarts of moments, dadi and MomentsLD
-# (rule aggregate_opts -> inferences/sim_<sid>/<fit>/best_fit.pkl), then
-# cleanup_optimization_runs. Run after moments.sh, dadi.sh and MomentsLD.sh.
+# (rule aggregate_opts -> inferences/sim_<sid>/<fit>/best_fit.pkl).
+# Run after moments.sh, dadi.sh and MomentsLD.sh.
 # ---------------------------------------------------------------------------
 
 # -----------------------------
@@ -148,7 +148,7 @@ SMK_ARGS=(
   --rerun-incomplete
   --nolock
   --rerun-triggers mtime
-  --allowed-rules aggregate_opts cleanup_optimization_runs
+  --allowed-rules aggregate_opts
   --keep-going
 )
 (( DRYRUN )) && SMK_ARGS+=(-n)
@@ -167,15 +167,12 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
     TARGETS+=("$tgt")
     is_nonempty_canon "$ROOT/$tgt" || all_ok=0
   done
-  TGT_CLEAN="experiments/${MODEL}/inferences/sim_${sid}/cleanup_done.txt"
-  TARGETS+=("$TGT_CLEAN")
-  [[ -f "$ROOT/$TGT_CLEAN" ]] || all_ok=0
 
   if (( FORCE == 0 && all_ok == 1 )); then
-    echo "SKIP: sim_${sid} has non-empty aggregated fits (${FITS[*]}) and cleanup_done.txt"
+    echo "SKIP: sim_${sid} has non-empty aggregated fits (${FITS[*]})"
     continue
   fi
-  (( FORCE == 1 )) && echo "FORCE=1: rerunning aggregation/cleanup for sim_${sid}"
+  (( FORCE == 1 )) && echo "FORCE=1: rerunning aggregation for sim_${sid}"
 
   echo "Targets: ${TARGETS[*]}"
   snakemake "${SMK_ARGS[@]}" "${TARGETS[@]}" \

@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.plotting_helpers import visualizing_results  # your existing function
+from src.plotting_helpers import visualizing_results, create_color_scheme
 
 
 # ------------------------ IO helpers ------------------------
@@ -373,8 +373,7 @@ def main(args: argparse.Namespace) -> None:
     print(f"[INFO] Outputs → {out_dir}")
     print(f"[INFO] xgboost version = {xgb.__version__}")
 
-    color_shades = pickle.load(open(args.color_shades_file, "rb"))
-    main_colors = pickle.load(open(args.main_colors_file, "rb"))
+    color_shades, main_colors = create_color_scheme(len(exp_cfg["priors"]))  # one hue per parameter
 
     # load data
     X_train_df, feat_order = load_df_pickle(args.X_train_path)
@@ -547,18 +546,18 @@ def main(args: argparse.Namespace) -> None:
         )
 
     # save
-    with open(out_dir / "xgb_mdl_obj.pkl", "wb") as f:
+    with open(out_dir / "mdl_obj.pkl", "wb") as f:
         pickle.dump(xgb_obj, f)
-    with open(out_dir / "xgb_model_error.json", "w") as f:
+    with open(out_dir / "model_error.json", "w") as f:
         json.dump(err, f, indent=4)
-    joblib.dump(model, out_dir / "xgb_model.pkl")
-    with open(out_dir / "xgb_best_params.json", "w") as f:
+    joblib.dump(model, out_dir / "model.pkl")
+    with open(out_dir / "best_params.json", "w") as f:
         json.dump(dict(base_params), f, indent=2)
 
     # plots
     visualizing_results(
         xgb_obj,
-        analysis="xgb_results",
+        analysis="results",
         save_loc=out_dir,
         stages=["training", "validation"],
         color_shades=color_shades,
@@ -568,7 +567,7 @@ def main(args: argparse.Namespace) -> None:
         model=model,
         feature_names=list(feat_order),
         target_names=list(targ_order),
-        out_path=out_dir / "xgb_feature_importances.png",
+        out_path=out_dir / "feature_importances.png",
         top_k=int(args.top_k_features_plot),
     )
 
@@ -592,8 +591,6 @@ if __name__ == "__main__":
     # Configs
     p.add_argument("--experiment_config_path", type=str, required=True)
     p.add_argument("--model_config_path", type=str, default=None)
-    p.add_argument("--color_shades_file", type=str, required=True)
-    p.add_argument("--main_colors_file", type=str, required=True)
 
     # Output dir
     p.add_argument("--model_directory", type=str, default=None)

@@ -5,7 +5,7 @@
 # build_real_prediction_dataset.py) with SHAP, one explainer per target
 # parameter.
 #
-# Works with the same *_mdl_obj.pkl objects predict_real_data.py consumes
+# Works with the same mdl_obj.pkl objects predict_real_data.py consumes
 # (dict with a "model" key). RF/XGB store "model" as a
 # sklearn.multioutput.MultiOutputRegressor -- each target gets its own
 # single-output estimator (model.estimators_[j]), explained with
@@ -41,7 +41,7 @@ from sklearn.multioutput import MultiOutputRegressor
 def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-obj", required=True, type=Path,
-                    help="Trained *_mdl_obj.pkl (RF / XGB / linear).")
+                    help="Trained mdl_obj.pkl from rule train_model (RF / XGB / linear).")
     ap.add_argument("--real-features", required=True, type=Path,
                     help="Normalized real features pkl (real_features_df.pkl).")
     ap.add_argument("--background-features", required=True, type=Path,

@@ -94,7 +94,7 @@ rule simulate:
 
 
 ##############################################################################
-# RULE infer_moments  – custom NLopt Poisson SFS optimisation (moments)
+# RULE infer_engine – one optimizer restart of moments or dadi ({engine}) on the SFS
 ##############################################################################
 rule infer_engine:
     input:
@@ -199,71 +199,6 @@ rule aggregate_opts:
 
         print(f"✅ {fit}: found {diag['n_records']} files, aggregated {diag['n_entries']} entries → {output.pkl}")
         print(f"✅ {fit}: kept top-{TOP_K} opts={sorted(set(best.get('opt_index', [])))}")
-
-# ── CLEANUP RULE: Remove non-top-K optimization runs after all three
-#    engines (dadi, moments, MomentsLD) have finished aggregating. Must wait
-#    on MomentsLD too -- its top-K opt indices (by LD likelihood) don't
-#    necessarily overlap with dadi/moments' (by SFS likelihood), so deleting
-#    a run dir just because it wasn't in the dadi/moments keep-set can throw
-#    away a restart MomentsLD still needed. ─────────────────────────────────
-rule cleanup_optimization_runs:
-    input:
-        dadi       = AGG_FIT.replace("{fit}", "dadi"),
-        moments    = AGG_FIT.replace("{fit}", "moments"),
-        momentsld  = MOMENTSLD_BEST_FIT,
-    output:
-        cleanup_done = f"experiments/{MODEL}/inferences/sim_{{sid}}/cleanup_done.txt"
-    run:
-        import pickle, pathlib, subprocess
-
-        sid = wildcards.sid
-
-        # --- skip conditions ---
-        if NUM_OPTIMS <= 1 or TOP_K >= NUM_OPTIMS:
-            pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
-            pathlib.Path(output.cleanup_done).write_text(
-                f"Cleanup skipped for simulation {sid} (NUM_OPTIMS={NUM_OPTIMS}, TOP_K={TOP_K}).\n"
-            )
-            print(f"✅ cleanup skipped sid={sid}")
-            return
-
-        # --- existing cleanup logic ---
-        with open(input.dadi, "rb") as f:
-            dadi_data = pickle.load(f)
-        with open(input.moments, "rb") as f:
-            moments_data = pickle.load(f)
-        with open(input.momentsld, "rb") as f:
-            momentsld_data = pickle.load(f)
-        momentsld_keep = set((momentsld_data.get("opt_index") or [])[:TOP_K])
-
-        dadi_keep    = set((dadi_data.get("opt_index") or [])[:TOP_K])
-        moments_keep = set((moments_data.get("opt_index") or [])[:TOP_K])
-        keep_indices = dadi_keep | moments_keep | momentsld_keep
-
-        run_root = pathlib.Path(f"experiments/{MODEL}/runs")
-        prefix = f"run_{sid}_"
-
-        cleaned = 0
-        for p in run_root.glob(f"{prefix}*"):
-            if not p.is_dir():
-                continue
-            try:
-                opt = int(p.name.rsplit("_", 1)[1])
-            except Exception:
-                continue
-            if opt in keep_indices:
-                continue
-
-            subprocess.run(["rm", "-rf", str(p)], check=False)
-            cleaned += 1
-
-        pathlib.Path(output.cleanup_done).parent.mkdir(parents=True, exist_ok=True)
-        pathlib.Path(output.cleanup_done).write_text(
-            f"Cleanup completed for simulation {sid}\n"
-            f"Removed {cleaned} optimization directories\n"
-            f"Kept optimizations: {sorted(keep_indices)}\n"
-        )
-
 
 ##############################################################################
 # RULE simulate_window_replicate / chunk_window – one VCF window
@@ -544,18 +479,7 @@ rule sfs_residuals:
         res_flat  = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_flat.npy"),
         meta_json = temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/meta.json"),
         hist_png  = f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_histogram.png",
-
-        # Only required when gram_schmidt=true; otherwise create temp sentinels
-        gs_coeffs = (
-            temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_coeffs.npy")
-            if USE_GS
-            else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_disabled")
-        ),
-        gs_basis = (
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/residuals_gs_basis.npy"
-            if USE_GS
-            else temp(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}/.gs_basis_disabled")
-        ),
+        **gs_outputs(f"experiments/{MODEL}/inferences/sim_{{sid}}/sfs_residuals/{{engine}}"),
     params:
         cfg      = EXP_CFG,
         model_py = (

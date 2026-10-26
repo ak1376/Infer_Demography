@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.plotting_helpers import visualizing_results  # keep using your plotting util
+from src.plotting_helpers import visualizing_results, create_color_scheme
 
 # ---------- minimal helpers ----------
 
@@ -123,8 +123,6 @@ def linear_evaluation(
     y_val_path=None,
     experiment_config_path=None,
     model_config_path=None,
-    color_shades_path=None,
-    main_colors_path=None,
     model_directory=None,
     regression_type="standard",
     alpha=0.0,
@@ -149,8 +147,7 @@ def linear_evaluation(
     print(f"[INFO] Saving outputs to: {model_directory}")
 
     # colors
-    color_shades = pickle.load(open(color_shades_path, "rb"))
-    main_colors = pickle.load(open(main_colors_path, "rb"))
+    color_shades, main_colors = create_color_scheme(len(exp_cfg["priors"]))  # one hue per parameter
 
     # data
     X_train, _ = _load_array_with_names(X_train_path) if X_train_path else (None, None)
@@ -289,18 +286,16 @@ def linear_evaluation(
     _fill_rrmse(y_val, val_preds, "validation")
 
     # save artifacts
-    with open(model_directory / f"linear_mdl_obj_{regression_type}.pkl", "wb") as f:
+    with open(model_directory / "mdl_obj.pkl", "wb") as f:
         pickle.dump(linear_obj, f)
-    with open(model_directory / f"linear_model_error_{regression_type}.json", "w") as f:
+    with open(model_directory / "model_error.json", "w") as f:
         json.dump(rrmse, f, indent=4)
-    joblib.dump(
-        model, model_directory / f"linear_regression_model_{regression_type}.pkl"
-    )
+    joblib.dump(model, model_directory / "model.pkl")
 
     # plots
     visualizing_results(
         linear_obj,
-        f"linear_results_{regression_type}",
+        "results",
         save_loc=model_directory,
         stages=[s for s in ["training", "validation"] if s in features_and_targets],
         color_shades=color_shades,
@@ -325,8 +320,6 @@ if __name__ == "__main__":
     # Configs
     p.add_argument("--experiment_config_path", type=str, required=True)
     p.add_argument("--model_config_path", type=str, default=None)
-    p.add_argument("--color_shades_file", type=str, required=True)
-    p.add_argument("--main_colors_file", type=str, required=True)
 
     # Model
     p.add_argument("--model_directory", type=str, default=None)
@@ -351,8 +344,6 @@ if __name__ == "__main__":
         y_val_path=args.y_val_path,
         experiment_config_path=args.experiment_config_path,
         model_config_path=args.model_config_path,
-        color_shades_path=args.color_shades_file,
-        main_colors_path=args.main_colors_file,
         model_directory=args.model_directory,
         regression_type=args.regression_type,
         alpha=args.alpha,

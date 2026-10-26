@@ -44,6 +44,16 @@ def _resid_vector_fname():
     # which vector do we want to feed into all_inferences.pkl?
     return "residuals_gs_coeffs.npy" if USE_GS else "residuals_flat.npy"
 
+def gs_outputs(out_dir):
+    """Gram-Schmidt residual outputs, declared only when gram_schmidt is on
+    (unpacked into the sfs_residuals / sfs_residuals_real output blocks)."""
+    if not USE_GS:
+        return {}
+    return {
+        "gs_coeffs": temp(f"{out_dir}/residuals_gs_coeffs.npy"),
+        "gs_basis":  f"{out_dir}/residuals_gs_basis.npy",
+    }
+
 
 def _normalize_residual_engines(val):
     # accepts "moments", "dadi", "both", list/tuple
@@ -87,6 +97,13 @@ MODELING_VARIANTS = list(CFG.get("modeling_variants", INFERENCE_VARIANTS))
 _unknown = set(MODELING_VARIANTS) - set(VARIANT_FEATURE_FLAGS)
 if _unknown:
     raise ValueError(f"modeling_variants: unknown {sorted(_unknown)}; choose from {list(VARIANT_FEATURE_FLAGS)}")
+
+# Trained models (rule train_model): one folder per model_key under
+# modeling_<variant>/, each holding mdl_obj.pkl, model_error.json, model.pkl,
+# results.png (+ feature_importances.png for random_forest / xgboost).
+REG_TYPES  = config["linear"]["types"]  # e.g. ["standard","ridge","lasso","elasticnet"]
+MODEL_KEYS = [f"linear_{r}" for r in REG_TYPES] + ["random_forest", "xgboost"]
+TRAINED_MODEL_DIR = f"experiments/{MODEL}/modeling_{{variant}}/{{model_key}}"
 
 wildcard_constraints:
     variant    = "|".join(VARIANT_FEATURE_FLAGS),

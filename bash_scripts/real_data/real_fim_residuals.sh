@@ -19,7 +19,7 @@
 # Rules run: compute_fim_real, sfs_residuals_real
 #
 # Engine lists are config-driven (fim_engines, residual_engines), mirroring
-# compute_fim.sh / the Snakefile's FIM_ENGINES / RESIDUAL_ENGINES.
+# fit_diagnostics.sh / rules/common.smk's FIM_ENGINES / RESIDUAL_ENGINES.
 #
 # NOTE: this stage always fits against the pooled COMBINED_SFS (moments/dadi
 # best_fit under REAL_INF_ROOT) regardless of real_data_analysis.pooling_mode

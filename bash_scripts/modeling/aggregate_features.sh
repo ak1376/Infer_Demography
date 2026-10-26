@@ -25,18 +25,13 @@ DATA_TARGETS=()
 for variant in "${MODELING_VARIANTS[@]}"; do
   DATA_TARGETS+=("experiments/${MODEL}/modeling_${variant}/datasets/features_df.pkl")
 done
-COLOR_TARGETS=(
-  "experiments/${MODEL}/modeling/color_shades.pkl"
-  "experiments/${MODEL}/modeling/main_colors.pkl"
-)
 
 snakemake \
   --snakefile "$SNAKEFILE" \
   --directory "$ROOT" \
   --cores "$SLURM_CPUS_PER_TASK" \
   --nolock --rerun-incomplete \
-  --allowed-rules combine_features make_color_scheme \
-  --forcerun combine_features make_color_scheme \
+  --allowed-rules combine_features \
+  --forcerun combine_features \
   -- \
-  "${DATA_TARGETS[@]}" \
-  "${COLOR_TARGETS[@]}"
+  "${DATA_TARGETS[@]}"

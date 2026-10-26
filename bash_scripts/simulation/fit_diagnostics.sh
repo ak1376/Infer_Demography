@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=sfsres
-#SBATCH --output=logs/sfs_residuals_%A_%a.out
-#SBATCH --error=logs/sfs_residuals_%A_%a.err
+#SBATCH --job-name=fit_diag
+#SBATCH --output=logs/fit_diagnostics_%A_%a.out
+#SBATCH --error=logs/fit_diagnostics_%A_%a.err
 #SBATCH --time=04:00:00
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=4G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
 #SBATCH --partition=kern,preempt,kerngpu
 #SBATCH --account=kernlab
 #SBATCH --requeue
@@ -13,6 +13,14 @@
 
 set -euo pipefail
 mkdir -p logs
+
+# ---------------------------------------------------------------------------
+# Per sim, from the aggregated moments/dadi fits (aggregate_opts.sh):
+#   compute_fim   -> inferences/sim_<sid>/fim/<engine>.fim.npy
+#   sfs_residuals -> inferences/sim_<sid>/sfs_residuals/<engine>/...
+# Both are always computed; use_fim_features / use_residuals only decide
+# whether feature_extraction.py later uses them as model features.
+# ---------------------------------------------------------------------------
 
 # -----------------------------
 # Tunables
@@ -42,11 +50,10 @@ else
   RESID_VECTOR_FNAME="residuals_flat.npy"
 fi
 
-# SFS residuals are always computed for whichever engines the config lists
-# (default: both moments+dadi) -- whether they're later used as a model
-# feature is a separate decision made downstream in feature_extraction.py
-# via --use-residuals.
-mapfile -t ENGINES < <(jq -r '
+# Engines per diagnostic, as in rules/common.smk: FIM_ENGINES (default
+# moments) and RESIDUAL_ENGINES (default moments+dadi).
+mapfile -t FIM_ENGINES < <(jq -r '(.fim_engines // ["moments"]) | if type=="array" then .[] else . end' "$CFG")
+mapfile -t RESID_ENGINES < <(jq -r '
   (.residual_engines // "both") as $r
   | if ($r|type) == "array" then
       ($r | map(select(. == "moments" or . == "dadi")))
@@ -106,7 +113,7 @@ RUN_END=$BATCH_END
 (( RUN_START < SIM_LO )) && RUN_START=$SIM_LO
 (( RUN_END   > SIM_HI )) && RUN_END=$SIM_HI
 
-echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END  engines: ${ENGINES[*]}"
+echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END  FIM: ${FIM_ENGINES[*]}  residuals: ${RESID_ENGINES[*]}"
 
 # -----------------------------
 # Loop over sims in batch
@@ -114,26 +121,33 @@ echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END  engines: ${ENG
 for sid in $(seq "$RUN_START" "$RUN_END"); do
   declare -a TARGETS=()
 
-  for eng in "${ENGINES[@]}"; do
-    fit="$ROOT/experiments/${MODEL}/inferences/sim_${sid}/${eng}/best_fit.pkl"
-    if [[ -f "$fit" ]]; then
-      TARGETS+=("experiments/${MODEL}/inferences/sim_${sid}/sfs_residuals/${eng}/${RESID_VECTOR_FNAME}")
+  INF="experiments/${MODEL}/inferences/sim_${sid}"
+  for eng in "${FIM_ENGINES[@]}"; do
+    if [[ -f "$ROOT/$INF/${eng}/best_fit.pkl" ]]; then
+      TARGETS+=("$INF/fim/${eng}.fim.npy")
     else
-      echo "SKIP sim_${sid} engine=${eng} (missing fit: $fit)"
+      echo "SKIP FIM sim_${sid} engine=${eng} (missing fit)"
+    fi
+  done
+  for eng in "${RESID_ENGINES[@]}"; do
+    if [[ -f "$ROOT/$INF/${eng}/best_fit.pkl" ]]; then
+      TARGETS+=("$INF/sfs_residuals/${eng}/${RESID_VECTOR_FNAME}")
+    else
+      echo "SKIP residuals sim_${sid} engine=${eng} (missing fit)"
     fi
   done
 
   if [[ ${#TARGETS[@]} -eq 0 ]]; then
-    echo "No SFS residual targets for sim_${sid} — nothing to run."
+    echo "No FIM/residual targets for sim_${sid} — nothing to run."
     continue
   fi
 
-  snakemake -j "${SLURM_CPUS_PER_TASK:-1}" \
+  snakemake -j "${SLURM_CPUS_PER_TASK:-2}" \
     --snakefile "$SNAKEFILE" \
     --directory "$ROOT" \
     --rerun-incomplete \
     --nolock \
-    --allowed-rules sfs_residuals \
+    --allowed-rules compute_fim sfs_residuals \
     --keep-going \
     "${TARGETS[@]}" \
     || { echo "Snakemake failed for sid=$sid"; exit 1; }

@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.plotting_helpers import visualizing_results
+from src.plotting_helpers import visualizing_results, create_color_scheme
 
 
 # ------------------------ IO helpers ------------------------
@@ -197,8 +197,8 @@ def main(args):
     X_val = X_val_df.values
     y_val = y_val_df.values
 
-    color_shades = pickle.load(open(args.color_shades_file, "rb"))
-    main_colors = pickle.load(open(args.main_colors_file, "rb"))
+    exp_cfg = json.load(open(args.experiment_config_path))
+    color_shades, main_colors = create_color_scheme(len(exp_cfg["priors"]))  # one hue per parameter
 
     # Decide hyperparams
     user_specified = any(
@@ -285,16 +285,16 @@ def main(args):
     out_dir = Path(args.model_directory)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(out_dir / "random_forest_mdl_obj.pkl", "wb") as f:
+    with open(out_dir / "mdl_obj.pkl", "wb") as f:
         pickle.dump(rf_obj, f)
-    with open(out_dir / "random_forest_model_error.json", "w") as f:
+    with open(out_dir / "model_error.json", "w") as f:
         json.dump(mse_dict, f, indent=4)
-    joblib.dump(rf, out_dir / "random_forest_model.pkl")
+    joblib.dump(rf, out_dir / "model.pkl")
 
     # plots
     visualizing_results(
         rf_obj,
-        "random_forest_results",
+        "results",
         save_loc=out_dir,
         stages=["training", "validation"],
         color_shades=color_shades,
@@ -304,11 +304,11 @@ def main(args):
         model=rf,
         feature_names=feature_order,
         target_names=target_order,
-        out_path=out_dir / "random_forest_feature_importances.png",
+        out_path=out_dir / "feature_importances.png",
         top_k=args.top_k_importances,
     )
 
-    with open(out_dir / "random_forest_best_params.json", "w") as f:
+    with open(out_dir / "best_params.json", "w") as f:
         json.dump(rf_params, f, indent=2)
 
     print("[INFO] Random Forest complete. Artifacts saved to:", out_dir)
@@ -325,8 +325,6 @@ if __name__ == "__main__":
     p.add_argument("--X_val_path", type=str, required=True)
     p.add_argument("--y_val_path", type=str, required=True)
 
-    p.add_argument("--color_shades_file", type=str, required=True)
-    p.add_argument("--main_colors_file", type=str, required=True)
 
     p.add_argument("--model_directory", type=str, required=True)
 
@@ -361,7 +359,7 @@ if __name__ == "__main__":
     p.add_argument("--top_k_importances", type=int, default=20)
 
     # (Optional) config paths passed by Snakemake for provenance/logging
-    p.add_argument("--experiment_config_path", type=str, default=None)
+    p.add_argument("--experiment_config_path", type=str, required=True)
     p.add_argument("--model_config_path", type=str, default=None)
 
     args = p.parse_args()
