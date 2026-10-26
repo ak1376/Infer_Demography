@@ -4,11 +4,15 @@
 # Per-stage entry points: simulation.smk, modeling.smk, real_data.smk.
 ##############################################################################
 include: "rules/common.smk"
+include: "rules/simulation_rules.smk"
+include: "rules/modeling_rules.smk"
+include: "rules/real_data_rules.smk"
 
 ##############################################################################
 # RULE all – final targets the workflow must create
 ##############################################################################
 rule all:
+    default_target: True
     input:
         [
             # ======================================================================
@@ -126,7 +130,3 @@ rule all:
             # expand(f"{REAL_LD_ROOT}/LD_stats/LD_stats_window_{{i}}.pkl", i=WINDOWS),
             # f"{REAL_INF_ROOT}/MomentsLD/best_fit.pkl",
         ]
-
-include: "rules/simulation_rules.smk"
-include: "rules/modeling_rules.smk"
-include: "rules/real_data_rules.smk"

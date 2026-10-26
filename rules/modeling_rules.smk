@@ -3,123 +3,83 @@
 ##############################################################################
 
 ##############################################################################
-# RULE build_sfs_dataset – features=observed SFS, targets=sampled params    #
-# NOT in rule all. Run explicitly:                                           #
-#   snakemake --snakefile Snakefile build_sfs_dataset                       #
+# Modeling-only settings
 ##############################################################################
-rule build_sfs_dataset:
-    input:
-        cfg = EXP_CFG,
-    output:
-        features = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_features_df.pkl",
-        targets  = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_targets_df.pkl",
-        meta     = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_dataset_meta.json",
-    params:
-        sim_dir = SIM_BASEDIR,
-        out_dir = f"experiments/{MODEL}/modeling/sfs_datasets",
-        min_sims = int(CFG.get("build_sfs_dataset_min_sims", 10)),
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/build_sfs_dataset.py \
-            --sim-dir  "{params.sim_dir}" \
-            --config   "{input.cfg}" \
-            --out-dir  "{params.out_dir}" \
-            --min-sims {params.min_sims}
-        """
+# CLI-flag builders for random_forest/xgboost — same optuna/manual-override
+# knobs regardless of which modeling_{variant} the rule instantiates for.
+def _rf_opt_flags():
+    return " ".join([
+        "--use_optuna" if config.get("rf", {}).get("use_optuna", False) else "",
+        f"--n_trials {config['rf']['n_trials']}" if config.get("rf", {}).get("n_trials") is not None else "",
+        f"--optuna_timeout {config['rf']['optuna_timeout']}" if config.get("rf", {}).get("optuna_timeout") is not None else "",
+        f"--optuna_seed {config['rf']['optuna_seed']}" if config.get("rf", {}).get("optuna_seed") is not None else "",
+        f"--final_fit {config['rf']['final_fit']}" if config.get("rf", {}).get("final_fit") is not None else "",
+        f"--n_estimators {config['rf']['n_estimators']}" if config.get("rf", {}).get("n_estimators") is not None else "",
+        f"--max_depth {config['rf']['max_depth']}" if config.get("rf", {}).get("max_depth") is not None else "",
+        f"--min_samples_split {config['rf']['min_samples_split']}" if config.get("rf", {}).get("min_samples_split") is not None else "",
+        f"--min_samples_leaf {config['rf']['min_samples_leaf']}" if config.get("rf", {}).get("min_samples_leaf") is not None else "",
+        f"--max_features {config['rf']['max_features']}" if config.get("rf", {}).get("max_features") is not None else "",
+        f"--max_samples {config['rf']['max_samples']}" if config.get("rf", {}).get("max_samples") is not None else "",
+    ]).strip()
+
+def _xgb_opt_flags():
+    return " ".join([
+        "--use_optuna" if config.get("xgb", {}).get("use_optuna", False) else "",
+        f"--n_trials {config['xgb']['n_trials']}" if config.get("xgb", {}).get("n_trials") is not None else "",
+        f"--optuna_timeout {config['xgb']['optuna_timeout']}" if config.get("xgb", {}).get("optuna_timeout") is not None else "",
+        f"--optuna_seed {config['xgb']['optuna_seed']}" if config.get("xgb", {}).get("optuna_seed") is not None else "",
+        f"--final_fit {config['xgb']['final_fit']}" if config.get("xgb", {}).get("final_fit") is not None else "",
+        f"--early_stopping_rounds {config['xgb']['early_stopping_rounds']}" if config.get("xgb", {}).get("early_stopping_rounds") is not None else "",
+        f"--n_estimators {config['xgb']['n_estimators']}" if config.get("xgb", {}).get("n_estimators") is not None else "",
+        f"--max_depth {config['xgb']['max_depth']}" if config.get("xgb", {}).get("max_depth") is not None else "",
+        f"--learning_rate {config['xgb']['learning_rate']}" if config.get("xgb", {}).get("learning_rate") is not None else "",
+        f"--subsample {config['xgb']['subsample']}" if config.get("xgb", {}).get("subsample") is not None else "",
+        f"--colsample_bytree {config['xgb']['colsample_bytree']}" if config.get("xgb", {}).get("colsample_bytree") is not None else "",
+        f"--min_child_weight {config['xgb']['min_child_weight']}" if config.get("xgb", {}).get("min_child_weight") is not None else "",
+        f"--reg_lambda {config['xgb']['reg_lambda']}" if config.get("xgb", {}).get("reg_lambda") is not None else "",
+        f"--reg_alpha {config['xgb']['reg_alpha']}" if config.get("xgb", {}).get("reg_alpha") is not None else "",
+        f"--top_k_features_plot {config['xgb']['top_k_plot']}" if config.get("xgb", {}).get("top_k_plot") is not None else "",
+    ]).strip()
+
+# Regressors
+REG_TYPES = config["linear"]["types"]  # e.g., ["standard","ridge","lasso","elasticnet"]
+
 
 ##############################################################################
-# RULE prepare_sfs_splits – reuse existing split_indices.json + normalize   #
+# RULE combine_features – one modeling dataset per {variant}                 #
+# (filter, split, normalize). Discovers sims at runtime and skips missing    #
+# ones, so it has no per-sim inputs. Feature set per variant:                #
+# VARIANT_FEATURE_FLAGS in rules/common.smk.                                 #
+# Also writes (undeclared, inference variants only) estimate-vs-truth        #
+# metrics_*.json / *.png and outliers_* reports next to these files.         #
 ##############################################################################
-rule prepare_sfs_splits:
-    input:
-        features  = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_features_df.pkl",
-        targets   = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_targets_df.pkl",
-    output:
-        ntrain_X = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_train_features.pkl",
-        ntrain_y = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_train_targets.pkl",
-        ntune_X  = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_tune_features.pkl",
-        ntune_y  = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_tune_targets.pkl",
-        nval_X   = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_val_features.pkl",
-        nval_y   = f"experiments/{MODEL}/modeling/sfs_datasets/normalized_val_targets.pkl",
-        meta     = f"experiments/{MODEL}/modeling/sfs_datasets/sfs_splits_meta.json",
-    params:
-        out_dir   = f"experiments/{MODEL}/modeling/sfs_datasets",
-        split_idx = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        SPLIT_FLAG=""
-        if [ -f "{params.split_idx}" ]; then
-            SPLIT_FLAG="--split-indices \"{params.split_idx}\""
-        fi
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/prepare_sfs_splits.py \
-            --features  "{input.features}" \
-            --targets   "{input.targets}" \
-            --out-dir   "{params.out_dir}" \
-            $SPLIT_FLAG
-        """
+DATASETS_DIR = f"experiments/{MODEL}/modeling_{{variant}}/datasets"
 
-##############################################################################
-# RULE combine_features – build datasets (filter, split, normalize)          #
-# (robust: discovers existing sims at runtime; skips missing)                #
-##############################################################################
 rule combine_features:
     input:
         cfg  = EXP_CFG
-    wildcard_constraints:
-        variant = r"(w|wo)_FIM_(w|wo)_SFSresids"
     output:
-        # full post-filtering data
-        features_df   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/features_df.pkl",
-        targets_df    = f"experiments/{MODEL}/modeling_{{variant}}/datasets/targets_df.pkl",
-
-        # raw splits (temp: modeling rules use normalized_* variants)
-        train_X       = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/train_features.pkl"),
-        train_y       = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/train_targets.pkl"),
-        tune_X        = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/tune_features.pkl"),
-        tune_y        = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/tune_targets.pkl"),
-        val_X         = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/val_features.pkl"),
-        val_y         = temp(f"experiments/{MODEL}/modeling_{{variant}}/datasets/val_targets.pkl"),
-
-        # normalized splits
-        ntrain_X      = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_features.pkl",
-        ntrain_y      = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_train_targets.pkl",
-        ntune_X       = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_features.pkl",
-        ntune_y       = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_tune_targets.pkl",
-        nval_X        = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_features.pkl",
-        nval_y        = f"experiments/{MODEL}/modeling_{{variant}}/datasets/normalized_val_targets.pkl",
-
-        # split indices + plots/metrics
-        split_idx     = f"experiments/{MODEL}/modeling_{{variant}}/datasets/split_indices.json",
-        scatter_png   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/features_scatterplot.png",
-        mse_val_png   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/mse_bars_val_normalized.png",
-        mse_train_png = f"experiments/{MODEL}/modeling_{{variant}}/datasets/mse_bars_train_normalized.png",
-        metrics_all   = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_all.json",
-        metrics_dadi  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_dadi.json",
-        metrics_moments = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_moments.json",
-        metrics_momentsLD = f"experiments/{MODEL}/modeling_{{variant}}/datasets/metrics_momentsLD.json",
-        outliers_tsv  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_removed.tsv",
-        outliers_txt  = f"experiments/{MODEL}/modeling_{{variant}}/datasets/outliers_preview.txt",
-        empirical_norm_stats = f"experiments/{MODEL}/modeling_{{variant}}/datasets/empirical_norm_stats.json"
+        features_df = f"{DATASETS_DIR}/features_df.pkl",
+        targets_df  = f"{DATASETS_DIR}/targets_df.pkl",
+        split_idx   = f"{DATASETS_DIR}/split_indices.json",
+        norm_stats  = f"{DATASETS_DIR}/empirical_norm_stats.json",
+        ntrain_X    = f"{DATASETS_DIR}/normalized_train_features.pkl",
+        ntrain_y    = f"{DATASETS_DIR}/normalized_train_targets.pkl",
+        ntune_X     = f"{DATASETS_DIR}/normalized_tune_features.pkl",
+        ntune_y     = f"{DATASETS_DIR}/normalized_tune_targets.pkl",
+        nval_X      = f"{DATASETS_DIR}/normalized_val_features.pkl",
+        nval_y      = f"{DATASETS_DIR}/normalized_val_targets.pkl",
     params:
-        script = "snakemake_scripts/feature_extraction.py",
         outdir = f"experiments/{MODEL}/modeling_{{variant}}",
-        fim_flag   = lambda w: "true" if _variant_flags(w.variant)[0] else "false",
-        resid_flag = lambda w: "true" if _variant_flags(w.variant)[1] else "false",
+        flags  = lambda w: VARIANT_FEATURE_FLAGS[w.variant],
     threads: 1
     shell:
         r"""
         PYTHONPATH={workflow.basedir} \
-        python "{params.script}" \
+        python snakemake_scripts/feature_extraction.py \
             --experiment-config "{input.cfg}" \
             --out-dir "{params.outdir}" \
-            --use-fim-features {params.fim_flag} \
-            --use-residuals {params.resid_flag}
+            {params.flags}
         """
 
 ##############################################################################
@@ -306,77 +266,3 @@ rule modeling_all:
             f"experiments/{MODEL}/modeling_{{variant}}/xgboost/xgb_mdl_obj.pkl",
             variant=MODELING_VARIANTS,
         ),
-
-##############################################################################
-# RAW-FEATURES PIPELINE: observed SFS + MomentsLD means → ensemble          #
-# Not in rule all. Not built via combine_features/prepare_sfs_splits (see   #
-# their variant wildcard_constraints) — build_raw_features_dataset and      #
-# prepare_raw_features_splits below produce this variant's dataset files    #
-# directly, but from there it's just modeling_{variant} with               #
-# variant="raw_features", so the same linear_regression/random_forest/      #
-# xgboost rules train it. Run explicitly, e.g.:                             #
-#   snakemake --snakefile Snakefile "experiments/<model>/modeling_raw_features/xgboost/xgb_mdl_obj.pkl"
-##############################################################################
-RAW_FEAT_DIR = f"experiments/{MODEL}/modeling_raw_features/datasets"
-RAW_MDL_DIR  = f"experiments/{MODEL}/modeling_raw_features"
-
-rule build_raw_features_dataset:
-    input:
-        cfg     = EXP_CFG,
-        mv_pkls = expand(
-            f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/means.varcovs.pkl",
-            sid=SIM_IDS,
-        ),
-    output:
-        features = f"{RAW_FEAT_DIR}/raw_features_df.pkl",
-        targets  = f"{RAW_FEAT_DIR}/raw_targets_df.pkl",
-        meta     = f"{RAW_FEAT_DIR}/raw_dataset_meta.json",
-    params:
-        sim_dir  = SIM_BASEDIR,
-        inf_dir  = f"experiments/{MODEL}/inferences",
-        out_dir  = RAW_FEAT_DIR,
-        min_sims = int(CFG.get("build_sfs_dataset_min_sims", 10)),
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/build_raw_features_dataset.py \
-            --sim-dir       "{params.sim_dir}" \
-            --inference-dir "{params.inf_dir}" \
-            --config        "{input.cfg}" \
-            --out-dir       "{params.out_dir}" \
-            --min-sims      {params.min_sims}
-        """
-
-rule prepare_raw_features_splits:
-    input:
-        features  = f"{RAW_FEAT_DIR}/raw_features_df.pkl",
-        targets   = f"{RAW_FEAT_DIR}/raw_targets_df.pkl",
-        split_idx = f"experiments/{MODEL}/modeling/datasets/split_indices.json",
-    output:
-        ntrain_X = f"{RAW_FEAT_DIR}/normalized_train_features.pkl",
-        ntrain_y = f"{RAW_FEAT_DIR}/normalized_train_targets.pkl",
-        ntune_X  = f"{RAW_FEAT_DIR}/normalized_tune_features.pkl",
-        ntune_y  = f"{RAW_FEAT_DIR}/normalized_tune_targets.pkl",
-        nval_X   = f"{RAW_FEAT_DIR}/normalized_val_features.pkl",
-        nval_y   = f"{RAW_FEAT_DIR}/normalized_val_targets.pkl",
-        meta     = f"{RAW_FEAT_DIR}/raw_splits_meta.json",
-    params:
-        out_dir  = RAW_FEAT_DIR,
-    threads: 1
-    shell:
-        r"""
-        set -euo pipefail
-        PYTHONPATH={workflow.basedir} \
-        python snakemake_scripts/prepare_sfs_splits.py \
-            --features      "{input.features}" \
-            --targets       "{input.targets}" \
-            --out-dir       "{params.out_dir}" \
-            --split-indices "{input.split_idx}"
-        """
-
-# raw_features model training is handled by the generic linear_regression /
-# random_forest / xgboost rules above with variant="raw_features" — no
-# separate rules needed now that RAW_MDL_DIR follows the modeling_{variant}
-# convention.

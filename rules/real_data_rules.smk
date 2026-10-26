@@ -2,6 +2,243 @@
 # Real data: VCF prep -> SFS/LD inference -> prediction with trained models
 ##############################################################################
 
+##############################################################################
+# Real-data-only settings and paths
+##############################################################################
+NUM_REAL_OPTIMS = int(CFG.get("num_optimizations", 3))
+
+USE_GPU_LD = CFG.get("use_gpu_ld", False)
+
+# Optional real-data region trim (per-chrom), e.g. to drop centromere/telomere-
+# proximal ends: config_files/*.json -> "real_data_analysis": {"trim_region":
+# {"Chr3L": [447386, 18392988]}}. Keyed by chrom so multiple arms can carry
+# independent bounds. Absent -> the whole arm (see real_vcf_for_chrom below).
+REAL_DATA_CFG = CFG.get("real_data_analysis", {})
+REAL_TRIM_REGION = {
+    c: (int(v[0]), int(v[1]))
+    for c, v in REAL_DATA_CFG.get("trim_region", {}).items()
+}
+
+# All real-data folder names come from src/real_paths.py (shared with the bash
+# drivers): short names built from the settings that vary between runs, with
+# the rest (exact trim coordinates, r-bins, pairing seed) in a settings.json
+# inside each folder.
+from src.real_paths import real_paths, check_settings, write_settings, PSEUDODIPLOID_SEED
+RP = real_paths(CFG, CFG["demographic_model"])
+
+# Per-arm input VCF, built from the original DPGP2 VCF (real_data_analysis.
+# original_vcf, a "{chrom}" path pattern; read-only) by rule make_real_vcf.
+# Derived output only -- never written next to the raw data.
+REAL_ORIGINAL_VCF = REAL_DATA_CFG.get("original_vcf")
+
+def _original_vcf(w):
+    if not REAL_ORIGINAL_VCF:
+        raise ValueError("real_data_analysis.original_vcf is not set in the experiment config")
+    return REAL_ORIGINAL_VCF.format(chrom=w.chrom)
+REAL_VCF_DIR = "real_data_analysis/data/real_vcf"
+
+def real_vcf_for_chrom(chrom):
+    """Input VCF for this chrom, tagged with its trim region (or "whole")."""
+    rng = REAL_TRIM_REGION.get(chrom)
+    region = f"trim{rng[0]}-{rng[1]}" if rng else "whole"
+    return f"{REAL_VCF_DIR}/{chrom}.{region}.vcf.gz"
+
+# real_data_analysis.sfs_projection, e.g. {"CO": 9, "FR": 8}: haplotypes per
+# population the SFS is projected to, so sites with a few missing flies still
+# count. Absent -> full sample size (any site with a missing fly is skipped).
+REAL_SFS_PROJECTION = REAL_DATA_CFG.get("sfs_projection") or {}
+
+# Make sure these match files that actually exist in your repo
+DROSO_BASE_DIR   = RP["DROSO_BASE_DIR"]   # region-independent inputs (popfile, pairing, genetic maps)
+DROSO_DIR        = RP["DROSO_DIR"]        # processed data: drosophila_trimmed/ (or drosophila/ when untrimmed)
+GENMAP_DIR       = RP["GENMAP_DIR"]       # {GENMAP_DIR}/{chrom}/genetic_map.txt (Comeron, region/model-independent)
+AUTOSOMES        = ["Chr2L", "Chr2R", "Chr3L", "Chr3R"]          # all autosomal arms (ChrX excluded: not an autosome)
+ANCESTRAL_DIR    = "drosophila_data/dpgp_ancestor"                        # relative to repo root, alongside drosophila_data/data/
+
+# popfile.txt (sample->population map) doesn't depend on the genomic region
+# analyzed, so it stays on the untagged base dir -- otherwise every new
+# trim_region tag would need its own copy of an identical file.
+REAL_POPFILE     = f"{DROSO_BASE_DIR}/popfile.txt"
+# Pseudo-diploid pairing of the haploid samples (for MomentsLD). Region-
+# independent like popfile.txt, so every chrom/trim uses the same pairs.
+PSEUDODIPLOID_PAIRS   = RP["PSEUDODIPLOID_PAIRS"]     # tagged .excl-<ids> when real_data_analysis.exclude_samples is set
+PSEUDODIPLOID_POPFILE = RP["PSEUDODIPLOID_POPFILE"]
+DIPLOID_SUFFIX        = RP["DIPLOID_SUFFIX"]          # "" or ".excl-<ids>" in the diploid VCF names
+SFS_SUFFIX            = RP["SFS_SUFFIX"]              # "" or ".excl-<ids>" in the SFS names (same exclude_samples)
+EXCLUDE_SAMPLES       = RP["EXCLUDE_SAMPLES"]
+COMBINED_SFS     = f"{DROSO_DIR}/combined/autosomes.unfolded{SFS_SUFFIX}.sfs.pkl"     # summed autosomal SFS; used by SFS inference
+COMBINED_SFS_META = f"{DROSO_DIR}/combined/autosomes.unfolded{SFS_SUFFIX}.sfs.meta.json"  # summed sequence_length across AUTOSOMES
+
+# Per-chromosome path helpers (by-chromosome layout)
+# Phased (a|b) pseudo-diploids: LD stats come from the two known haplotypes.
+def polarized_diploid_vcf(chrom):  return f"{DROSO_DIR}/{chrom}/polarized.diploidGT{DIPLOID_SUFFIX}.phased.vcf.gz"
+def per_chrom_sfs(chrom):          return f"{DROSO_DIR}/{chrom}/unfolded{SFS_SUFFIX}.sfs.pkl"
+def per_chrom_sfs_meta(chrom):     return f"{DROSO_DIR}/{chrom}/unfolded{SFS_SUFFIX}.sfs.meta.json"
+def ancestral_fasta(chrom):        return f"{ANCESTRAL_DIR}/{chrom.replace('Chr', 'chr', 1)}.q30.fa"
+
+# Real-data prediction needs inference features, so raw_* variants are skipped there.
+REAL_VARIANTS = [v for v in MODELING_VARIANTS if v in INFERENCE_VARIANTS]
+
+# Which arm(s) the real-data Moments-LD chain runs on, and at what window
+# size/count, are config-driven so this can be flipped between e.g. Chr3L-only
+# and pooled Chr2L+Chr3L without editing the Snakefile. Deliberately a NEW,
+# separate config key from the top-level "num_windows" (used only by the
+# simulated-data windowing path above) -- the two must not be conflated.
+# num_windows accepts a fixed int (same value applied to every configured arm)
+# or the literal string "auto" (per-arm count = arm_span // window_size_bp,
+# runtime-determined since the actual VCF POS span isn't known until read --
+# mirrors godambe_correction_LRT/Snakefile's `checkpoint tile_nonoverlap`).
+# Overlap vs. non-overlap is never chosen explicitly: split_vcf_windows.py's
+# existing sliding-window formula produces whichever naturally falls out of
+# (window_size, num_windows, actual span) -- e.g. today's Chr3L defaults
+# (10 Mb, 100) yield overlapping windows because 100x10Mb can't fit
+# non-overlapping in a ~28Mb arm; "auto" at a smaller window_size yields
+# non-overlapping windows because the count is chosen to fit exactly.
+# Any experiment config JSON without this block falls back to arms=["Chr3L"],
+# window_size_bp=10_000_000, num_windows=100 -- byte-identical to the
+# pre-existing hardcoded single-arm behavior.
+REAL_ARMS       = REAL_DATA_CFG.get("arms", ["Chr3L"])
+# "pooled" (default, existing behavior): every configured arm's LD windows are
+# flattened together (materialize_real_ld_stats) and fit as ONE combined
+# MomentsLD model. "individual": each arm keeps its own windows/LD_stats
+# (already arm-separated upstream) AND its own means/varcovs/bootstrap/
+# optimization -- see aggregate_ld_windows_real_by_arm/infer_momentsld_real_by_arm/
+# aggregate_opts_momentsld_real_by_arm below. Nothing is combined across arms
+# in "individual" mode until/unless you explicitly request the pooled target.
+REAL_POOLING_MODE = REAL_DATA_CFG.get("pooling_mode", "pooled")
+if REAL_POOLING_MODE not in ("pooled", "individual"):
+    raise ValueError(f'real_data_analysis.pooling_mode must be "pooled" or "individual", got {REAL_POOLING_MODE!r}')
+REAL_WINDOW_BP  = int(REAL_DATA_CFG.get("window_size_bp", 10_000_000))
+_raw_real_nw    = REAL_DATA_CFG.get("num_windows", 100)
+REAL_NUM_WINDOWS_MODE = "auto" if str(_raw_real_nw).lower() == "auto" else int(_raw_real_nw)
+# MomentsLD_real_data.py always needs SOME N_ref to satisfy resolve_n_ref(),
+# but only actually USES it for rho-scaling when momentsld_use_scaled_units
+# is True -- in absolute-units mode (the current default), rho is rescaled
+# from each candidate's own N_ANC instead, so N_ref is otherwise vestigial.
+# When scaled units are off, infer_momentsld_real(_by_arm) skip the
+# moments/dadi seed fit entirely and pass a placeholder --n-ref instead, so
+# MomentsLD can run standalone without requiring moments/dadi to have been
+# fit first.
+REAL_USE_SCALED_UNITS = bool(CFG.get("momentsld_use_scaled_units", True))
+# MomentsLD_real_data.py only reads the moments SFS fit to anchor N_ref (scaled
+# units) or to pin a fixed_parameters entry set to "moments_best"; otherwise
+# the real MomentsLD rules don't wait on the SFS fit at all.
+MOMENTSLD_NEEDS_SFS_FIT = REAL_USE_SCALED_UNITS or any(
+    v == "moments_best" for v in CFG.get("fixed_parameters", {}).values()
+)
+def _momentsld_seed_flag(w, input):
+    if not MOMENTSLD_NEEDS_SFS_FIT:
+        return "--n-ref 1.0"
+    flag = f'--sfs-best-fit-pkl "{input.sfs_best}"'
+    return flag if REAL_USE_SCALED_UNITS else f"{flag} --n-ref 1.0"
+# LD-run name from arms + window + exclusions, e.g. "Chr3L_100kb" (see
+# src/real_paths.py). REAL_LD_ENGINE names the pooled MomentsLD fit subdir,
+# REAL_LD_ENGINE_ARM the per-arm one (arm is already in that path).
+REAL_LD_ENGINE     = RP["REAL_LD_ENGINE"]
+REAL_LD_ENGINE_ARM = RP["REAL_LD_ENGINE_ARM"]
+
+# Real-data LD windows/LD_stats/aggregated means+varcovs are pure functions of
+# the VCF data (arms, window size, r_bins) -- not of which demographic model
+# you're fitting -- so this lives under DROSO_DIR (shared across every model)
+# instead of experiments/{MODEL}/...: switching MODEL never re-triggers the
+# window split or the (GPU-bound) per-window LD computation. The MomentsLD
+# *fit itself* (aggregate_opts_momentsld_real's best_fit.pkl) is genuinely
+# model-specific and lives under REAL_INF_ROOT instead -- see that rule below.
+REAL_LD_ROOT = RP["REAL_LD_ROOT"]   # {DROSO_DIR}/ld/{REAL_LD_NAME}
+# Real-data LD always converts bp -> genetic distance with the Comeron (R5/dm3)
+# recombination map (build_genetic_map_real turns this into GENMAP_DIR files).
+COMERON_XLSX       = "drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xlsx"  # input data (like the VCFs), not a pipeline output
+# infer_engine_real/aggregate_opts_engine_real fit COMBINED_SFS, which is
+# itself trim-tagged (built under DROSO_DIR) -- so these fit outputs need the
+# same tag, otherwise a trimmed run would silently overwrite the full-arm
+# moments/dadi best_fit.pkl already sitting here. Untagged when trim_region
+# is unset, matching every path above.
+REAL_FIT_ROOT = RP["REAL_FIT_ROOT"]   # experiments/{MODEL}/real_trimmed (or real_untrimmed)
+REAL_RUN_ROOT = RP["REAL_RUN_ROOT"]
+REAL_INF_ROOT = RP["REAL_INF_ROOT"]
+
+# Single-chromosome variants of REAL_RUN_ROOT/REAL_INF_ROOT (as opposed to the
+# combined-autosome COMBINED_SFS used by infer_engine_real above). {chrom} is
+# a real Snakemake wildcard here (double-braced so the f-string leaves it
+# literal), constrained below to Chr(2L|2R|3L|3R).
+REAL_RUN_ROOT_CHROM = RP["REAL_RUN_ROOT_CHROM"]
+REAL_INF_ROOT_CHROM = RP["REAL_INF_ROOT_CHROM"]
+
+# Number of top replicates the real moments/dadi aggregation keeps.
+# Must match the rep count the trained model was built with (moments_*_rep_0..N-1),
+# i.e. the sim-side TOP_K -- defaults to TOP_K unless overridden.
+REAL_TOP_K    = int(CFG.get("real_top_k", TOP_K))
+
+# ── Real-data prediction (push real fits through a trained model) ───────────
+# Generalized over {variant} (the same MODELING_VARIANTS the sim pipeline
+# trains) instead of pinning to a single modeling dir via a
+# real_predict_modeling_dir config override -- so real-data predictions can
+# be compared with/without FIM and SFS-residual features. Each variant's
+# outputs live under their own prediction_{variant}/ dir.
+REAL_PRED_ROOT = f"{REAL_FIT_ROOT}/prediction_{{variant}}"
+
+def _real_modeling_dir(variant):
+    return f"experiments/{MODEL}/modeling_{variant}"
+
+def _real_train_features(variant):
+    return f"{_real_modeling_dir(variant)}/datasets/features_df.pkl"
+
+def _real_empirical_norm_stats(variant):
+    return f"{_real_modeling_dir(variant)}/datasets/empirical_norm_stats.json"
+
+def _real_norm_train_features(variant):
+    return f"{_real_modeling_dir(variant)}/datasets/normalized_train_features.pkl"
+
+# model_key wildcard -> trained *_mdl_obj.pkl path, for a given variant
+def _real_model_objs(variant):
+    d = _real_modeling_dir(variant)
+    return {
+        "random_forest":     f"{d}/random_forest/random_forest_mdl_obj.pkl",
+        "xgboost":           f"{d}/xgboost/xgb_mdl_obj.pkl",
+        "linear_standard":   f"{d}/linear_standard/linear_mdl_obj_standard.pkl",
+        "linear_ridge":      f"{d}/linear_ridge/linear_mdl_obj_ridge.pkl",
+        "linear_lasso":      f"{d}/linear_lasso/linear_mdl_obj_lasso.pkl",
+        "linear_elasticnet": f"{d}/linear_elasticnet/linear_mdl_obj_elasticnet.pkl",
+    }
+
+# model_key set is the same across variants -- any variant's keys will do.
+REAL_MODEL_KEYS = list(_real_model_objs(MODELING_VARIANTS[0]).keys())
+
+# Model-calibration check (posterior-predictive): simulate at the real-data
+# fitted params, one job per (variant, model_key, rep) so replicates can run
+# as parallel SLURM array tasks (see bash_scripts/simulation/calibration_simulate.sh) --
+# each array task builds just its own replicate_{rep} target.
+CALIBRATION_ROOT = f"{REAL_FIT_ROOT}/calibration_{{variant}}/{{model_key}}/replicate_{{rep}}"
+NUM_CALIBRATION_REPLICATES = int(CFG.get("calibration_n_replicates", 20))
+CALIBRATION_REPS = list(range(NUM_CALIBRATION_REPLICATES))
+
+wildcard_constraints:
+    chrom      = r"Chr(2L|2R|3L|3R|X)",
+    arm        = r"Chr(2L|2R|3L|3R|X)",
+    start      = r"\d+",
+    end        = r"\d+",
+    # TEMPORARY: widened to also allow the raw dadi/moments/momentsLD fits
+    # (not just trained ML model keys) as calibration_simulate/calibration_ppc/
+    # calibration_ld_ppc model_key values, so those PPC checks can run against
+    # the direct SFS/LD fit for comparison against the ML surrogate's PPC.
+    # Revert to just REAL_MODEL_KEYS once that comparison is done.
+    model_key  = "|".join(REAL_MODEL_KEYS) + "|dadi|moments|momentsLD",
+    rep        = r"\d+",
+
+# Refuse to reuse a real-data folder whose settings.json disagrees with the
+# current config (e.g. trim coordinates changed but the folder name didn't);
+# settings.json is written into whichever of these folders a (non-dry) run
+# actually created.
+REAL_FOLDER_SETTINGS = real_paths(CFG, CFG["demographic_model"], r_bins=R_BINS_STR)["_settings"]
+check_settings(REAL_FOLDER_SETTINGS)
+
+onsuccess:
+    write_settings(REAL_FOLDER_SETTINGS)
+
+onerror:
+    write_settings(REAL_FOLDER_SETTINGS)
+
+
 
 ##############################################################################
 # RULE make_real_vcf  (per-chromosome)

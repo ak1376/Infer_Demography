@@ -165,11 +165,12 @@ def normalise_df(
 
 def empirical_stats_for_prefixes(
     df: pd.DataFrame,
-    prefixes: tuple[str, ...] = ("SFSres_", "FIM_element_"),
+    prefixes: tuple[str, ...] = ("SFSres_", "FIM_element_", "sfs_", "ld_"),
 ) -> tuple[Dict[str, float], Dict[str, float]]:
     """
     Per-column empirical mean/std for columns starting with any of `prefixes`
-    (SFSres_*/FIM_element_* -- neither is a tool/param/rep column, so
+    (SFSres_*/FIM_element_*, and the raw-variant sfs_*/ld_* columns -- none
+    is a tool/param/rep column, so
     normalise_df's prior-based path never touches them otherwise). Compute
     this from the training split only, then reuse the same stats for
     tune/val/real-data rows so everything shares one scale.
@@ -718,6 +719,62 @@ class DatasetBuildConfig:
     seed: int = 42
     train_pct: float = 0.8
     tune_pct: float = 0.1
+    # "inference" | "raw_sfs" | "raw_sfs_ld" -- see raw_feature_row()
+    feature_source: str = "inference"
+
+
+def _sfs_interior(sfs) -> np.ndarray:
+    """Flattened SFS without the fixed/monomorphic edge entries on any axis."""
+    arr = np.asarray(sfs, dtype=float)  # masked entries -> 0
+    return arr[tuple(slice(1, -1) for _ in range(arr.ndim))].flatten()
+
+
+# MomentsLD means are normalized by population 0 (moments.LD's default
+# normalization=0), so these two stats are identically 1 -- no information.
+_LD_NORMALIZATION_STATS = {"pi2_0_0_0_0", "H_0_0"}
+
+
+def _ld_means_named(mv: dict) -> Dict[str, float]:
+    """
+    MomentsLD means as {name: value}: ld_b<bin>_<stat> for each r-bin's LD
+    stats, then ld_<stat> for the final heterozygosity block. Drops the
+    normalization stats (constant 1).
+    """
+    ld_stats, h_stats = mv["stats"]
+    *bin_means, h_means = mv["means"]
+    out: Dict[str, float] = {}
+    for b, means in enumerate(bin_means):
+        for stat, v in zip(ld_stats, means):
+            if stat not in _LD_NORMALIZATION_STATS:
+                out[f"ld_b{b:02d}_{stat}"] = float(v)
+    for stat, v in zip(h_stats, h_means):
+        if stat not in _LD_NORMALIZATION_STATS:
+            out[f"ld_{stat}"] = float(v)
+    return out
+
+
+def raw_feature_row(
+    sim_dir: Path, inf_dir: Path, *, with_ld: bool
+) -> Dict[str, float] | None:
+    """
+    Baseline (no-inference) features for one simulation: the observed SFS
+    interior as sfs_<i>, plus (with_ld) the MomentsLD means (see
+    _ld_means_named). None if an input is missing or non-finite.
+    """
+    sfs_path = sim_dir / "SFS.pkl"
+    mv_path = inf_dir / "MomentsLD" / "means.varcovs.pkl"
+    if not sfs_path.exists() or (with_ld and not mv_path.exists()):
+        return None
+
+    # zero-padded so build_feature_target_tables' column sort keeps numeric order
+    sfs = _sfs_interior(load_pickle(sfs_path))
+    row = {f"sfs_{i:04d}": float(v) for i, v in enumerate(sfs)}
+    if with_ld:
+        row.update(_ld_means_named(load_pickle(mv_path)))
+
+    if not np.all(np.isfinite(list(row.values()))):
+        return None
+    return row
 
 
 def build_feature_target_tables(
@@ -744,15 +801,29 @@ def build_feature_target_tables(
 
         truth_raw = pickle.load(truth_pickle.open("rb"))
         truth = dict(truth_raw)  # don't mutate original object
-        data = pickle.load(inf_pickle.open("rb")) if inf_pickle.exists() else {}
 
         sim_dir = sim_basedir / f"{sid}"
         cov = read_bgs_target_coverage_frac(sim_dir)
 
-        row: Dict[str, float] = {}
-
         # ---- BGS coverage (feature + target)
         truth[BGS_COVERAGE_COL] = float(cov)
+
+        # ---- raw-feature baseline: no inference results involved
+        if cfg.feature_source != "inference":
+            raw_row = raw_feature_row(
+                sim_dir,
+                infer_basedir / f"sim_{sid}",
+                with_ld=cfg.feature_source == "raw_sfs_ld",
+            )
+            if raw_row is None:
+                continue
+            feature_rows.append(raw_row)
+            target_rows.append(truth)
+            index.append(sid)
+            continue
+
+        data = pickle.load(inf_pickle.open("rb")) if inf_pickle.exists() else {}
+        row: Dict[str, float] = {}
 
         # ---- inferred params
         for tool in TOOLS_DEFAULT:
@@ -805,23 +876,23 @@ def split_indices(
     train_pct: float,
     tune_pct: float,
 ) -> Dict[str, np.ndarray]:
+    """
+    Assign each sim to train/tune/val from a seeded draw keyed by its own sim
+    id, so a sim lands in the same split in every modeling variant no matter
+    which other sims were filtered out. Split sizes are therefore
+    approximately (not exactly) train_pct / tune_pct / rest.
+    """
     if train_pct + tune_pct >= 1.0:
         raise ValueError("train_pct + tune_pct must be < 1.0")
 
-    rng = np.random.default_rng(int(seed))
-    n_rows = len(index)
-    perm = rng.permutation(n_rows)
-
-    n_train = int(round(train_pct * n_rows))
-    n_tune = int(round(tune_pct * n_rows))
-    n_train = min(n_train, n_rows)
-    n_tune = min(n_tune, max(0, n_rows - n_train))
-
-    train_idx = index[perm[:n_train]]
-    tune_idx = index[perm[n_train : n_train + n_tune]]
-    val_idx = index[perm[n_train + n_tune :]]
-
-    return {"train_idx": train_idx, "tune_idx": tune_idx, "val_idx": val_idx}
+    u = np.array(
+        [np.random.default_rng([int(seed), int(sid)]).random() for sid in index]
+    )
+    return {
+        "train_idx": index[u < train_pct],
+        "tune_idx": index[(u >= train_pct) & (u < train_pct + tune_pct)],
+        "val_idx": index[u >= train_pct + tune_pct],
+    }
 
 
 def write_dataset_pickles(
@@ -845,17 +916,8 @@ def write_dataset_pickles(
     }
     dump_json(split_indices_json, datasets_dir / "split_indices.json", indent=2)
 
-    # raw splits
-    for name, idx in split.items():
-        dump_pickle(
-            features_df.loc[idx],
-            datasets_dir / f"{name.replace('_idx','')}_features.pkl",
-        )
-        dump_pickle(
-            targets_df.loc[idx], datasets_dir / f"{name.replace('_idx','')}_targets.pkl"
-        )
-
-    # normalized splits
+    # normalized splits (the un-normalized ones are just features_df/targets_df
+    # indexed by split_indices.json, so they aren't written separately)
     for name, idx in split.items():
         dump_pickle(
             features_norm_df.loc[idx],
@@ -951,6 +1013,7 @@ def build_modeling_datasets(
     preview_rows: int = -1,
     use_fim_features_override: bool | None = None,
     use_residuals_override: bool | None = None,
+    feature_source: str = "inference",
     exclude_sims: set | None = None,
     only_sims: set | None = None,
 ) -> Path:
@@ -999,6 +1062,7 @@ def build_modeling_datasets(
         seed=seed,
         train_pct=train_pct,
         tune_pct=tune_pct,
+        feature_source=feature_source,
     )
 
     feat_df, targ_df = build_feature_target_tables(
@@ -1056,6 +1120,11 @@ def build_modeling_datasets(
         targets_norm_df=targ_norm_df,
         split=split,
     )
+
+    # Per-tool estimate-vs-truth metrics/plots only exist for inference
+    # features; the raw-feature baselines have no tool estimates to score.
+    if feature_source != "inference":
+        return datasets_dir
 
     write_metrics_and_plots(
         datasets_dir=datasets_dir,

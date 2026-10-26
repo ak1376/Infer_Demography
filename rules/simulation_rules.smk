@@ -3,6 +3,79 @@
 ##############################################################################
 
 ##############################################################################
+# Simulation-only settings and paths
+##############################################################################
+# External scripts
+SIM_SCRIPT   = "snakemake_scripts/simulation.py"
+WIN_SCRIPT   = "snakemake_scripts/simulate_window_replicate.py"
+LD_SCRIPT    = "snakemake_scripts/compute_ld_window.py"
+
+NUM_WINDOWS   = int(CFG.get("num_windows", 100))
+
+# window_mode: "replicates" (default) independently re-simulates each of the
+# NUM_WINDOWS windows for a sid at chunk_genome_length bp each
+# (simulate_one_window_replicate, one msprime/SLiM run per window). "chunked"
+# simulates ONE original tree sequence per sid at genome_length bp and chops
+# it into NUM_WINDOWS overlapping windows of chunk_genome_length bp each via
+# src/windowing.py::window_trees. chunk_genome_length falls back to
+# genome_length when not set in the config (today's un-chunked behavior).
+WINDOW_MODE = CFG.get("window_mode", "replicates")
+if WINDOW_MODE not in ("replicates", "chunked"):
+    raise ValueError(f"window_mode must be 'replicates' or 'chunked', got {WINDOW_MODE!r}")
+
+WINDOWS = range(NUM_WINDOWS)
+OPTIMS  = list(range(NUM_OPTIMS))
+
+# Canonical path builders
+SIM_BASEDIR = f"experiments/{MODEL}/simulations"
+RUN_DIR     = lambda sid, opt: f"experiments/{MODEL}/runs/run_{sid}_{opt}"
+LD_ROOT     = f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD"
+
+wildcard_constraints:
+    frac_tag   = r"thin\d+|n\d+",
+
+# Optional pruning — set "prune_mode": "fraction"|"count" and
+# "prune_keep_values" in EXP_CFG to enable.
+#   fraction: keep a fixed % of sites per window regardless of density
+#             (values are fractions, e.g. [0.15] -> thin15/)
+#   count:    cap each window at min(n_sites, N) -- windows already below N
+#             are left untouched (values are absolute counts, e.g.
+#             [5000, 20000] -> n5000/, n20000/)
+PRUNE_MODE   = CFG.get("prune_mode", "off")
+PRUNE_VALUES = CFG.get("prune_keep_values", [])
+def _frac_tag(f): return f"thin{round(float(f) * 100):02d}"
+def _count_tag(n): return f"n{int(n)}"
+if PRUNE_MODE == "fraction":
+    PRUNE_TAGS = [_frac_tag(v) for v in PRUNE_VALUES]
+elif PRUNE_MODE == "count":
+    PRUNE_TAGS = [_count_tag(v) for v in PRUNE_VALUES]
+else:
+    PRUNE_TAGS = []
+
+# What cleanup_optimization_runs (below) waits on / reads for MomentsLD's
+# keep-set: pruned mode aggregates per frac_tag under MomentsLD/pruning/<tag>/
+# instead of directly under MomentsLD/, so there's one target per tag rather
+# than the single unpruned LD_ROOT/best_fit.pkl.
+if PRUNE_TAGS:
+    MOMENTSLD_AGG_TARGETS = [
+        f"experiments/{MODEL}/inferences/sim_{{sid}}/MomentsLD/pruning/{tag}/best_fit.pkl"
+        for tag in PRUNE_TAGS
+    ]
+else:
+    MOMENTSLD_AGG_TARGETS = [f"{LD_ROOT}/best_fit.pkl"]
+
+# The single MomentsLD result combine_results (below) folds in per sim. In
+# pruned mode there's no unpruned MomentsLD/best_fit.pkl at all -- only
+# infer_momentsld_pruned/aggregate_opts_momentsld_pruned ever run -- so this
+# must point at the pruned path; PRUNE_TAGS[0] matches the "one canonical
+# pruning variant feeds downstream" convention aggregate_ld_stats already
+# uses for its --fallback-ld-dir above.
+MOMENTSLD_BEST_FIT = (
+    MOMENTSLD_AGG_TARGETS[0] if PRUNE_TAGS else f"{LD_ROOT}/best_fit.pkl"
+)
+
+
+##############################################################################
 # RULE simulate – one complete tree‑sequence + SFS
 ##############################################################################
 rule simulate:

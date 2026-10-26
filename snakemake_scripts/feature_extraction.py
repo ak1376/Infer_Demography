@@ -27,6 +27,14 @@ def _parse_args():
     # (e.g. the Snakemake variant wildcard) can force a specific feature set.
     ap.add_argument("--use-fim-features", choices=["true", "false"], default=None)
     ap.add_argument("--use-residuals", choices=["true", "false"], default=None)
+    # "inference": features are the dadi/moments/momentsLD estimates (+ FIM /
+    # SFS residuals). "raw_sfs" / "raw_sfs_ld": baseline with no inference --
+    # features are the observed SFS (+ MomentsLD means for raw_sfs_ld).
+    ap.add_argument(
+        "--feature-source",
+        choices=["inference", "raw_sfs", "raw_sfs_ld"],
+        default="inference",
+    )
     # Optional sim-id subsetting. --exclude-sims / --only-sims each point to a
     # text file of integer sim ids (one per line). Used e.g. to quarantine a
     # subset of sims into a separate dataset without touching the main build.
@@ -71,6 +79,7 @@ def main() -> None:
         preview_rows=args.preview_rows,
         use_fim_features_override=_bool_or_none(args.use_fim_features),
         use_residuals_override=_bool_or_none(args.use_residuals),
+        feature_source=args.feature_source,
         exclude_sims=_read_id_file(args.exclude_sims),
         only_sims=_read_id_file(args.only_sims),
     )

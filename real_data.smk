@@ -9,4 +9,4 @@ include: "rules/real_data_rules.smk"
 rule all:
     default_target: True
     input:
-        expand(rules.predict_real_data.output.json, variant=MODELING_VARIANTS, model_key=REAL_MODEL_KEYS),
+        expand(rules.predict_real_data.output.json, variant=REAL_VARIANTS, model_key=REAL_MODEL_KEYS),
