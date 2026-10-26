@@ -38,15 +38,14 @@ SNAKEFILE="$ROOT/real_data.smk"
 
 load_real_data_config "$CFG"
 
+ALLOWED_RULES=(aggregate_ld_windows_real)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     TARGETS=("${REAL_LD_ROOT}/means.varcovs.pkl")
-    ALLOWED_RULES=(aggregate_ld_windows_real)
 else
     TARGETS=()
     for arm in "${REAL_ARMS[@]}"; do
         TARGETS+=("${REAL_LD_ROOT}/${arm}/means.varcovs.pkl")
     done
-    ALLOWED_RULES=(aggregate_ld_windows_real)
 fi
 
 echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"

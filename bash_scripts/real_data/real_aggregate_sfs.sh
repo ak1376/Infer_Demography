@@ -37,12 +37,12 @@ for e in "${ENGINE_LIST[@]}"; do
     [[ "$e" == moments || "$e" == dadi ]] || { echo "ENGINES must be moments and/or dadi, got: $e" >&2; exit 1; }
 done
 
+ALLOWED_RULES=(aggregate_opts_engine_real)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     TARGETS=()
     for engine in "${ENGINE_LIST[@]}"; do
         TARGETS+=("${REAL_INF_ROOT}/${engine}/best_fit.pkl")
     done
-    ALLOWED_RULES=(aggregate_opts_engine_real)
 else
     TARGETS=()
     for arm in "${REAL_ARMS[@]}"; do
@@ -51,7 +51,6 @@ else
             TARGETS+=("${INF_ROOT_ARM}/${engine}/best_fit.pkl")
         done
     done
-    ALLOWED_RULES=(aggregate_opts_engine_real)
 fi
 
 echo "MODEL=$MODEL  REAL_POOLING_MODE=$REAL_POOLING_MODE"

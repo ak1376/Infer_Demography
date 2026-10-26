@@ -154,15 +154,10 @@ COMERON_XLSX       = "drosophila_data/recombination_maps/Comeron_100kb_R5_R6.xls
 # moments/dadi best_fit.pkl already sitting here. Untagged when trim_region
 # is unset, matching every path above.
 REAL_FIT_ROOT = RP["REAL_FIT_ROOT"]   # experiments/{MODEL}/real_trimmed (or real_untrimmed)
-REAL_RUN_ROOT = RP["REAL_RUN_ROOT"]
-REAL_INF_ROOT = RP["REAL_INF_ROOT"]
+REAL_INF_ROOT = RP["REAL_INF_ROOT"]   # pooled fits; per-arm ones are {scope}="<arm>/" (see _scope_arm)
 
-# Single-chromosome variants of REAL_RUN_ROOT/REAL_INF_ROOT (as opposed to the
-# combined-autosome COMBINED_SFS used by infer_engine_real above). {chrom} is
-# a real Snakemake wildcard here (double-braced so the f-string leaves it
-# literal), constrained below to Chr(2L|2R|3L|3R).
+# Per-arm restart folder ({chrom} wildcard), read by calibration_simulate_fit.
 REAL_RUN_ROOT_CHROM = RP["REAL_RUN_ROOT_CHROM"]
-REAL_INF_ROOT_CHROM = RP["REAL_INF_ROOT_CHROM"]
 
 # Number of top replicates the real moments/dadi aggregation keeps.
 # Must match the rep count the trained model was built with (moments_*_rep_0..N-1),
@@ -905,23 +900,6 @@ rule plot_momentsld_fit_real_best:
         bins = R_BINS_STR,
     threads: 1
     shell: _momentsld_fit_plot_shell()
-
-rule all_momentsld_fit_plots_real:
-    """Convenience target: fit-vs-data plot for every restart and the aggregated best, every arm."""
-    input:
-        expand(f"{REAL_FIT_ROOT}/{{arm}}/runs/run_{{opt}}/inferences/{REAL_LD_ENGINE_ARM}/fit_comparison.pdf",
-               arm=REAL_ARMS, opt=range(NUM_REAL_OPTIMS)),
-        expand(f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/fit_comparison.pdf", arm=REAL_ARMS),
-
-
-rule all_momentsld_real_individual:
-    """Convenience target: every configured arm's independent (unpooled) MomentsLD fit."""
-    input:
-        expand(
-            f"{REAL_FIT_ROOT}/{{arm}}/inferences/{REAL_LD_ENGINE_ARM}/best_fit.pkl",
-            arm=REAL_ARMS,
-        ),
-
 
 ##############################################################################
 # REAL DATA: sfs_residuals_real – best-fit model SFS − observed SFS          #

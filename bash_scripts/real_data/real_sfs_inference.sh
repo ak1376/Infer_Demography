@@ -72,6 +72,7 @@ BATCH_END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 echo "Array $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
 
 TARGETS=()
+ALLOWED_RULES=(infer_engine_real)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
         ENGINE_I=$(( IDX / NUM_REAL_OPTIMS ))
@@ -86,7 +87,6 @@ if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
         echo "QUEUE: ENGINE=$ENGINE OPT=$OPT -> $TARGET"
         TARGETS+=("$TARGET")
     done
-    ALLOWED_RULES=(infer_engine_real)
 else
     N_ARMS=${#REAL_ARMS[@]}
     PER_ARM=$(( ${#ENGINE_LIST[@]} * NUM_REAL_OPTIMS ))
@@ -107,7 +107,6 @@ else
         echo "QUEUE: ARM=$ARM ENGINE=$ENGINE OPT=$OPT -> $TARGET"
         TARGETS+=("$TARGET")
     done
-    ALLOWED_RULES=(infer_engine_real)
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then

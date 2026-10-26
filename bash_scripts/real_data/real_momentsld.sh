@@ -61,6 +61,7 @@ BATCH_END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 echo "Array $SLURM_ARRAY_TASK_ID → indices $BATCH_START .. $BATCH_END"
 
 TARGETS=()
+ALLOWED_RULES=(infer_momentsld_real)
 if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
     for OPT in $(seq "$BATCH_START" "$BATCH_END"); do
         TARGET="${REAL_RUN_ROOT}/run_${OPT}/inferences/${REAL_LD_ENGINE}/best_fit.pkl"
@@ -71,7 +72,6 @@ if [[ "$REAL_POOLING_MODE" == "pooled" ]]; then
         echo "QUEUE: OPT=$OPT -> $TARGET"
         TARGETS+=("$TARGET")
     done
-    ALLOWED_RULES=(infer_momentsld_real)
 else
     for IDX in $(seq "$BATCH_START" "$BATCH_END"); do
         ARM_I=$(( IDX / NUM_REAL_OPTIMS ))
@@ -87,7 +87,6 @@ else
         echo "QUEUE: ARM=$ARM OPT=$OPT -> $TARGET"
         TARGETS+=("$TARGET")
     done
-    ALLOWED_RULES=(infer_momentsld_real)
 fi
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
