@@ -270,8 +270,10 @@ def _fit_multioutput(
         )
         est_list.append(est)
 
-    # Wrap for consistent downstream API (.predict)
-    wrapper = MultiOutputRegressor(XGBRegressor(**base_params), n_jobs=int(outer_jobs))
+    # Wrap for consistent downstream API (.predict). n_jobs=1: the fits above
+    # are already serial, so this wrapper is only used for .predict(), where
+    # spawning loky workers is pure overhead and segfaulted on tiny inputs.
+    wrapper = MultiOutputRegressor(XGBRegressor(**base_params), n_jobs=1)
     wrapper.estimators_ = est_list
     return wrapper
 
