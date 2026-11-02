@@ -1,0 +1,3 @@
+[submodule "pg_gpu"]
+	path = pg_gpu
+	url = https://github.com/kr-colab/pg_gpu.git
