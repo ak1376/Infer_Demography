@@ -195,15 +195,18 @@ def linear_evaluation(
         print(
             "[INFO] Performing grid search using TRAIN for fit and TUNE for evaluation."
         )
+        # 29 log-spaced alphas, 1e-4 .. 1e3 (4 per decade). Lasso/elasticnet
+        # stop at 1e2: by then every coefficient is zero (features and
+        # targets are z-scored), so larger alphas all give the same model.
         if regression_type == "ridge":
-            alpha_grid = [0.1, 1.0, 10.0, 100.0]
+            alpha_grid = list(np.logspace(-4, 3, 29))
             l1_grid = [None]
         elif regression_type == "lasso":
-            alpha_grid = [0.1, 1.0, 10.0, 100.0]
+            alpha_grid = list(np.logspace(-4, 2, 25))
             l1_grid = [None]
         else:  # elasticnet
-            alpha_grid = [0.1, 1.0, 10.0, 100.0]
-            l1_grid = [0.1, 0.5, 0.9]
+            alpha_grid = list(np.logspace(-4, 2, 25))
+            l1_grid = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95, 0.99]
 
         best_mse = np.inf
         best_alpha = alpha

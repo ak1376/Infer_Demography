@@ -2,47 +2,60 @@
 # Snakefile (EXP_CFG) and by every bash_scripts/*.sh via lib_active_config.sh.
 active_experiment_config: "config_files/experiment_config_IM_both_grow_from_ancestor.json"
 
+# Hyperparameter search: every searched model fits candidates on TRAIN and
+# scores them on TUNE (MSE in normalized space); VALIDATION is never used to
+# choose anything.
+
 linear:
   types: ["standard", "ridge", "lasso", "elasticnet"]
-  standard: {}
+  standard: {}                     # plain least squares: no hyperparameters
+  # grid_search: true -> alpha (and l1_ratio for elasticnet) are picked from the
+  # grids in linear_evaluation.py; the alpha/l1_ratio below are then only
+  # used if grid_search is turned off.
   ridge:
     alpha: 10.0
-    grid_search: false
+    grid_search: true
   lasso:
     alpha: 0.1
     grid_search: true
   elasticnet:
     alpha: 0.5
     l1_ratio: 0.2
-    grid_search: false
+    grid_search: true
 
 rf:
   enable: true
-  use_optuna: false
-  final_fit: "train_plus_tune"
+  use_optuna: true
+  n_trials: 100                    # Optuna trials (settings tried)
+  optuna_timeout: 3600             # seconds; search stops early at this cap
+  final_fit: "train_plus_tune"     # refit the winning settings on TRAIN+TUNE
 
-  # bypass optuna by setting any of these:
-  n_estimators: 300
-  max_depth: 15
-  min_samples_split: 10
-
-  min_samples_leaf: 5
-  max_features: "sqrt"
-  max_samples: 0.75
+  # Setting ANY of n_estimators / max_depth / min_samples_split bypasses
+  # Optuna. Uncomment these to go back to fixed hyperparameters:
+  # n_estimators: 300
+  # max_depth: 15
+  # min_samples_split: 10
+  # min_samples_leaf: 5
+  # max_features: "sqrt"
+  # max_samples: 0.75
 
 xgb:
   enable: true
-  use_optuna: false
+  use_optuna: true
+  n_trials: 100                    # Optuna trials (settings tried)
+  optuna_timeout: 3600             # seconds; search stops early at this cap
   final_fit: "train_only"          # IMPORTANT with early stopping
-  early_stopping_rounds: 50        # uses TUNE as eval_set
+  early_stopping_rounds: 50        # uses TUNE as eval_set (also inside each trial)
 
-  n_estimators: 2000               # upper bound; ES will stop earlier
-  max_depth: 5
-  learning_rate: 0.03
-  subsample: 0.9
-  colsample_bytree: 0.8
-  min_child_weight: 3
-  reg_lambda: 5.0
-  reg_alpha: 0.0
+  # Setting ANY of these bypasses Optuna. Uncomment to go back to fixed
+  # hyperparameters:
+  # n_estimators: 2000             # upper bound; ES will stop earlier
+  # max_depth: 5
+  # learning_rate: 0.03
+  # subsample: 0.9
+  # colsample_bytree: 0.8
+  # min_child_weight: 3
+  # reg_lambda: 5.0
+  # reg_alpha: 0.0
 
   top_k_plot: 20
