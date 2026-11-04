@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Callable, Dict, Tuple, Optional, List, Any
 
+import contextlib
 import json
 import pickle
 import time
@@ -38,6 +39,52 @@ from src.demes_models import (  # noqa: E402
 from src.bgs_intervals import _contig_from_cfg, _apply_dfe_intervals, simulation_mutation_rate  # noqa: E402
 from src.stdpopsim_wrappers import define_sps_model  # noqa: E402
 from src.rescaling import resolve_scaling_factor  # noqa: E402
+
+
+# ============================================================================
+# SLiM tree-sequence simplification interval
+# ============================================================================
+
+_SLIM_TREESEQ_INIT = 'initializeTreeSeq(timeUnit="generations");'
+
+
+@contextlib.contextmanager
+def _slim_simplification_interval(interval: Optional[int]):
+    """Temporarily make stdpopsim's SLiM script simplify every `interval` ticks.
+
+    stdpopsim 0.3.0 does not expose SLiM's simplificationInterval, and SLiM's
+    default (auto, ratio-based) lets the tree-sequence tables grow for
+    ~1000+ ticks before each simplify, which dominates peak memory at high
+    N/Q. Simplification only discards records with no descendants among the
+    living population, so it does not change the simulated result -- only
+    memory and run time. `interval=None` leaves SLiM's default untouched.
+    """
+    if interval is None:
+        yield
+        return
+    interval = int(interval)
+    if interval < 1:
+        raise ValueError(f"slim_simplification_interval must be >= 1, got {interval}.")
+    from stdpopsim import slim_engine as _se
+
+    original = _se._slim_lower
+    if _SLIM_TREESEQ_INIT not in original:
+        raise RuntimeError(
+            "stdpopsim's SLiM template no longer contains "
+            f"{_SLIM_TREESEQ_INIT!r}; cannot set slim_simplification_interval "
+            "(stdpopsim version changed?)."
+        )
+    _se._slim_lower = original.replace(
+        _SLIM_TREESEQ_INIT,
+        # SLiM requires named arguments in signature order:
+        # simplificationInterval precedes timeUnit.
+        f"initializeTreeSeq(simplificationInterval={interval}, "
+        f'timeUnit="generations");',
+    )
+    try:
+        yield
+    finally:
+        _se._slim_lower = original
 
 # ============================================================================
 # Sampling helpers (moved from script)
@@ -161,14 +208,15 @@ def simulation_runner(
                              "sel_summary": sel_summary, "rescaling": resolved_scaling})
 
         eng = sps.get_engine("slim")
-        ts = eng.simulate(
-            model,
-            contig,
-            samples,
-            slim_scaling_factor=resolved_scaling["slim_scaling"],
-            slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
-            seed=seed,
-        )
+        with _slim_simplification_interval(sel.get("slim_simplification_interval")):
+            ts = eng.simulate(
+                model,
+                contig,
+                samples,
+                slim_scaling_factor=resolved_scaling["slim_scaling"],
+                slim_burn_in=float(sel.get("slim_burn_in", 5.0)),
+                seed=seed,
+            )
         # SLiM samples diploid individuals only. For sample_ploidy 1 (haploid
         # data: one genome per fly), keep one genome from each sampled
         # individual -- num_samples haploid genomes, all from distinct individuals.
@@ -410,6 +458,11 @@ def write_bgs_meta_json(
             else None
         ),
         slim_burn_in=(float(sel_cfg.get("slim_burn_in", 5.0)) if is_bgs else None),
+        slim_simplification_interval=(
+            int(sel_cfg["slim_simplification_interval"])
+            if is_bgs and sel_cfg.get("slim_simplification_interval") is not None
+            else None
+        ),
         rescaling_mode=(
             str(rescaling_resolved.get("rescaling_mode", "fixed")) if is_bgs else None
         ),

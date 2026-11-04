@@ -156,7 +156,8 @@
       30
     ],
     "slim_scaling": 10.0,
-    "slim_burn_in": 5
+    "slim_burn_in": 5,
+    "slim_simplification_interval": 500
   },
   "use_fim_features": false,
   "fim_engines": [
