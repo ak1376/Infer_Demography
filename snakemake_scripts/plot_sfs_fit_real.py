@@ -61,7 +61,8 @@ def load_best(fit_pkl: Path):
     engine = d.get("mode", "moments")
     params, ll, theta = d["best_params"], d["best_ll"], d.get("theta_hat")
     if isinstance(params, list):
-        k = int(np.argmax(ll))
+        lls = np.asarray(ll, dtype=float)
+        k = int(np.nanargmax(lls)) if np.isfinite(lls).any() else 0
         opt = d.get("opt_index", [None] * len(ll))[k]
         return engine, params[k], float(ll[k]), float(theta[k]), opt
     return engine, params, float(ll), float(theta), None
@@ -129,6 +130,24 @@ def main():
     ns = [n - 1 for n in obs.shape]
 
     engine, params, ll, theta_hat, opt = load_best(args.fit_pkl)
+
+    # A restart saved as failed (NaN params / ll, e.g. theta_hat <= 0 in the
+    # dadi fitter) has no model to draw: write a placeholder figure + JSON so
+    # the rule's outputs exist and the restart is just ranked last at aggregation.
+    if not all(np.isfinite(float(v)) for v in params.values()):
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        fig, ax = plt.subplots(figsize=(6, 2))
+        ax.axis("off")
+        ax.text(0.5, 0.5, f"{args.label}failed restart (non-finite best-fit params) - no SFS fit to plot",
+                ha="center", va="center", fontsize=10)
+        fig.savefig(args.out, dpi=150, bbox_inches="tight")
+        summary = {"engine": engine, "fit_pkl": str(args.fit_pkl), "sfs": str(args.sfs),
+                   "opt_index": opt, "failed": True, "best_ll": ll, "theta_hat": theta_hat,
+                   "best_params": {k: float(v) for k, v in params.items()}}
+        args.out.with_suffix(".json").write_text(json.dumps(summary, indent=2) + "\n")
+        print(f"Failed restart -> placeholder {args.out}")
+        return
+
     graph = model_func({k: float(v) for k, v in params.items()})
     model = expected_sfs(engine, graph, obs_fs, pops, ns, cfg, theta_hat)
 

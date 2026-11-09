@@ -354,9 +354,15 @@ def fit_model_realdata_scaled(
     # nlopt.RoundoffLimited does NOT subclass nlopt.runtime_error, so it must be
     # caught explicitly or it escapes uncaught. It signals that roundoff halted the
     # algorithm; the best point found so far is generally still usable.
-    # nlopt.invalid_argument: raised e.g. when a fallback start lies outside the
-    # bounds; treat it like any other abort and recover the best point.
-    _NLOPT_ABORT = (nlopt.runtime_error, nlopt.RoundoffLimited, nlopt.invalid_argument)
+    # nlopt.invalid_argument (e.g. a start point outside the bounds) is not a
+    # subclass of either, so it is listed too.
+    _NLOPT_ABORT = (
+        nlopt.runtime_error,
+        nlopt.RoundoffLimited,
+        nlopt.ForcedStop,
+        nlopt.invalid_argument,
+    )
+    lb_log10, ub_log10 = np.log10(lb), np.log10(ub)
 
     def _recover_or(x_default: np.ndarray) -> np.ndarray:
         """Prefer the best finite point seen; fall back to x_default."""
@@ -376,12 +382,16 @@ def fit_model_realdata_scaled(
         )
         debug_txt = _build_debug_txt(f"primary_{type(e).__name__}")
 
-        x_start = last_eval.get("log10_params", None)
-        if x_start is None:
+        # Restart from the best point seen (already clipped). last_eval is NOT
+        # clipped and is often a numerical-gradient probe that stepped just
+        # past a bound, which COBYLA rejects with nlopt.invalid_argument.
+        if best_seen["log10_params"] is not None:
+            x_start = best_seen["log10_params"]
+        elif last_eval.get("log10_params", None) is not None:
+            x_start = last_eval["log10_params"]
+        else:
             x_start = x0
-        # last_eval stores the point before clipping; COBYLA rejects a start
-        # outside its bounds (nlopt.invalid_argument), so clip it first.
-        x_start = np.clip(np.asarray(x_start, float), np.log10(lb), np.log10(ub))
+        x_start = np.clip(np.asarray(x_start, float), lb_log10, ub_log10)
 
         opt_fb = nlopt.opt(nlopt.LN_COBYLA, len(param_names))
         opt_fb.set_lower_bounds(np.log10(lb))
@@ -400,7 +410,18 @@ def fit_model_realdata_scaled(
             debug_txt = _build_debug_txt(f"cobyla_{type(e2).__name__}")
             xhat = _recover_or(x_start)
 
+    xhat = np.clip(np.asarray(xhat, float), lb_log10, ub_log10)
     ll_hat = float(loglikelihood(xhat))
+    # Like the moments fitter: never return a point worse than the best seen.
+    if best_seen["log10_params"] is not None and (
+        not np.isfinite(ll_hat) or best_seen["ll"] > ll_hat
+    ):
+        print(
+            f"[dadi-real] returned point (ll={ll_hat:.6g}) worse than best seen "
+            f"(ll={best_seen['ll']:.6g}); using best seen"
+        )
+        xhat = np.asarray(best_seen["log10_params"], float)
+        ll_hat = float(loglikelihood(xhat))
 
     # theta_hat at optimum
     params_hat_real = 10 ** np.asarray(xhat, float)
@@ -435,11 +456,22 @@ def fit_model_realdata_scaled(
 
     # convert scaled params at optimum to ABSOLUTE using implied N_ANC
     p_scaled_hat = build_scaled_param_dict(param_names, params_hat_real)
-    best_params_abs = scaled_to_absolute_params(
-        p_scaled_hat,
-        N_anc_abs=N_anc_implied,
-        time_scale="2N",
-    )
+    if np.isfinite(N_anc_implied) and N_anc_implied > 0:
+        best_params_abs = scaled_to_absolute_params(
+            p_scaled_hat,
+            N_anc_abs=N_anc_implied,
+            time_scale="2N",
+        )
+    else:
+        # Degenerate model SFS at the optimum (theta_hat <= 0): record this
+        # restart as failed (NaN params + NaN ll) instead of crashing, so the
+        # top-k aggregation -- which ranks non-finite lls last -- still runs.
+        print(
+            f"[dadi-real] WARNING: theta_hat={theta_hat!r} at optimum; "
+            "saving this restart as a failed fit (NaN params, NaN ll)"
+        )
+        best_params_abs = {k: float("nan") for k in p_scaled_hat}
+        ll_hat = float("nan")
 
     if use_gpu:
         dadi.cuda_enabled(False)

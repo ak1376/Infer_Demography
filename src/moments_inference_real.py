@@ -261,7 +261,10 @@ def fit_model_realdata_scaled(
 
     try:
         xhat = opt.optimize(x0)
-    except (nlopt.RoundoffLimited, nlopt.ForcedStop, RuntimeError, ValueError) as e:
+    # nlopt.runtime_error / nlopt.invalid_argument are NOT subclasses of the
+    # Python RuntimeError / ValueError builtins, so they must be listed explicitly.
+    except (nlopt.runtime_error, nlopt.invalid_argument, nlopt.RoundoffLimited,
+            nlopt.ForcedStop, RuntimeError, ValueError) as e:
         print(f"[moments-real] nlopt stopped early ({type(e).__name__}: {e}); using best point seen")
         xhat = best_seen["x"]
     if best_seen["ll"] > float(loglikelihood(xhat)):
