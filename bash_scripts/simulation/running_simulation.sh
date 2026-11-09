@@ -2,10 +2,10 @@
 #SBATCH --job-name=sim_job_array                # Job name
 #SBATCH --output=logs/simulation_%A_%a.out      # Standard output log file (%A is job ID, %a is the array index)
 #SBATCH --error=logs/simulation_%A_%a.err       # Standard error log file
-#SBATCH --time=15:00:00                          # Time limit
+#SBATCH --time=3-00:00:00                        # Time limit (SLiM at N_ANC ~1M, Q=50: ~40 h)
 #SBATCH --cpus-per-task=2                       # Number of CPU cores per task
-#SBATCH --mem=32G                                # Memory per task
-#SBATCH --partition=kern,preempt,kerngpu        # Partitions to submit the job to
+#SBATCH --mem=96G                                # Memory per task (~80 GB est. at N_ANC ~1M)
+#SBATCH --partition=kern,kerngpu                 # Not preempt: a multi-day SLiM run would restart from zero
 #SBATCH --account=kernlab                       # Account to use
 #SBATCH --requeue                               # Requeue on preemption
 #SBATCH --mail-type=END,FAIL

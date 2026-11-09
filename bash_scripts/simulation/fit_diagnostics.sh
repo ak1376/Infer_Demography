@@ -118,6 +118,9 @@ echo "Array $SLURM_ARRAY_TASK_ID → sims $RUN_START .. $RUN_END  FIM: ${FIM_ENG
 # -----------------------------
 # Loop over sims in batch
 # -----------------------------
+# One failed sim must not skip the rest of its batch (BATCH_SIZE > 1):
+# record it, keep going, and fail the task at the end.
+FAILED=0
 for sid in $(seq "$RUN_START" "$RUN_END"); do
   declare -a TARGETS=()
 
@@ -150,7 +153,8 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
     --allowed-rules compute_fim sfs_residuals \
     --keep-going \
     "${TARGETS[@]}" \
-    || { echo "Snakemake failed for sid=$sid"; exit 1; }
+    || { echo "Snakemake failed for sid=$sid"; FAILED=$((FAILED+1)); }
 done
 
-echo "Array task $SLURM_ARRAY_TASK_ID finished."
+echo "Array task $SLURM_ARRAY_TASK_ID finished ($FAILED failed sims)."
+(( FAILED == 0 )) || exit 1

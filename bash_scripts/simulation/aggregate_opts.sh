@@ -156,6 +156,9 @@ SMK_ARGS=(
 # -----------------------------
 # Loop over sims
 # -----------------------------
+# One failed sim must not skip the rest of its batch (BATCH_SIZE > 1):
+# record it, keep going, and fail the task at the end.
+FAILED=0
 for sid in $(seq "$RUN_START" "$RUN_END"); do
   echo "aggregate_opts: sid=$sid"
 
@@ -176,7 +179,8 @@ for sid in $(seq "$RUN_START" "$RUN_END"); do
 
   echo "Targets: ${TARGETS[*]}"
   snakemake "${SMK_ARGS[@]}" "${TARGETS[@]}" \
-    || { echo "Snakemake failed for sid=$sid"; exit 1; }
+    || { echo "Snakemake failed for sid=$sid"; FAILED=$((FAILED+1)); }
 done
 
-echo "Array task $SLURM_ARRAY_TASK_ID finished."
+echo "Array task $SLURM_ARRAY_TASK_ID finished ($FAILED failed sims)."
+(( FAILED == 0 )) || exit 1

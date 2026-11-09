@@ -58,6 +58,9 @@ END=$(( (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 
 echo "Array $SLURM_ARRAY_TASK_ID → SID $START .. $END"
 
+# One failed sim must not skip the rest of its batch (BATCH_SIZE > 1):
+# record it, keep going, and fail the task at the end.
+FAILED=0
 for SID in $(seq "$START" "$END"); do
   SIM_DIR="$ROOT/experiments/$MODEL/simulations/$SID"
   [[ -f "$SIM_DIR/.done" && -f "$SIM_DIR/tree_sequence.trees" ]] || {
@@ -81,7 +84,9 @@ for SID in $(seq "$START" "$END"); do
             --allowed-rules materialize_sim_vcf \
             --latency-wait 300 \
             -j "$SLURM_CPUS_PER_TASK" \
-            "$TARGET"
+            "$TARGET" \
+            || { echo "Snakemake failed for SID=$SID"; FAILED=$((FAILED+1)); }
 done
 
-echo "Array task $SLURM_ARRAY_TASK_ID finished."
+echo "Array task $SLURM_ARRAY_TASK_ID finished ($FAILED failed sims)."
+(( FAILED == 0 )) || exit 1

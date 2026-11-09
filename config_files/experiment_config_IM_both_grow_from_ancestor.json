@@ -42,24 +42,24 @@
       "ChrX": [1036552, 20902578]
     }
   },
-  "num_draws": 500,
+  "num_draws": 100,
   "calibration_n_replicates": 100,
   "priors": {
     "N_ANC": [
       3162,
-      3162278
+      1000000
     ],
     "N_CO1": [
       3162,
-      3162278
+      1000000
     ],
     "N_FR0": [
       3162,
-      3162278
+      300000
     ],
     "N_FR1": [
       3162,
-      3162278
+      300000
     ],
     "T": [
       1000,
@@ -104,36 +104,6 @@
       200
     ]
   },
-  "priors_real_data_analysis_absolute": {
-    "N_ANC": [
-      10000,
-      10000000
-    ],
-    "N_CO1": [
-      1000,
-      30000000
-    ],
-    "N_FR0": [
-      1000,
-      30000000
-    ],
-    "N_FR1": [
-      1000,
-      30000000
-    ],
-    "T": [
-      1000,
-      10000000
-    ],
-    "m_CO_FR": [
-      1e-09,
-      0.0001
-    ],
-    "m_FR_CO": [
-      1e-09,
-      0.0001
-    ]
-  },
   "momentsld_use_scaled_units": false,
   "ld_diagonal_only_varcov": false,
   "fixed_parameters": {
@@ -155,7 +125,7 @@
       1,
       30
     ],
-    "slim_scaling": 10.0,
+    "slim_scaling": 50.0,
     "slim_burn_in": 5,
     "slim_simplification_interval": 250
   },
@@ -165,7 +135,7 @@
   ],
   "use_residuals": false,
   "residual_engines": "moments",
-  "engine": "msprime",
+  "engine": "slim",
   "use_gpu_ld": true,
   "use_gpu_dadi": false,
   "pts_base": [20, 30, 40],

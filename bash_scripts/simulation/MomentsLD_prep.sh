@@ -50,6 +50,9 @@ BATCH_END=$((   (SLURM_ARRAY_TASK_ID + 1) * BATCH_SIZE - 1 ))
 
 echo "Array $SLURM_ARRAY_TASK_ID → sims $BATCH_START .. $BATCH_END"
 
+# One failed sim must not skip the rest of its batch (BATCH_SIZE > 1):
+# record it, keep going, and fail the task at the end.
+FAILED=0
 for SID in $(seq "$BATCH_START" "$BATCH_END"); do
     if [[ -n "$PRUNE_FRACS" ]]; then
         # ---- PRUNED-ONLY: pruning enabled, so unpruned is skipped -----------
@@ -67,7 +70,7 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
                       --allowed-rules aggregate_ld_stats \
                       -j "$SLURM_CPUS_PER_TASK" \
                       "$TARGET" \
-                      || { echo "Snakemake failed for SID=$SID FRAC=$FRAC_TAG"; exit 1; }
+                      || { echo "Snakemake failed for SID=$SID FRAC=$FRAC_TAG"; FAILED=$((FAILED+1)); }
         done
     else
         # ---- UNPRUNED-ONLY: no pruning configured ---------------------------
@@ -84,8 +87,9 @@ for SID in $(seq "$BATCH_START" "$BATCH_END"); do
                   --allowed-rules aggregate_ld_stats \
                   -j "$SLURM_CPUS_PER_TASK" \
                   "$TARGET" \
-                  || { echo "Snakemake failed for SID=$SID"; exit 1; }
+                  || { echo "Snakemake failed for SID=$SID"; FAILED=$((FAILED+1)); }
     fi
 done
 
-echo "Array task $SLURM_ARRAY_TASK_ID finished."
+echo "Array task $SLURM_ARRAY_TASK_ID finished ($FAILED failed sims)."
+(( FAILED == 0 )) || exit 1
