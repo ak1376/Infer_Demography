@@ -1,7 +1,7 @@
 {
   "sequence_length": 14258356,
   "ld_sequence_length": 100000,
-  "mutation_rate": 1.45e-09,
+  "mutation_rate": 5.49e-09,
   "simulation_kept_fraction": 0.76,
   "recombination_rate": 1.45e-09,
   "recombination": {
@@ -157,7 +157,7 @@
     ],
     "slim_scaling": 10.0,
     "slim_burn_in": 5,
-    "slim_simplification_interval": 500
+    "slim_simplification_interval": 250
   },
   "use_fim_features": false,
   "fim_engines": [

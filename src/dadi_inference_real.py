@@ -354,7 +354,9 @@ def fit_model_realdata_scaled(
     # nlopt.RoundoffLimited does NOT subclass nlopt.runtime_error, so it must be
     # caught explicitly or it escapes uncaught. It signals that roundoff halted the
     # algorithm; the best point found so far is generally still usable.
-    _NLOPT_ABORT = (nlopt.runtime_error, nlopt.RoundoffLimited)
+    # nlopt.invalid_argument: raised e.g. when a fallback start lies outside the
+    # bounds; treat it like any other abort and recover the best point.
+    _NLOPT_ABORT = (nlopt.runtime_error, nlopt.RoundoffLimited, nlopt.invalid_argument)
 
     def _recover_or(x_default: np.ndarray) -> np.ndarray:
         """Prefer the best finite point seen; fall back to x_default."""
@@ -377,6 +379,9 @@ def fit_model_realdata_scaled(
         x_start = last_eval.get("log10_params", None)
         if x_start is None:
             x_start = x0
+        # last_eval stores the point before clipping; COBYLA rejects a start
+        # outside its bounds (nlopt.invalid_argument), so clip it first.
+        x_start = np.clip(np.asarray(x_start, float), np.log10(lb), np.log10(ub))
 
         opt_fb = nlopt.opt(nlopt.LN_COBYLA, len(param_names))
         opt_fb.set_lower_bounds(np.log10(lb))
@@ -401,6 +406,21 @@ def fit_model_realdata_scaled(
     params_hat_real = 10 ** np.asarray(xhat, float)
     base_hat = func_ex(params_hat_real, ns_haploid, pts_l)
     theta_hat = float(_theta_hat_poisson_mle(sfs, np.asarray(base_hat)))
+
+    # The final point can sit where dadi's extrapolated model SFS sums to <= 0
+    # (theta_hat = 0 -> implied N_ANC = 0, which crashes the conversion below).
+    # Fall back to the best valid point seen during the search instead.
+    if not (theta_hat > 0 and np.isfinite(ll_hat) and ll_hat > BAD_LL / 10) \
+            and best_seen["log10_params"] is not None:
+        print(
+            f"[DADI REAL DEBUG] final point invalid (theta_hat={theta_hat:.3g}, "
+            f"ll={ll_hat:.3g}); using best seen point (ll={best_seen['ll']:.6g})"
+        )
+        xhat = np.asarray(best_seen["log10_params"], float)
+        ll_hat = float(loglikelihood(xhat))
+        params_hat_real = 10 ** xhat
+        base_hat = func_ex(params_hat_real, ns_haploid, pts_l)
+        theta_hat = float(_theta_hat_poisson_mle(sfs, np.asarray(base_hat)))
 
     mu = float(experiment_config["mutation_rate"])
     # Sequence length for the theta -> implied-N_ANC conversion only (does NOT

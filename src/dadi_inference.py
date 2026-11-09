@@ -240,13 +240,18 @@ def fit_model(
         x_start = last_eval.get("log10_params", None)
         if x_start is None:
             x_start = x0
+        # last_eval stores the point before clipping; COBYLA rejects a start
+        # outside its bounds (nlopt.invalid_argument), so clip it first.
+        x_start = np.clip(np.asarray(x_start, float), np.log10(lb_full), np.log10(ub_full))
 
         opt_fb = _make_opt(nlopt.LN_COBYLA)
         try:
             xhat = opt_fb.optimize(np.asarray(x_start, float))
-        except (RuntimeError, nlopt.runtime_error, nlopt.RoundoffLimited):
+        except (RuntimeError, nlopt.runtime_error, nlopt.RoundoffLimited,
+                nlopt.invalid_argument):
             x_best = last_eval.get("log10_params", None)
-            xhat = np.asarray(x_best if x_best is not None else x_start, float)
+            xhat = np.clip(np.asarray(x_best if x_best is not None else x_start, float),
+                           np.log10(lb_full), np.log10(ub_full))
             print("[DADI DEBUG] LN_COBYLA also failed; returning best point so far")
             debug_txt = _build_debug_txt("cobyla_also_failed")
 
